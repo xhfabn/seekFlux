@@ -1,0 +1,54 @@
+openapi: 3.1.0
+info:
+  title: SeekFlux API
+  version: 0.1.0
+  description: Phase 0 contract skeleton; request and response schemas will evolve compatibly.
+servers:
+  - url: http://localhost:8080
+paths:
+  /v1/search:
+    post:
+      operationId: search
+      tags: [Search]
+      responses:
+        "200":
+          description: Search result page
+  /v1/feed:
+    get:
+      operationId: getFeed
+      tags: [Recommendation]
+      responses:
+        "200":
+          description: Personalized feed page
+  /v1/contents/{contentId}/similar:
+    get:
+      operationId: getSimilarContents
+      tags: [Recommendation]
+      parameters:
+        - name: contentId
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        "200":
+          description: Similar content page
+  /v1/contents:
+    post:
+      operationId: submitContent
+      tags: [Content]
+      responses:
+        "202":
+          description: Content accepted for asynchronous processing
+  /v1/interactions:batch:
+    post:
+      operationId: reportInteractions
+      tags: [Interaction]
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema: {type: string}
+      responses:
+        "202":
+          description: Events accepted
+

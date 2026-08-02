@@ -1,0 +1,10 @@
+cluster.name: seekflux-local
+node.name: seekflux-node-1
+path.data: /root/workwpace/SeekFlux/.local/elasticsearch/data
+path.logs: /root/workwpace/SeekFlux/.local/elasticsearch/logs
+network.host: 127.0.0.1
+http.port: 9200
+discovery.type: single-node
+xpack.security.enabled: false
+xpack.security.enrollment.enabled: false
+

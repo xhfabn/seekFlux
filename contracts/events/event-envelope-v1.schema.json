@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://seekflux.local/schemas/events/event-envelope-v1.schema.json",
+  "title": "SeekFlux Event Envelope v1",
+  "type": "object",
+  "required": ["event_id", "event_type", "schema_version", "event_time", "ingested_at", "payload"],
+  "properties": {
+    "event_id": {"type": "string", "format": "uuid"},
+    "event_type": {"type": "string", "minLength": 1},
+    "schema_version": {"const": 1},
+    "event_time": {"type": "string", "format": "date-time"},
+    "ingested_at": {"type": "string", "format": "date-time"},
+    "trace_id": {"type": "string"},
+    "producer": {"type": "string"},
+    "payload": {"type": "object"}
+  },
+  "additionalProperties": false
+}
+

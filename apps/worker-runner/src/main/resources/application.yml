@@ -1,0 +1,24 @@
+spring:
+  application:
+    name: seekflux-worker-runner
+  main:
+    web-application-type: none
+  profiles:
+    active: ${SEEKFLUX_ENV:local}
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+  elasticsearch:
+    uris: ${ELASTICSEARCH_URIS:http://localhost:9200}
+
+seekflux:
+  object-storage:
+    endpoint: ${S3_ENDPOINT:http://localhost:9000}
+    bucket: ${S3_BUCKET:seekflux-artifacts}
+    access-key: ${MINIO_ROOT_USER:seekflux}
+    secret-key: ${MINIO_ROOT_PASSWORD:seekflux_local_secret}
+
+management:
+  otlp:
+    tracing:
+      endpoint: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:http://localhost:4318/v1/traces}
+

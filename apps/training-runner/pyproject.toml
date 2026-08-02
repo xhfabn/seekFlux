@@ -1,0 +1,31 @@
+[build-system]
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[project]
+name = "seekflux-training"
+version = "0.1.0"
+description = "SeekFlux sample, training, evaluation, and model registration entrypoint"
+requires-python = ">=3.12,<3.14"
+dependencies = [
+  "lightgbm>=4.6,<5",
+  "numpy>=2.2,<3",
+  "pandas>=2.2,<3",
+  "pyarrow>=19,<22",
+  "scikit-learn>=1.6,<2",
+]
+
+[project.optional-dependencies]
+deep-learning = ["torch>=2.7,<3"]
+dev = ["pytest>=8.3,<9", "ruff>=0.11,<1"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/seekflux_training"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+

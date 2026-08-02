@@ -1,0 +1,24 @@
+spring:
+  application:
+    name: seekflux-content-server
+  profiles:
+    active: ${SEEKFLUX_ENV:local}
+  r2dbc:
+    url: ${POSTGRES_R2DBC_URL:r2dbc:postgresql://localhost:5432/seekflux}
+    username: ${POSTGRES_USER:seekflux}
+    password: ${POSTGRES_PASSWORD:seekflux_local}
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+
+server:
+  port: ${CONTENT_SERVER_PORT:8081}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info,prometheus
+  otlp:
+    tracing:
+      endpoint: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:http://localhost:4318/v1/traces}
+

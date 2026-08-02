@@ -1,0 +1,12 @@
+.idea/
+.vscode/
+.env
+.runtime/
+.local/
+**/target/
+**/__pycache__/
+**/.pytest_cache/
+**/.venv/
+*.iml
+*.log
+.DS_Store

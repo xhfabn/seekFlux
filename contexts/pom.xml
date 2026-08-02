@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent><groupId>io.seekflux</groupId><artifactId>seekflux</artifactId><version>0.1.0-SNAPSHOT</version></parent>
+    <artifactId>contexts</artifactId><packaging>pom</packaging>
+    <modules>
+        <module>content-context</module><module>search-context</module><module>recommendation-context</module>
+        <module>user-interest-context</module><module>interaction-context</module><module>feature-context</module>
+        <module>ranking-context</module><module>experiment-context</module><module>moderation-context</module>
+    </modules>
+</project>
+
