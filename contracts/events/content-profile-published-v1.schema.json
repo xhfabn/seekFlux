@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://seekflux.local/schemas/events/content-profile-published-v1.schema.json",
+  "title": "Content Profile Published v1 Payload",
+  "type": "object",
+  "required": [
+    "content_id", "creator_id", "media_uri", "title", "description",
+    "profile_version", "summary", "tags", "transcript", "status"
+  ],
+  "properties": {
+    "content_id": {"type": "string", "format": "uuid"},
+    "creator_id": {"type": "string"},
+    "media_uri": {"type": "string"},
+    "title": {"type": "string"},
+    "description": {"type": "string"},
+    "profile_version": {"type": "integer", "minimum": 1},
+    "summary": {"type": "string"},
+    "tags": {"type": "array", "items": {"type": "string"}},
+    "transcript": {"type": "string"},
+    "status": {"const": "PUBLISHED"}
+  },
+  "additionalProperties": false
+}

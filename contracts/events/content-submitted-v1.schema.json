@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://seekflux.local/schemas/events/content-submitted-v1.schema.json",
+  "title": "Content Submitted v1 Payload",
+  "type": "object",
+  "required": ["content_id", "creator_id", "media_uri", "title", "description", "source_tags"],
+  "properties": {
+    "content_id": {"type": "string", "format": "uuid"},
+    "creator_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "media_uri": {"type": "string", "minLength": 1, "maxLength": 2048},
+    "title": {"type": "string", "minLength": 1, "maxLength": 200},
+    "description": {"type": "string", "maxLength": 4000},
+    "source_tags": {
+      "type": "array",
+      "maxItems": 50,
+      "items": {"type": "string", "minLength": 1, "maxLength": 64}
+    }
+  },
+  "additionalProperties": false
+}

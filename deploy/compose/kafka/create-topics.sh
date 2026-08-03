@@ -2,6 +2,8 @@
 set -euo pipefail
 
 topics=(
+  content.submitted.v1
+  content.profile.ready.v1
   interaction.raw.v1
   interaction.validated.v1
   exposure.logged.v1
@@ -20,4 +22,3 @@ for topic in "${topics[@]}"; do
     --partitions 3 \
     --replication-factor 1
 done
-

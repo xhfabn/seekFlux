@@ -5,12 +5,30 @@ spring:
     web-application-type: none
   profiles:
     active: ${SEEKFLUX_ENV:local}
+  r2dbc:
+    url: ${POSTGRES_R2DBC_URL:r2dbc:postgresql://localhost:5432/seekflux}
+    username: ${POSTGRES_USER:seekflux}
+    password: ${POSTGRES_PASSWORD:seekflux_local}
+  datasource:
+    url: ${POSTGRES_JDBC_URL:jdbc:postgresql://localhost:5432/seekflux}
+    username: ${POSTGRES_USER:seekflux}
+    password: ${POSTGRES_PASSWORD:seekflux_local}
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
   kafka:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
+    consumer:
+      group-id: seekflux-content-profile-worker-v1
+      auto-offset-reset: earliest
+      enable-auto-commit: false
   elasticsearch:
     uris: ${ELASTICSEARCH_URIS:http://localhost:9200}
 
 seekflux:
+  outbox:
+    relay-delay-ms: ${OUTBOX_RELAY_DELAY_MS:1000}
+    batch-size: ${OUTBOX_BATCH_SIZE:50}
   object-storage:
     endpoint: ${S3_ENDPOINT:http://localhost:9000}
     bucket: ${S3_BUCKET:seekflux-artifacts}
@@ -21,4 +39,5 @@ management:
   otlp:
     tracing:
       endpoint: ${OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:http://localhost:4318/v1/traces}
-
+      export:
+        enabled: ${OTEL_TRACING_EXPORT_ENABLED:false}

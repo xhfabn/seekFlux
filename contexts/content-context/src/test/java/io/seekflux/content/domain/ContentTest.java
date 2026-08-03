@@ -1,0 +1,80 @@
+package io.seekflux.content.domain;
+
+import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
+import static org.junit.jupiter.api.Assertions.assertSame;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+
+import java.time.Instant;
+import java.util.List;
+import java.util.UUID;
+import org.junit.jupiter.api.Test;
+
+class ContentTest {
+
+    private static final Instant SUBMITTED_AT = Instant.parse("2026-08-02T10:00:00Z");
+
+    @Test
+    void followsProfilePublicationLifecycle() {
+        Content submitted = content();
+        ContentProfile profile = new ContentProfile(1, "露营路线", List.of("露营", "杭州"), "");
+
+        Content ready = submitted.completeProfile(profile, SUBMITTED_AT.plusSeconds(10));
+        Content published = ready.publish(SUBMITTED_AT.plusSeconds(20));
+
+        assertEquals(ContentStatus.SUBMITTED, submitted.status());
+        assertEquals(ContentStatus.PROFILE_READY, ready.status());
+        assertEquals(1, ready.version());
+        assertEquals(ContentStatus.PUBLISHED, published.status());
+        assertEquals(2, published.version());
+        assertEquals(SUBMITTED_AT.plusSeconds(20), published.publishedAt());
+        assertNotSame(submitted, ready);
+    }
+
+    @Test
+    void cannotPublishBeforeProfileIsReady() {
+        Content submitted = content();
+
+        assertThrows(ContentStateException.class,
+                () -> submitted.publish(SUBMITTED_AT.plusSeconds(1)));
+    }
+
+    @Test
+    void repeatingTheSameProfileAndPublicationIsIdempotent() {
+        ContentProfile profile = new ContentProfile(1, "露营路线", List.of("露营"), "");
+        Content ready = content().completeProfile(profile, SUBMITTED_AT.plusSeconds(1));
+        Content published = ready.publish(SUBMITTED_AT.plusSeconds(2));
+
+        assertSame(ready, ready.completeProfile(profile, SUBMITTED_AT.plusSeconds(3)));
+        assertSame(published, published.publish(SUBMITTED_AT.plusSeconds(3)));
+    }
+
+    @Test
+    void rejectsConflictingPayloadForAnExistingProfileVersion() {
+        Content ready = content().completeProfile(
+                new ContentProfile(1, "原画像", List.of(), ""), SUBMITTED_AT.plusSeconds(1));
+
+        assertThrows(ContentStateException.class, () -> ready.completeProfile(
+                new ContentProfile(1, "不同画像", List.of(), ""), SUBMITTED_AT.plusSeconds(2)));
+    }
+
+    @Test
+    void withdrawnContentCannotBeRepublished() {
+        Content withdrawn = content().withdraw(SUBMITTED_AT.plusSeconds(1));
+
+        assertEquals(ContentStatus.WITHDRAWN, withdrawn.status());
+        assertThrows(ContentStateException.class,
+                () -> withdrawn.publish(SUBMITTED_AT.plusSeconds(2)));
+    }
+
+    private Content content() {
+        return Content.submit(
+                new ContentId(UUID.fromString("0198b334-a7c0-7000-8000-000000000001")),
+                "creator-1",
+                "s3://seekflux-media/video-1.mp4",
+                "杭州露营",
+                "周末路线",
+                List.of("露营"),
+                SUBMITTED_AT);
+    }
+}

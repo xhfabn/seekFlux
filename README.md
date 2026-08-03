@@ -1,8 +1,12 @@
 # SeekFlux
 
-SeekFlux 是面向短视频内容平台的多模态搜索与推荐中台。本目录当前完成的是 **Phase 0 工程基线**：环境、模块边界、契约位置和本地中间件已经建立，尚未实现业务代码。
+SeekFlux 是面向短视频内容平台的多模态搜索与推荐中台。当前已完成 **Phase 0 工程基线**和 **Step 1 内容登记与画像发布**：内容可以通过 HTTP 登记，经 PostgreSQL/Outbox/Kafka/Worker 异步生成基础画像并发布。搜索、推荐等后续切片仍待实现。
 
-架构依据见 [SeekFlux.md](SeekFlux.md)，模块依赖规则见 [docs/module-boundaries.md](docs/module-boundaries.md)。
+架构依据见 [SeekFlux.md](SeekFlux.md)，模块依赖规则见 [docs/module-boundaries.md](docs/module-boundaries.md)。如果希望按实现顺序学习项目，请从 [docs/learning/README.md](docs/learning/README.md) 开始；其中包含工程架构图、模块职责、开发路线和当前阶段日志。
+
+## 学习型开发文档
+
+本项目采用“功能实现与学习文档同步交付”的方式推进。每完成一个可运行的纵向切片，都要在 `docs/learning/` 新增或更新对应文档，说明该部分解决的问题、架构位置、核心流程、关键代码、设计取舍、验证命令和练习，并更新学习日志状态。影响长期架构的决定同时写入 `docs/adr/`；影响 API、事件或特征的变更同时更新 `contracts/`。没有通过测试或验收的计划项不得在学习日志中标记为完成。
 
 ## 当前工程边界
 
@@ -84,9 +88,9 @@ mvn validate
 
 ## 当前刻意未做
 
-- 没有 Controller、Use Case、领域实体和 Adapter 实现；
-- 没有数据库业务表、Elasticsearch Mapping 和模型文件；
-- 没有启动类，因此应用模块目前用于锁定依赖与边界，不能启动业务服务；
+- 尚未实现 Elasticsearch Mapping；内容进入检索索引属于 Step 2；
+- 当前画像 Worker 只根据提交元数据生成可重复的基础画像，尚未接入 ASR、OCR、视觉理解或模型服务；
+- 尚未实现搜索、Feed、互动、实时特征和模型排序业务；
 - 没有把九个 Context 拆成九个进程。
 
-下一阶段应优先实现内容登记与画像发布、搜索基线、Feed 基线、曝光/行为闭环，再引入实时特征和模型排序。
+下一阶段优先实现关键词搜索基线，再依次推进 Feed、曝光/行为闭环、实时特征和模型排序。Step 1 的实现与学习说明见 [内容登记与画像发布](docs/learning/step-01-content-pipeline.md)。

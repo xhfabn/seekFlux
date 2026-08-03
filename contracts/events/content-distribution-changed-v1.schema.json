@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://seekflux.local/schemas/events/content-distribution-changed-v1.schema.json",
+  "title": "Content Distribution Changed v1 Payload",
+  "type": "object",
+  "required": ["content_id", "distribution_status"],
+  "properties": {
+    "content_id": {"type": "string", "format": "uuid"},
+    "distribution_status": {"const": "WITHDRAWN"}
+  },
+  "additionalProperties": false
+}

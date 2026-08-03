@@ -2,7 +2,7 @@ openapi: 3.1.0
 info:
   title: SeekFlux API
   version: 0.1.0
-  description: Phase 0 contract skeleton; request and response schemas will evolve compatibly.
+  description: SeekFlux content, search, recommendation, and interaction contracts.
 servers:
   - url: http://localhost:8080
 paths:
@@ -25,20 +25,106 @@ paths:
       operationId: getSimilarContents
       tags: [Recommendation]
       parameters:
-        - name: contentId
-          in: path
-          required: true
-          schema: {type: string}
+        - $ref: "#/components/parameters/ContentId"
       responses:
         "200":
           description: Similar content page
   /v1/contents:
     post:
       operationId: submitContent
+      summary: Register content for asynchronous profile generation
       tags: [Content]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SubmitContentRequest"
       responses:
         "202":
-          description: Content accepted for asynchronous processing
+          description: Content stored and accepted for asynchronous processing
+          headers:
+            Location:
+              schema: {type: string}
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContentResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /v1/contents/{contentId}:
+    get:
+      operationId: getContent
+      tags: [Content]
+      parameters:
+        - $ref: "#/components/parameters/ContentId"
+      responses:
+        "200":
+          description: Current content lifecycle state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContentResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: withdrawContent
+      summary: Stop content distribution
+      tags: [Content]
+      parameters:
+        - $ref: "#/components/parameters/ContentId"
+      responses:
+        "200":
+          description: Withdrawn content
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContentResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/contents/{contentId}/profile:
+    put:
+      operationId: completeContentProfile
+      summary: Complete a versioned content profile
+      description: Worker-facing idempotent endpoint; the basic local worker invokes the same use case directly.
+      tags: [Content]
+      parameters:
+        - $ref: "#/components/parameters/ContentId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CompleteProfileRequest"
+      responses:
+        "200":
+          description: Profile is ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContentResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
+  /v1/contents/{contentId}/publish:
+    post:
+      operationId: publishContentProfile
+      summary: Publish a ready content profile
+      tags: [Content]
+      parameters:
+        - $ref: "#/components/parameters/ContentId"
+      responses:
+        "200":
+          description: Published content profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContentResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/Conflict"
   /v1/interactions:batch:
     post:
       operationId: reportInteractions
@@ -51,4 +137,135 @@ paths:
       responses:
         "202":
           description: Events accepted
-
+components:
+  parameters:
+    ContentId:
+      name: contentId
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+  schemas:
+    SubmitContentRequest:
+      type: object
+      required: [creatorId, mediaUri, title]
+      properties:
+        creatorId:
+          type: string
+          maxLength: 128
+        mediaUri:
+          type: string
+          maxLength: 2048
+          examples: ["s3://seekflux-media/video-1.mp4"]
+        title:
+          type: string
+          maxLength: 200
+        description:
+          type: string
+          maxLength: 4000
+          default: ""
+        sourceTags:
+          type: array
+          maxItems: 50
+          items:
+            type: string
+            maxLength: 64
+    CompleteProfileRequest:
+      type: object
+      required: [profileVersion, summary]
+      properties:
+        profileVersion:
+          type: integer
+          minimum: 1
+        summary:
+          type: string
+          maxLength: 4000
+        tags:
+          type: array
+          maxItems: 50
+          items:
+            type: string
+            maxLength: 64
+        transcript:
+          type: string
+          maxLength: 50000
+          default: ""
+    ContentProfile:
+      type: object
+      required: [version, summary, tags, transcript]
+      properties:
+        version: {type: integer, minimum: 1}
+        summary: {type: string}
+        tags:
+          type: array
+          items: {type: string}
+        transcript: {type: string}
+    ContentResponse:
+      type: object
+      required:
+        - contentId
+        - creatorId
+        - mediaUri
+        - title
+        - description
+        - sourceTags
+        - status
+        - version
+        - createdAt
+        - updatedAt
+      properties:
+        contentId: {type: string, format: uuid}
+        creatorId: {type: string}
+        mediaUri: {type: string}
+        title: {type: string}
+        description: {type: string}
+        sourceTags:
+          type: array
+          items: {type: string}
+        status:
+          type: string
+          enum: [SUBMITTED, PROFILE_READY, PUBLISHED, WITHDRAWN]
+        profile:
+          oneOf:
+            - $ref: "#/components/schemas/ContentProfile"
+            - type: "null"
+        version: {type: integer, format: int64}
+        createdAt: {type: string, format: date-time}
+        updatedAt: {type: string, format: date-time}
+        publishedAt:
+          oneOf:
+            - type: string
+              format: date-time
+            - type: "null"
+        withdrawnAt:
+          oneOf:
+            - type: string
+              format: date-time
+            - type: "null"
+    ApiError:
+      type: object
+      required: [code, message, timestamp]
+      properties:
+        code: {type: string}
+        message: {type: string}
+        timestamp: {type: string, format: date-time}
+  responses:
+    BadRequest:
+      description: Request validation failed
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+    NotFound:
+      description: Content does not exist
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+    Conflict:
+      description: Content lifecycle or optimistic-lock conflict
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
