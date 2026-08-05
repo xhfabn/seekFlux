@@ -7,12 +7,49 @@ servers:
   - url: http://localhost:8080
 paths:
   /v1/search:
+    get:
+      operationId: searchByQueryParameter
+      summary: Search published content profiles
+      tags: [Search]
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema: {type: string, minLength: 1, maxLength: 500}
+        - name: page
+          in: query
+          schema: {type: integer, minimum: 0, default: 0}
+        - name: size
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 50, default: 12}
+      responses:
+        "200":
+          description: Keyword search result page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchResultPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
     post:
       operationId: search
+      summary: Search published content profiles
       tags: [Search]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SearchRequest"
       responses:
         "200":
           description: Search result page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchResultPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
   /v1/feed:
     get:
       operationId: getFeed
@@ -147,6 +184,42 @@ components:
         type: string
         format: uuid
   schemas:
+    SearchRequest:
+      type: object
+      required: [query]
+      properties:
+        query: {type: string, minLength: 1, maxLength: 500}
+        page: {type: integer, minimum: 0, default: 0}
+        size: {type: integer, minimum: 1, maximum: 50, default: 12}
+    SearchHit:
+      type: object
+      required: [contentId, creatorId, mediaUri, title, description, summary, tags, profileVersion, score, publishedAt]
+      properties:
+        contentId: {type: string, format: uuid}
+        creatorId: {type: string}
+        mediaUri: {type: string}
+        title: {type: string}
+        description: {type: string}
+        summary: {type: string}
+        tags:
+          type: array
+          items: {type: string}
+        profileVersion: {type: integer, minimum: 1}
+        score: {type: number, format: double}
+        publishedAt: {type: string, format: date-time}
+    SearchResultPage:
+      type: object
+      required: [query, total, page, size, tookMillis, hits]
+      properties:
+        query: {type: string}
+        total: {type: integer, format: int64, minimum: 0}
+        page: {type: integer, minimum: 0}
+        size: {type: integer, minimum: 1}
+        tookMillis: {type: integer, format: int64, minimum: 0}
+        hits:
+          type: array
+          items:
+            $ref: "#/components/schemas/SearchHit"
     SubmitContentRequest:
       type: object
       required: [creatorId, mediaUri, title]

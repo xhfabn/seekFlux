@@ -124,9 +124,6 @@ public final class Content {
             }
             throw new ContentStateException("profile version already exists with different content");
         }
-        if (status == ContentStatus.PUBLISHED) {
-            throw new ContentStateException("published content requires an explicit reprocessing workflow");
-        }
         return copy(ContentStatus.PROFILE_READY, newProfile, version + 1, now, null, null);
     }
 

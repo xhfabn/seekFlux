@@ -59,6 +59,24 @@ class ContentTest {
     }
 
     @Test
+    void publishedContentCanBeConfiguredWithANewerProfileAndRepublished() {
+        Content published = content()
+                .completeProfile(new ContentProfile(1, "原画像", List.of("露营"), ""),
+                        SUBMITTED_AT.plusSeconds(1))
+                .publish(SUBMITTED_AT.plusSeconds(2));
+
+        Content reconfigured = published.completeProfile(
+                new ContentProfile(2, "人工配置的新画像", List.of("亲子", "露营"), ""),
+                SUBMITTED_AT.plusSeconds(3));
+        Content republished = reconfigured.publish(SUBMITTED_AT.plusSeconds(4));
+
+        assertEquals(ContentStatus.PROFILE_READY, reconfigured.status());
+        assertEquals(2, reconfigured.profile().version());
+        assertEquals(ContentStatus.PUBLISHED, republished.status());
+        assertEquals(4, republished.version());
+    }
+
+    @Test
     void withdrawnContentCannotBeRepublished() {
         Content withdrawn = content().withdraw(SUBMITTED_AT.plusSeconds(1));
 

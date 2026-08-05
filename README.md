@@ -1,6 +1,6 @@
 # SeekFlux
 
-SeekFlux 是面向短视频内容平台的多模态搜索与推荐中台。当前已完成 **Phase 0 工程基线**和 **Step 1 内容登记与画像发布**：内容可以通过 HTTP 登记，经 PostgreSQL/Outbox/Kafka/Worker 异步生成基础画像并发布。搜索、推荐等后续切片仍待实现。
+SeekFlux 是面向短视频内容平台的多模态搜索与推荐中台。当前已完成 **Phase 0 工程基线**、**Step 1 内容登记与画像发布**和 **Step 2 关键词搜索**：内容可以通过 HTTP 登记，经 PostgreSQL/Outbox/Kafka/Worker 异步生成画像、写入 Elasticsearch，并由搜索 API 和页面检索展示。推荐等后续切片仍待实现。
 
 架构依据见 [SeekFlux.md](SeekFlux.md)，模块依赖规则见 [docs/module-boundaries.md](docs/module-boundaries.md)。如果希望按实现顺序学习项目，请从 [docs/learning/README.md](docs/learning/README.md) 开始；其中包含工程架构图、模块职责、开发路线和当前阶段日志。
 
@@ -22,6 +22,13 @@ SeekFlux 是面向短视频内容平台的多模态搜索与推荐中台。当�
 - `evals/`：评测数据与版本化结果。
 
 首期保持模块化单体，`online-server` 装配 Search/Recommendation 等 Context。只有出现独立扩缩容、发布或故障隔离需求后，才将模块拆成服务。
+
+## 当前可操作页面
+
+- 内容画像管理：`http://localhost:8081/admin.html`
+- 关键词搜索：`http://localhost:8080/`
+
+管理页可以登记内容、导入演示数据、查询异步状态和调整画像；搜索页可以输入关键词或自然问题并展示 Elasticsearch 返回的内容结果。完整启动和实验见 [Step 2 学习文档](docs/learning/step-02-keyword-search.md)。
 
 ## 环境要求
 
@@ -88,9 +95,9 @@ mvn validate
 
 ## 当前刻意未做
 
-- 尚未实现 Elasticsearch Mapping；内容进入检索索引属于 Step 2；
 - 当前画像 Worker 只根据提交元数据生成可重复的基础画像，尚未接入 ASR、OCR、视觉理解或模型服务；
-- 尚未实现搜索、Feed、互动、实时特征和模型排序业务；
+- 当前搜索是可解释的关键词基线，尚未实现专业中文分词、语义向量召回和 Cursor 深分页；
+- 尚未实现 Feed、互动、实时特征和模型排序业务；
 - 没有把九个 Context 拆成九个进程。
 
-下一阶段优先实现关键词搜索基线，再依次推进 Feed、曝光/行为闭环、实时特征和模型排序。Step 1 的实现与学习说明见 [内容登记与画像发布](docs/learning/step-01-content-pipeline.md)。
+下一阶段优先实现 Feed 基线，再依次推进曝光/行为闭环、实时特征和模型排序。已完成切片见 [学习路线](docs/learning/README.md)。

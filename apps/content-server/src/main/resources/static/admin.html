@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>SeekFlux 内容画像管理</title>
+  <style>
+    :root{--ink:#17202a;--muted:#65727e;--paper:#f5f2e9;--card:#fffdf7;--line:#d8d2c2;--accent:#d94f38;--green:#19745b}*{box-sizing:border-box}body{margin:0;background:linear-gradient(135deg,#efe8d8,#f7f5ef 55%,#e7efe9);color:var(--ink);font:15px/1.55 system-ui,sans-serif}.shell{max-width:1100px;margin:auto;padding:38px 20px 70px}header{display:flex;justify-content:space-between;gap:20px;align-items:flex-end;margin-bottom:28px}h1{font:700 clamp(30px,5vw,54px)/1.05 Georgia,serif;margin:0}.eyebrow{color:var(--accent);font-weight:800;letter-spacing:.16em;text-transform:uppercase}.sub{color:var(--muted);max-width:680px}.nav{color:var(--green);font-weight:700}.grid{display:grid;grid-template-columns:1fr 1fr;gap:20px}.card{background:rgba(255,253,247,.9);border:1px solid var(--line);border-radius:18px;padding:22px;box-shadow:0 16px 45px #4b493f14}h2{margin:0 0 14px;font:700 23px Georgia,serif}label{display:block;font-weight:700;margin:12px 0 5px}input,textarea{width:100%;border:1px solid var(--line);border-radius:10px;background:white;padding:11px 12px;font:inherit}textarea{min-height:86px;resize:vertical}.row{display:grid;grid-template-columns:1fr 1fr;gap:10px}.actions{display:flex;gap:9px;flex-wrap:wrap;margin-top:16px}button{border:0;border-radius:999px;padding:10px 17px;background:var(--ink);color:white;font-weight:750;cursor:pointer}button.primary{background:var(--accent)}button.soft{background:var(--green)}button:disabled{opacity:.45}.status{margin-top:16px;padding:13px;border-radius:11px;background:#f0eee6;white-space:pre-wrap;word-break:break-word;min-height:50px}.badge{display:inline-block;border-radius:999px;padding:3px 9px;background:#dcebe4;color:var(--green);font-weight:800}.wide{grid-column:1/-1}.hint{color:var(--muted);font-size:13px}@media(max-width:760px){header{display:block}.grid{grid-template-columns:1fr}.wide{grid-column:auto}.row{grid-template-columns:1fr}}
+  </style>
+</head>
+<body><main class="shell">
+  <header><div><div class="eyebrow">Content Studio · Step 2</div><h1>内容画像管理</h1><p class="sub">登记内容、观察异步画像状态，也可以人工调整画像后重新发布。所有操作都调用真实 Content API。</p></div><a class="nav" href="http://localhost:8080/">打开搜索页 →</a></header>
+  <section class="grid">
+    <article class="card"><h2>1. 登记内容</h2>
+      <label>标题</label><input id="title" value="杭州周末露营路线">
+      <label>描述</label><textarea id="description">从市区出发的一日露营与日落路线，适合新手和亲子家庭。</textarea>
+      <div class="row"><div><label>创建者</label><input id="creator" value="demo-editor"></div><div><label>标签（逗号分隔）</label><input id="sourceTags" value="露营,杭州,周末,亲子"></div></div>
+      <label>媒体地址</label><input id="mediaUri" value="https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4">
+      <div class="actions"><button class="primary" onclick="submitContent()">登记内容</button><button class="soft" onclick="seedDemo()">导入 5 条演示内容</button></div>
+      <div id="submitStatus" class="status">等待操作</div>
+    </article>
+    <article class="card"><h2>2. 查询与加载画像</h2>
+      <label>内容 ID</label><input id="contentId" placeholder="登记后会自动填入">
+      <div class="actions"><button onclick="loadContent()">查询状态</button><button onclick="pollContent()">等待发布完成</button></div>
+      <div id="contentStatus" class="status">尚未查询</div>
+      <p class="hint">正常链路：SUBMITTED → PROFILE_READY → PUBLISHED。Worker 和 Kafka 运行时一般几秒内完成。</p>
+    </article>
+    <article class="card wide"><h2>3. 人工配置画像并重新发布</h2>
+      <div class="row"><div><label>画像版本</label><input id="profileVersion" type="number" min="1" value="2"></div><div><label>画像标签（逗号分隔）</label><input id="profileTags" value="亲子露营,杭州周边,新手路线"></div></div>
+      <label>画像摘要</label><textarea id="summary">适合亲子家庭和露营新手的杭州周边周末路线，包含日落观景建议。</textarea>
+      <label>转写文本（可选）</label><textarea id="transcript" placeholder="后续可由 ASR 自动生成"></textarea>
+      <div class="actions"><button class="primary" onclick="saveAndPublish()">保存画像并发布</button></div>
+      <div id="profileStatus" class="status">先查询一条已发布内容，再修改画像版本和内容。</div>
+    </article>
+  </section>
+</main><script>
+const $=id=>document.getElementById(id), tags=id=>$(id).value.split(/[,，]/).map(x=>x.trim()).filter(Boolean);
+async function api(url,options={}){const res=await fetch(url,{headers:{'Content-Type':'application/json'},...options});const data=await res.json().catch(()=>({}));if(!res.ok)throw new Error(data.message||`${res.status} ${res.statusText}`);return data}
+async function submitOne(item){return api('/v1/contents',{method:'POST',body:JSON.stringify(item)})}
+async function submitContent(){try{const data=await submitOne({creatorId:$('creator').value,mediaUri:$('mediaUri').value,title:$('title').value,description:$('description').value,sourceTags:tags('sourceTags')});$('contentId').value=data.contentId;$('submitStatus').textContent=`已登记：${data.contentId}\n状态：${data.status}`;$('contentStatus').textContent=JSON.stringify(data,null,2)}catch(e){$('submitStatus').textContent='失败：'+e.message}}
+async function loadContent(){try{const data=await api('/v1/contents/'+$('contentId').value.trim());$('contentStatus').textContent=`状态：${data.status}\n`+JSON.stringify(data,null,2);if(data.profile){$('profileVersion').value=data.profile.version+1;$('summary').value=data.profile.summary;$('profileTags').value=data.profile.tags.join(', ');$('transcript').value=data.profile.transcript||''}return data}catch(e){$('contentStatus').textContent='失败：'+e.message;throw e}}
+async function pollContent(){for(let i=0;i<20;i++){const data=await loadContent();if(data.status==='PUBLISHED')return;await new Promise(r=>setTimeout(r,1000))}$('contentStatus').textContent+='\n等待超时，请确认 Worker、Kafka 和 Elasticsearch 是否运行。'}
+async function saveAndPublish(){const id=$('contentId').value.trim();if(!id){$('profileStatus').textContent='请先填写内容 ID';return}try{let data=await api(`/v1/contents/${id}/profile`,{method:'PUT',body:JSON.stringify({profileVersion:+$('profileVersion').value,summary:$('summary').value,tags:tags('profileTags'),transcript:$('transcript').value})});data=await api(`/v1/contents/${id}/publish`,{method:'POST'});$('profileStatus').textContent=`画像已重新发布：版本 ${data.profile.version}，聚合版本 ${data.version}`;await loadContent()}catch(e){$('profileStatus').textContent='失败：'+e.message}}
+async function seedDemo(){const samples=[
+['杭州西湖骑行攻略','沿西湖杨公堤和北山街骑行，包含租车点与日落机位。',['杭州','骑行','西湖']],
+['新手咖啡手冲教程','从研磨度、水温到三段注水，五分钟学会基础手冲。',['咖啡','教程','手冲']],
+['上海亲子周末博物馆','适合雨天的自然博物馆参观路线与预约建议。',['上海','亲子','博物馆']],
+['川西秋季自驾路线','成都出发经过康定、新都桥的五日摄影自驾计划。',['川西','自驾','摄影']],
+['居家番茄牛腩做法','少油版本番茄牛腩，讲解炖煮时间和调味比例。',['美食','牛腩','家常菜']]
+];$('submitStatus').textContent='正在登记演示内容…';let ids=[];for(const [title,description,sourceTags] of samples){const data=await submitOne({creatorId:'seekflux-demo',mediaUri:'https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4',title,description,sourceTags});ids.push(data.contentId)}$('contentId').value=ids[0];$('submitStatus').textContent=`已登记 ${ids.length} 条演示内容：\n`+ids.join('\n')}
+</script></body></html>

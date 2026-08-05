@@ -12,7 +12,7 @@
 - Worker 消费登记事件，根据标题、描述和来源标签生成基础画像并自动发布；
 - OpenAPI、四种事件 Payload Schema、领域测试和应用测试同步交付。
 
-当前“画像”是确定性的元数据画像，用来先跑通可靠的数据闭环。ASR、OCR、视觉理解、审核和模型服务尚未实现；Elasticsearch 建索引属于 Step 2。
+当前“画像”是确定性的元数据画像，用来先跑通可靠的数据闭环。ASR、OCR、视觉理解、审核和模型服务尚未实现；Elasticsearch 建索引已在 Step 2 接入。
 
 ## 2. 架构位置与完整流程
 
@@ -175,6 +175,6 @@ curl http://localhost:8081/v1/contents/{contentId}
 2. 并发提交两次画像更新，观察乐观锁如何避免覆盖。
 3. 暂停 Kafka 后登记内容，再恢复 Kafka，观察 Outbox 重试并最终发布。
 4. 为 Worker 增加独立的事件去重表，比较它与当前“业务状态幂等”的适用边界。
-5. 在 Step 2 消费 `content.profile.published.v1` 写入 Elasticsearch，并消费撤回事件删除或屏蔽文档。
+5. 阅读 Step 2 的实现：消费 `content.profile.published.v1` 写入 Elasticsearch，并消费撤回事件删除文档。
 
-下一步进入 [架构路线中的 Step 2](00-architecture-and-roadmap.md#步骤-2关键词搜索基线)：让已发布画像真正可被关键词检索。
+下一步进入 [Step 2：已发布画像的关键词检索](step-02-keyword-search.md)：让已发布画像真正可被搜索和展示。

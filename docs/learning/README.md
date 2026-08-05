@@ -12,6 +12,7 @@
 - [00：架构选择与实现路线](00-architecture-and-roadmap.md)：先建立系统全貌，了解模块职责、依赖方向和纵向交付顺序。
 - [Phase 0：工程基线](phase-00-engineering-baseline.md)：当前已经完成的目录、构建、契约和本地基础设施，以及这些工作背后的知识点。
 - [Step 1：内容登记与画像发布](step-01-content-pipeline.md)：沿完整纵向切片学习领域状态机、R2DBC、事务 Outbox、Kafka 和幂等 Worker。
+- [Step 2：已发布画像的关键词检索](step-02-keyword-search.md)：学习事件驱动索引、Elasticsearch 读模型、关键词召回以及两个可操作页面。
 - [阶段学习文档模板](template.md)：以后每完成一个可运行部分时使用。
 
 ## 学习日志
@@ -20,7 +21,7 @@
 | --- | --- | --- | --- | --- |
 | Step 0（Phase 0 工程基线） | 工程可校验，基础设施可启动，边界可定位 | 根 Maven、目录骨架、契约、Deploy | 已完成 | [工程基线](phase-00-engineering-baseline.md) |
 | Step 1 | 内容能够登记、异步处理并发布基础画像 | Content、Persistence、Messaging、Worker | 已完成 | [内容登记与画像发布](step-01-content-pipeline.md) |
-| Step 2 | 用户能通过关键词搜索内容 | Search、Retrieval、Online Server | 待实现 | 实现时新增 |
+| Step 2 | 用户能配置画像，并通过关键词或问题搜索已发布内容 | Search、Retrieval、Worker、Online Server | 已完成 | [关键词检索](step-02-keyword-search.md) |
 | Step 3 | 用户能获得热门、相似和兴趣 Feed | Recommendation、Ranking、UserInterest | 待实现 | 实现时新增 |
 | Step 4 | 曝光、播放和互动形成反馈闭环 | Interaction、Messaging、Persistence | 待实现 | 实现时新增 |
 | Step 5 | 行为在分钟级更新在线特征和短期兴趣 | Realtime Features、Feature、Redis | 待实现 | 实现时新增 |

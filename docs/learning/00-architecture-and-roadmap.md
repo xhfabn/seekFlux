@@ -160,9 +160,9 @@ flowchart LR
 
 实现最小 Content 纵向切片：REST → Use Case → Domain → PostgreSQL/Outbox → Kafka → Worker → 发布画像事件。它建立了搜索和推荐共同依赖的稳定内容输入；写入 Elasticsearch 留在步骤 2，由 Search/Retrieval 边界负责。
 
-### 步骤 2：关键词搜索基线
+### 步骤 2：关键词搜索基线（已完成）
 
-实现 Query、过滤、BM25 召回、规则排序、Cursor 与降级。先得到可解释基线，后续语义召回和模型的收益才能被量化。
+已实现发布事件驱动的 Elasticsearch 索引、字段加权关键词检索、中文问题双字补召回、基础分页，以及画像管理和搜索页面。Cursor、专业中文分词和完整降级继续作为搜索基线的后续演进项；当前可解释结果为后续语义召回和模型提供对照。
 
 ### 步骤 3：Feed 基线
 

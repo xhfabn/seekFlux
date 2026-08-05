@@ -252,6 +252,7 @@ class CreateSeekFluxTopics {
   public static void main(String[] args) throws Exception {
     List<String> names = List.of(
       "interaction.raw.v1", "interaction.validated.v1", "exposure.logged.v1",
+      "content.submitted.v1", "content.profile.ready.v1",
       "content.profile.published.v1", "content.distribution.changed.v1",
       "feature.snapshot.updated.v1", "model.version.activated.v1"
     );
@@ -281,7 +282,7 @@ start_kafka() {
     "${KAFKA_HOME}/bin/kafka-storage.sh" format --standalone -t "${cluster_id}" -c "${CONFIG_DIR}/kafka.generated.properties" >/dev/null
   fi
   rm -f "${LOCAL_DIR}/kafka/run/kafka.pid"
-  nohup setsid env KAFKA_HEAP_OPTS="-Xms256m -Xmx512m" \
+  nohup setsid env KAFKA_HEAP_OPTS="-Xms128m -Xmx128m" \
     KAFKA_LOG4J_OPTS="-Dkafka.logs.dir=${LOCAL_DIR}/kafka/logs" \
     "${KAFKA_HOME}/bin/kafka-server-start.sh" "${CONFIG_DIR}/kafka.generated.properties" \
     >"${LOCAL_DIR}/kafka/logs/server.out" 2>&1 </dev/null &
@@ -311,8 +312,8 @@ ingest.geoip.downloader.enabled: false
 EOF
   mkdir -p "${ELASTICSEARCH_HOME}/config/jvm.options.d"
   cat >"${ELASTICSEARCH_HOME}/config/jvm.options.d/seekflux.options" <<EOF
--Xms512m
--Xmx512m
+-Xms128m
+-Xmx128m
 EOF
   rm -f "${LOCAL_DIR}/elasticsearch/run/elasticsearch.pid"
   if [[ "${EUID}" -eq 0 ]]; then
@@ -333,7 +334,8 @@ EOF
       -p "${LOCAL_DIR}/elasticsearch/run/elasticsearch.pid" \
       >"${LOCAL_DIR}/elasticsearch/logs/console.log" 2>&1 </dev/null &
   fi
-  wait_port Elasticsearch 9200 300
+  # 低内存开发容器首次加载 Elasticsearch 模块会明显变慢。
+  wait_port Elasticsearch 9200 420
 }
 
 start_minio() {
