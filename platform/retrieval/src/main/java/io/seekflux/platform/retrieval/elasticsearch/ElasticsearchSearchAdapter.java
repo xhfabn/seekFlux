@@ -4,6 +4,9 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import io.seekflux.ranking.domain.RankingCandidate;
+import io.seekflux.ranking.domain.RetrievalSource;
+import io.seekflux.recommendation.port.out.RecommendationRetriever;
 import io.seekflux.search.port.in.SearchHitView;
 import io.seekflux.search.port.in.SearchQuery;
 import io.seekflux.search.port.in.SearchResultPage;
@@ -24,7 +27,7 @@ import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
 
 @Component
-public final class ElasticsearchSearchAdapter implements SearchIndex, SearchRetriever {
+public final class ElasticsearchSearchAdapter implements SearchIndex, SearchRetriever, RecommendationRetriever {
 
     private final WebClient client;
     private final ObjectMapper objectMapper;
@@ -93,6 +96,63 @@ public final class ElasticsearchSearchAdapter implements SearchIndex, SearchRetr
                         : error(response).then(Mono.empty())))
                 .map(response -> mapResults(query, response,
                         (System.nanoTime() - startedAt) / 1_000_000));
+    }
+
+    @Override
+    public Mono<List<RankingCandidate>> trending(int limit) {
+        ObjectNode root = recommendationBody(limit);
+        root.putObject("query").putObject("match_all");
+        ArrayNode sort = root.putArray("sort");
+        sort.addObject().put("published_at", "desc");
+        sort.addObject().put("content_id", "asc");
+        return searchCandidates(root, RetrievalSource.TRENDING);
+    }
+
+    @Override
+    public Mono<List<RankingCandidate>> byInterests(List<String> topics, int limit) {
+        if (topics == null || topics.isEmpty()) {
+            return Mono.just(List.of());
+        }
+        ObjectNode root = recommendationBody(limit);
+        ObjectNode bool = root.putObject("query").putObject("bool");
+        ArrayNode should = bool.putArray("should");
+        ObjectNode terms = should.addObject().putObject("terms");
+        terms.set("tags", objectMapper.valueToTree(topics));
+        terms.put("boost", 5.0);
+        ObjectNode multiMatch = should.addObject().putObject("multi_match");
+        multiMatch.put("query", String.join(" ", topics));
+        multiMatch.put("type", "best_fields");
+        multiMatch.put("fuzziness", "AUTO");
+        ArrayNode fields = multiMatch.putArray("fields");
+        List.of("tags^5", "title^3", "summary^2", "description", "transcript")
+                .forEach(fields::add);
+        bool.put("minimum_should_match", 1);
+        ArrayNode sort = root.putArray("sort");
+        sort.addObject().put("_score", "desc");
+        sort.addObject().put("published_at", "desc");
+        return searchCandidates(root, RetrievalSource.INTEREST);
+    }
+
+    @Override
+    public Mono<List<RankingCandidate>> similarTo(String contentId, int limit) {
+        return indexReady.then(client.get()
+                .uri("/{index}/_doc/{id}", indexName, contentId)
+                .exchangeToMono(response -> {
+                    if (response.statusCode().value() == 404) {
+                        return response.releaseBody().thenReturn(objectMapper.missingNode());
+                    }
+                    return response.statusCode().is2xxSuccessful()
+                            ? response.bodyToMono(JsonNode.class)
+                            : error(response).then(Mono.empty());
+                }))
+                .flatMap(seed -> {
+                    if (seed.isMissingNode() || !seed.path("found").asBoolean(true)) {
+                        return Mono.just(List.of());
+                    }
+                    return searchCandidates(
+                            similarBody(seed.path("_source"), contentId, limit),
+                            RetrievalSource.SIMILAR);
+                });
     }
 
     private Mono<Void> ensureIndex() {
@@ -173,6 +233,99 @@ public final class ElasticsearchSearchAdapter implements SearchIndex, SearchRetr
         sort.addObject().put("_score", "desc");
         sort.addObject().put("published_at", "desc");
         return root;
+    }
+
+    private ObjectNode recommendationBody(int limit) {
+        if (limit < 1 || limit > 500) {
+            throw new IllegalArgumentException("recommendation retrieval limit must be between 1 and 500");
+        }
+        ObjectNode root = objectMapper.createObjectNode();
+        root.put("size", limit);
+        sourceFields(root);
+        return root;
+    }
+
+    private ObjectNode similarBody(JsonNode seed, String contentId, int limit) {
+        ObjectNode root = recommendationBody(limit);
+        ObjectNode bool = root.putObject("query").putObject("bool");
+        ArrayNode should = bool.putArray("should");
+
+        List<String> tags = new ArrayList<>();
+        seed.path("tags").forEach(tag -> tags.add(tag.asText()));
+        if (!tags.isEmpty()) {
+            ObjectNode terms = should.addObject().putObject("terms");
+            terms.set("tags", objectMapper.valueToTree(tags));
+            terms.put("boost", 6.0);
+        }
+
+        String seedText = String.join(" ", List.of(
+                seed.path("title").asText(""), seed.path("summary").asText("")));
+        if (!seedText.isBlank()) {
+            ObjectNode multiMatch = should.addObject().putObject("multi_match");
+            multiMatch.put("query", seedText);
+            multiMatch.put("type", "best_fields");
+            multiMatch.put("fuzziness", "AUTO");
+            ArrayNode fields = multiMatch.putArray("fields");
+            List.of("title^3", "tags^3", "summary^2", "description", "transcript")
+                    .forEach(fields::add);
+        }
+
+        ObjectNode moreLikeThis = should.addObject().putObject("more_like_this");
+        ArrayNode mltFields = moreLikeThis.putArray("fields");
+        List.of("title", "description", "summary", "transcript").forEach(mltFields::add);
+        ObjectNode likeDocument = moreLikeThis.putArray("like").addObject();
+        likeDocument.put("_index", indexName);
+        likeDocument.put("_id", contentId);
+        moreLikeThis.put("min_term_freq", 1);
+        moreLikeThis.put("min_doc_freq", 1);
+        moreLikeThis.put("max_query_terms", 25);
+        bool.put("minimum_should_match", 1);
+        bool.putArray("must_not").addObject().putObject("term").put("content_id", contentId);
+        ArrayNode sort = root.putArray("sort");
+        sort.addObject().put("_score", "desc");
+        sort.addObject().put("published_at", "desc");
+        return root;
+    }
+
+    private Mono<List<RankingCandidate>> searchCandidates(ObjectNode body, RetrievalSource source) {
+        return indexReady.then(client.post()
+                .uri("/{index}/_search", indexName)
+                .contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(body)
+                .exchangeToMono(response -> response.statusCode().is2xxSuccessful()
+                        ? response.bodyToMono(JsonNode.class)
+                        : error(response).then(Mono.empty())))
+                .map(response -> mapCandidates(response, source));
+    }
+
+    private List<RankingCandidate> mapCandidates(JsonNode response, RetrievalSource retrievalSource) {
+        List<RankingCandidate> candidates = new ArrayList<>();
+        int rank = 1;
+        for (JsonNode hit : response.path("hits").path("hits")) {
+            JsonNode source = hit.path("_source");
+            List<String> tags = new ArrayList<>();
+            source.path("tags").forEach(tag -> tags.add(tag.asText()));
+            candidates.add(new RankingCandidate(
+                    source.path("content_id").asText(),
+                    source.path("creator_id").asText(),
+                    source.path("media_uri").asText(),
+                    source.path("title").asText(),
+                    source.path("description").asText(""),
+                    source.path("summary").asText(),
+                    tags,
+                    source.path("profile_version").asInt(),
+                    Instant.parse(source.path("published_at").asText()),
+                    retrievalSource,
+                    rank++,
+                    hit.path("_score").asDouble(0.0)));
+        }
+        return List.copyOf(candidates);
+    }
+
+    private static void sourceFields(ObjectNode root) {
+        ArrayNode source = root.putArray("_source");
+        List.of("content_id", "creator_id", "media_uri", "title", "description", "summary",
+                "tags", "profile_version", "published_at").forEach(source::add);
     }
 
     private SearchResultPage mapResults(SearchQuery query, JsonNode response, long measuredMillis) {

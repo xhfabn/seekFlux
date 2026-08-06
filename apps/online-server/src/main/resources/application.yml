@@ -9,6 +9,9 @@ spring:
 seekflux:
   search:
     index: ${CONTENT_SEARCH_INDEX:seekflux-content-v1}
+  recommendation:
+    cursor-secret: ${RECOMMENDATION_CURSOR_SECRET:seekflux-local-cursor-secret-change-me}
+    source-timeout-ms: ${RECOMMENDATION_SOURCE_TIMEOUT_MS:250}
 
 server:
   port: ${ONLINE_SERVER_PORT:8080}

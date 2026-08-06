@@ -53,19 +53,46 @@ paths:
   /v1/feed:
     get:
       operationId: getFeed
+      summary: Get a fused and diversified recommendation feed
       tags: [Recommendation]
+      parameters:
+        - $ref: "#/components/parameters/UserIdHeader"
+        - $ref: "#/components/parameters/RecommendationCursor"
+        - $ref: "#/components/parameters/RecommendationPageSize"
+        - $ref: "#/components/parameters/ExplicitInterests"
+        - name: seed_content_id
+          in: query
+          description: Optional recently viewed content used by the similar-content recall source.
+          schema: {type: string, maxLength: 128}
       responses:
         "200":
-          description: Personalized feed page
+          description: Recommendation page with recall explanations and degradation state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecommendationPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
   /v1/contents/{contentId}/similar:
     get:
       operationId: getSimilarContents
+      summary: Get contents similar to one published content
       tags: [Recommendation]
       parameters:
         - $ref: "#/components/parameters/ContentId"
+        - $ref: "#/components/parameters/UserIdHeader"
+        - $ref: "#/components/parameters/RecommendationCursor"
+        - $ref: "#/components/parameters/RecommendationPageSize"
+        - $ref: "#/components/parameters/ExplicitInterests"
       responses:
         "200":
-          description: Similar content page
+          description: Similar-content page, or a marked trending fallback when no similar candidate is available
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecommendationPage"
+        "400":
+          $ref: "#/components/responses/BadRequest"
   /v1/contents:
     post:
       operationId: submitContent
@@ -183,6 +210,29 @@ components:
       schema:
         type: string
         format: uuid
+    UserIdHeader:
+      name: X-User-Id
+      in: header
+      required: false
+      description: Local baseline identity. A gateway-authenticated identity replaces this header in production.
+      schema: {type: string, maxLength: 128, default: anonymous}
+    RecommendationCursor:
+      name: cursor
+      in: query
+      required: false
+      description: Opaque HMAC-signed cursor bound to the user, interests, scenario, and optional seed.
+      schema: {type: string}
+    RecommendationPageSize:
+      name: page_size
+      in: query
+      required: false
+      schema: {type: integer, minimum: 1, maximum: 50, default: 20}
+    ExplicitInterests:
+      name: interests
+      in: query
+      required: false
+      description: Comma-separated explicit interests for the pre-interaction baseline.
+      schema: {type: string, maxLength: 1300}
   schemas:
     SearchRequest:
       type: object
@@ -220,6 +270,60 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/SearchHit"
+    RecommendationItem:
+      type: object
+      required:
+        - contentId
+        - creatorId
+        - mediaUri
+        - title
+        - description
+        - summary
+        - tags
+        - profileVersion
+        - publishedAt
+        - score
+        - sources
+        - reason
+      properties:
+        contentId: {type: string, format: uuid}
+        creatorId: {type: string}
+        mediaUri: {type: string}
+        title: {type: string}
+        description: {type: string}
+        summary: {type: string}
+        tags:
+          type: array
+          items: {type: string}
+        profileVersion: {type: integer, minimum: 1}
+        publishedAt: {type: string, format: date-time}
+        score: {type: number, format: double}
+        sources:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            enum: [TRENDING, INTEREST, SIMILAR]
+        reason: {type: string}
+    RecommendationPage:
+      type: object
+      required: [requestId, items, nextCursor, degraded, unavailableSources]
+      properties:
+        requestId: {type: string}
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/RecommendationItem"
+        nextCursor:
+          oneOf:
+            - type: string
+            - type: "null"
+        degraded: {type: boolean}
+        unavailableSources:
+          type: array
+          items:
+            type: string
+            enum: [TRENDING, INTEREST, SIMILAR]
     SubmitContentRequest:
       type: object
       required: [creatorId, mediaUri, title]
