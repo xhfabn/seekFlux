@@ -43,20 +43,22 @@ SeekFlux 是面向短视频内容平台的多模态搜索与推荐中台。当�
 
 ## 本地基础设施
 
-不使用 Docker 时，可用统一脚本下载、安装并启动 PostgreSQL、Redis、Kafka、Elasticsearch 和 MinIO：
+macOS 上推荐使用根目录统一脚本。它会安装并启动 PostgreSQL、Redis、Kafka、Elasticsearch、MinIO，以及阶段 1～3 所需的 Content Server、Worker Runner 和 Online Server：
 
 ```bash
-./deploy/local/infra.sh start
-./deploy/local/infra.sh status
-./deploy/local/infra.sh stop
+./seekflux.sh doctor
+./seekflux.sh up
+./seekflux.sh status
+./seekflux.sh open
+./seekflux.sh down
 ```
 
-首次 `start` 会把四个二进制组件下载到 `.runtime/`（支持断点续传），数据和日志保存在 `.local/`。MinIO API 使用 `9000`，控制台使用 `9002`，以避开当前开发环境占用的 `9001`。
+首次 `up` 会通过 Homebrew 安装 PostgreSQL，并把其余版本化二进制下载到 `.runtime/`；所有项目数据和日志保存在 `.local/`。MinIO API 使用 `9000`，控制台使用 `9002`。中间件版本统一维护在 `deploy/local/versions.env`，以后升级后重新运行 `install` 或 `up` 即可。详细命令见 [macOS 本地运行脚本](deploy/local/README.md)。
 
-只下载和安装、不启动服务：
+只安装、不启动服务：
 
 ```bash
-./deploy/local/infra.sh download
+./seekflux.sh install
 ```
 
 Docker Compose 方式仍然保留如下。
