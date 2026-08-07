@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 async function render() {
@@ -25,4 +26,12 @@ test("renders the SeekFlux consumer app and operator consoles", async () => {
   assert.match(html, /杭州周末｜3 个新手也能轻松抵达的露营地/);
   assert.match(html, /精选推荐/);
   assert.doesNotMatch(html, /codex-preview|Building your site|react-loading-skeleton/i);
+});
+
+test("keeps operator workspaces task-oriented", async () => {
+  const source = await readFile(new URL("../app/SeekFluxApp.tsx", import.meta.url), "utf8");
+  assert.match(source, /设置身份与兴趣/);
+  assert.match(source, /登记新内容/);
+  assert.match(source, /校准并发布画像/);
+  assert.doesNotMatch(source, /理解用户，|把一条视频，|PRODUCT SHELL/);
 });

@@ -108,6 +108,9 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .pulse-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--mint); box-shadow: 0 0 0 5px rgba(79,196,158,.14); }
 .side-status p { margin: 12px 0 0; color: var(--muted); font-size: 11px; line-height: 1.55; }
 .side-version { padding: 0 7px; color: var(--muted-2); font: 10px var(--font-geist-mono), monospace; }
+.side-return { width: 100%; min-height: 42px; display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: auto; border: 1px solid var(--line); border-radius: 12px; background: rgba(255,255,255,.5); color: var(--muted); font-size: 11px; font-weight: 760; cursor: pointer; }
+.side-return:hover { border-color: #bdbbb3; background: white; color: var(--ink); }
+.side-return .icon { width: 15px; }
 .mobile-header { display: none; }
 
 .main-stage { min-width: 0; padding: 26px clamp(24px,4vw,64px) 70px; }
@@ -218,6 +221,21 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 
 .admin-hero { margin-bottom: 34px; }
 .admin-hero h1 { font-size: clamp(40px,5.3vw,70px); }
+.operator-header { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; margin: 4px 0 18px; }
+.operator-label { display: block; margin-bottom: 7px; color: var(--orange); font: 700 9px var(--font-geist-mono), monospace; letter-spacing: .12em; }
+.operator-header h1 { margin: 0; font-size: clamp(30px,3.8vw,48px); line-height: 1; letter-spacing: -.055em; }
+.operator-header p { display: flex; align-items: center; gap: 8px; margin: 10px 0 0; color: var(--muted); font-size: 11px; }
+.operator-header p i { width: 18px; height: 1px; background: var(--line); }
+.task-guide { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 9px; margin: 0 0 18px; padding: 0; list-style: none; }
+.task-guide li { min-width: 0; display: flex; align-items: center; gap: 11px; padding: 13px 14px; border: 1px solid var(--line); border-radius: 13px; background: rgba(255,255,255,.45); }
+.task-guide li.active { border-color: #f0a48f; background: #fff4ef; }
+.task-guide li.done { border-color: #b8dece; background: #eef9f4; }
+.task-number { width: 27px; height: 27px; display: grid; place-items: center; flex: none; border-radius: 50%; background: var(--paper-2); color: var(--muted); font-size: 10px; font-weight: 850; }
+.task-guide li.active .task-number { background: var(--orange); color: white; }
+.task-guide li.done .task-number { background: #277b62; color: white; }
+.task-guide strong, .task-guide small { display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.task-guide strong { font-size: 11px; }
+.task-guide small { margin-top: 3px; color: var(--muted); font-size: 9px; }
 .panel { overflow: hidden; border: 1px solid var(--line); border-radius: 21px; background: rgba(251,250,245,.93); box-shadow: var(--shadow); }
 .panel-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 21px 23px 17px; border-bottom: 1px solid var(--line); }
 .panel-body { padding: 21px 23px 24px; }
@@ -312,6 +330,12 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .pipeline-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding: 0 22px 18px; }
 .profile-editor { grid-column: 1 / -1; }
 .profile-shell { display: grid; grid-template-columns: minmax(250px,.65fr) minmax(0,1.35fr); gap: 24px; padding: 22px 23px 25px; }
+.editor-checklist { align-self: start; display: grid; gap: 10px; padding: 17px; border: 1px solid var(--line); border-radius: 14px; background: var(--paper); }
+.editor-checklist > strong { margin-bottom: 3px; font-size: 12px; }
+.editor-checklist > span { display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 10px; }
+.editor-checklist > span i { width: 22px; height: 22px; display: grid; place-items: center; flex: none; border: 1px solid var(--line); border-radius: 50%; color: var(--muted-2); font-style: normal; font-size: 9px; font-weight: 800; }
+.editor-checklist > span.done { color: #246d55; }
+.editor-checklist > span.done i { border-color: #a9daca; background: var(--mint-soft); color: #246d55; }
 .profile-intro { padding-right: 22px; border-right: 1px solid var(--line); }
 .profile-preview { height: 110px; display: grid; place-content: center; justify-items: center; gap: 6px; border-radius: 14px; color: white; }
 .profile-preview .icon { width: 28px; height: 28px; }
@@ -358,6 +382,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   .feed-scroller { height: calc(100svh - 188px); min-height: 560px; }
   .video-stage { min-height: calc(100svh - 260px); }
   .result-list { max-height: 340px; }
+  .operator-header { align-items: flex-start; }
 }
 
 @media (max-width: 560px) {
@@ -365,6 +390,10 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
   .mobile-tabs { width: 100%; display: grid; grid-template-columns: repeat(3,1fr); }
   .mobile-tabs button { min-height: 34px; }
   .topbar { display: none; }
+  .operator-header { align-items: stretch; flex-direction: column; gap: 14px; margin-top: 8px; }
+  .operator-header .button { align-self: flex-start; }
+  .task-guide { grid-template-columns: 1fr; }
+  .task-guide li { padding: 11px 12px; }
   .consumer-intro, .admin-hero { margin-top: 13px; }
   .consumer-intro h1, .admin-hero h1 { font-size: 43px; }
   .consumer-intro-copy p, .admin-hero-copy p { font-size: 12px; }
@@ -669,10 +698,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 }
 
 @media (max-width: 620px) {
-  .consumer-home-header { grid-template-columns: 1fr; gap: 8px; padding: 12px 0 8px; }
-  .consumer-header-actions { position: absolute; right: 14px; top: 11px; }
-  .consumer-header-actions > button:first-child { display: none; }
-  .consumer-home-search { margin-right: 48px; }
+  .consumer-home-header { display: block; min-height: auto; padding: 12px 0 8px; }
+  .consumer-header-actions { display: none; }
   .consumer-home-search button { padding: 0 13px; }
   .consumer-home-search button .icon { display: none; }
   .consumer-category-tabs { gap: 22px; }

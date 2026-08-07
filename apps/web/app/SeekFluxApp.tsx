@@ -294,7 +294,7 @@ export function SeekFluxApp() {
 
   const [events, setEvents] = useState<InteractionEvent[]>([]);
   const [queueHydrated, setQueueHydrated] = useState(false);
-  const [syncMessage, setSyncMessage] = useState("Interaction API 尚未完成；行为先安全保存在当前浏览器。 ");
+  const [syncMessage, setSyncMessage] = useState("行为暂存在当前浏览器，可在接口可用后批量回传。");
 
   const showToast = useCallback((text: string, error = false) => setToast({ text, error }), []);
 
@@ -598,11 +598,7 @@ export function SeekFluxApp() {
               </button>
             ))}
           </nav>
-          <div className="side-status">
-            <div className="side-status-title"><span className="pulse-dot" /> 当前实现边界</div>
-            <p>搜索、推荐和内容画像已接真实接口；媒体上传与实时行为回流保留清晰占位。</p>
-          </div>
-          <div className="side-version">PRODUCT SHELL / STEP 3</div>
+          <button className="side-return" onClick={() => navigate("discover")}><Icon name="play" /><span>打开发现页</span></button>
         </aside>
       )}
 
@@ -827,45 +823,53 @@ type AudienceProps = {
 function AudienceWorkspace(props: AudienceProps) {
   const interestList = splitTags(props.interests);
   const quickInterests = ["露营", "亲子", "咖啡", "摄影", "旅行", "科技"];
+  const hasEvents = props.events.length > 0;
+  const eventsSynced = props.syncMessage.startsWith("已成功回传");
+  const tasks: TaskGuideItem[] = [
+    { title: "设置兴趣", detail: props.profileSavedAt ? "冷启动画像已保存" : "填写用户 ID 并选择兴趣", state: props.profileSavedAt ? "done" : "active" },
+    { title: "采集行为", detail: eventsSynced ? "行为已采集并回传" : hasEvents ? `已记录 ${props.events.length} 条事件` : "去发现页浏览并产生互动", state: eventsSynced || hasEvents ? "done" : props.profileSavedAt ? "active" : "pending" },
+    { title: "回传信号", detail: eventsSynced ? "事件已提交" : hasEvents ? "将本地队列提交给后端" : "等待行为事件", state: eventsSynced ? "done" : hasEvents ? "active" : "pending" },
+  ];
   function toggleInterest(value: string) {
     const next = interestList.includes(value) ? interestList.filter((item) => item !== value) : [...interestList, value];
     props.setInterests(next.join(", "));
   }
   return (
     <>
-      <section className="admin-hero">
-        <div><div className="eyebrow">Audience / Operator console</div><h1>理解用户，<br />但不假装<em>已经实时。</em></h1></div>
-        <div className="admin-hero-copy"><p>这里管理冷启动兴趣和浏览器行为队列。真实用户画像服务、实时特征存储尚未实现，因此持久化边界会被明确标注。</p><button className="button secondary" onClick={props.goDiscover}>返回 C 端体验 <Icon name="arrow" /></button></div>
+      <section className="operator-header">
+        <div><span className="operator-label">用户运营</span><h1>用户画像</h1><p>设置兴趣 <i /> 采集行为 <i /> 回传信号</p></div>
+        <button className="button secondary" onClick={props.goDiscover}>去发现页采集行为 <Icon name="arrow" /></button>
       </section>
+      <TaskGuide items={tasks} />
 
       <section className="audience-grid">
         <article className="panel profile-console">
-          <div className="panel-header"><div><div className="panel-kicker">Cold-start profile</div><h2>用户冷启动画像</h2></div><span className="status-tag beta">设备本地</span></div>
+          <div className="panel-header"><div><div className="panel-kicker">步骤 1</div><h2>设置身份与兴趣</h2></div><span className="status-tag beta">当前设备</span></div>
           <div className="panel-body">
-            <div className="profile-identity"><span className="avatar large">{props.userId.slice(0, 1).toUpperCase() || "U"}</span><div><strong>{props.userId || "anonymous"}</strong><small>显式兴趣会作为 Feed 多路召回上下文</small></div></div>
+            <div className="profile-identity"><span className="avatar large">{props.userId.slice(0, 1).toUpperCase() || "U"}</span><div><strong>{props.userId || "anonymous"}</strong><small>用于生成第一轮推荐</small></div></div>
             <label><span className="field-label">用户 ID <span>X-User-Id</span></span><input className="input" value={props.userId} onChange={(event) => props.setUserId(event.target.value)} placeholder="demo-user" /></label>
             <label><span className="field-label">显式兴趣 <span>逗号分隔</span></span><input className="input" value={props.interests} onChange={(event) => props.setInterests(event.target.value)} placeholder="露营, 亲子" /></label>
             <div className="interest-picker">{quickInterests.map((item) => <button key={item} className={interestList.includes(item) ? "selected" : ""} onClick={() => toggleInterest(item)}>{interestList.includes(item) ? "✓ " : "+ "}{item}</button>)}</div>
-            <div className="form-actions"><button className="button accent" onClick={props.saveViewerProfile}>保存冷启动画像</button><span className="save-note">{props.profileSavedAt ? `上次保存 ${formatEventTime(props.profileSavedAt)}` : "尚未保存"}</span></div>
-            <div className="boundary-note"><Icon name="info" /><span>当前写入 localStorage，不会伪装成服务端用户画像；接入 Profile / Feature API 后可替换此适配层。</span></div>
+            <div className="form-actions"><button className="button accent" onClick={props.saveViewerProfile}>保存画像</button><span className="save-note">{props.profileSavedAt ? `保存于 ${formatEventTime(props.profileSavedAt)}` : "尚未保存"}</span></div>
+            <div className="boundary-note"><Icon name="info" /><span>画像暂存在当前设备。</span></div>
           </div>
         </article>
 
         <article className="signal-card">
-          <div className="signal-head"><div><div className="panel-kicker">Behavior signal</div><h2>行为信号概览</h2></div><Icon name="pulse" /></div>
+          <div className="signal-head"><div><div className="panel-kicker">步骤 2</div><h2>行为信号</h2></div><Icon name="pulse" /></div>
           <div className="signal-stats"><div><strong>{props.eventCounts.exposures}</strong><span>曝光</span></div><div><strong>{props.eventCounts.actions}</strong><span>主动行为</span></div><div><strong>{new Set(props.events.map((event) => event.contentId)).size}</strong><span>内容数</span></div></div>
-          <div className="signal-map"><span>曝光</span><i /><span>互动</span><i /><span className="planned">实时兴趣</span><i /><span className="planned">再排序</span></div>
-          <p>前两段已经由前端记录；后两段等待 Interaction API、Kafka / Flink 与在线特征存储。</p>
+          <div className="signal-map"><span>曝光</span><i /><span>互动</span><i /><span className="planned">兴趣</span><i /><span className="planned">推荐</span></div>
+          <p>{hasEvents ? "已有可回传信号，请在下方检查事件队列。" : "去发现页浏览、查看相似内容或减少不感兴趣内容。"}</p>
         </article>
 
         <article className="panel queue-console">
-          <div className="panel-header"><div><div className="panel-kicker">Interaction buffer</div><h2>行为事件队列</h2></div><span className="status-tag planned">接口占位</span></div>
+          <div className="panel-header"><div><div className="panel-kicker">步骤 3</div><h2>回传行为事件</h2></div><span className="status-tag planned">本地队列</span></div>
           <div className="queue-list">
             {props.events.length ? props.events.slice(0, 40).map((event) => (
               <div className="queue-item" key={event.eventId}><span className="event-type">{event.eventType}</span><span className="event-content">{shortId(event.contentId)}</span><span className="event-position">#{event.position}</span><span className="event-time">{formatEventTime(event.eventTime)}</span></div>
-            )) : <EmptyState symbol="0" title="还没有行为信号" text="去 C 端发现页刷几条内容，曝光、喜欢与负反馈会进入这里。" />}
+            )) : <EmptyState symbol="0" title="暂无行为事件" text="先去发现页浏览内容，事件会自动出现在这里。" />}
           </div>
-          <div className="queue-footer"><div className="result-banner">{props.syncMessage}</div><div className="form-actions"><button className="button accent" disabled={!props.events.length || props.busy === "sync"} onClick={() => void props.syncInteractions()}>尝试批量回传</button><button className="button ghost" disabled={!props.events.length} onClick={props.clearEvents}>清空本地队列</button></div></div>
+          <div className="queue-footer"><div className="result-banner">{props.syncMessage}</div><div className="form-actions"><button className="button accent" disabled={!props.events.length || props.busy === "sync"} onClick={() => void props.syncInteractions()}>回传队列</button><button className="button ghost" disabled={!props.events.length} onClick={props.clearEvents}>清空队列</button></div></div>
         </article>
       </section>
     </>
@@ -885,23 +889,32 @@ type StudioProps = {
 };
 
 function StudioWorkspace(props: StudioProps) {
-  const pipeline = [["内容登记", "PostgreSQL + Outbox"], ["任务投递", "Kafka"], ["画像生成", "Worker"], ["质量门禁", "Version check"], ["索引发布", "Elasticsearch"]];
+  const pipeline = [["内容登记", "保存标题与媒体地址"], ["任务投递", "进入异步处理队列"], ["画像生成", "生成摘要与标签"], ["质量检查", "确认画像版本"], ["索引发布", "进入搜索和推荐"]];
+  const hasContent = Boolean(props.contentId);
+  const profileReady = props.content?.status === "PROFILE_READY" || props.content?.status === "PUBLISHED";
+  const published = props.content?.status === "PUBLISHED";
+  const tasks: TaskGuideItem[] = [
+    { title: "登记内容", detail: hasContent ? "已生成内容 ID" : "填写媒体地址和标题", state: hasContent ? "done" : "active" },
+    { title: "查看处理", detail: profileReady ? "画像已生成" : hasContent ? "查询或等待处理状态" : "等待内容登记", state: profileReady ? "done" : hasContent ? "active" : "pending" },
+    { title: "校准发布", detail: published ? "内容已进入发现页" : profileReady ? "检查标签与摘要后发布" : "等待画像生成", state: published ? "done" : profileReady ? "active" : "pending" },
+  ];
   return (
     <>
-      <section className="admin-hero">
-        <div><div className="eyebrow">Content / Creator console</div><h1>把一条视频，<br />变成<em>可发现内容。</em></h1></div>
-        <div className="admin-hero-copy"><p>这是创作者与内部运营使用的 B 端工作台：登记媒体、观察异步画像、人工校准，再发布到搜索与推荐索引。</p><button className="button secondary" onClick={props.goDiscover}>查看 C 端呈现 <Icon name="arrow" /></button></div>
+      <section className="operator-header">
+        <div><span className="operator-label">创作者中心</span><h1>内容工作台</h1><p>登记内容 <i /> 查看处理 <i /> 校准发布</p></div>
+        <button className="button secondary" onClick={props.goDiscover}>查看发布结果 <Icon name="arrow" /></button>
       </section>
+      <TaskGuide items={tasks} />
 
       <section className="studio-grid">
         <article className="panel upload-console">
-          <div className="panel-header"><div><div className="panel-kicker">New content</div><h2>上传与登记</h2></div><span className="status-tag">Content API 已接通</span></div>
+          <div className="panel-header"><div><div className="panel-kicker">步骤 1</div><h2>登记新内容</h2></div><span className="status-tag">接口可用</span></div>
           <form className="panel-body" onSubmit={props.submitContent}>
             <label className="upload-dropzone">
               <input type="file" accept="video/*" onChange={(event) => props.setSelectedFile(event.target.files?.[0]?.name ?? "")} />
               <span className="upload-icon"><Icon name="upload" /></span>
               <strong>{props.selectedFile || "选择一个视频文件"}</strong>
-              <small>{props.selectedFile ? "已建立本地选择占位；请继续填写可访问的媒体 URI" : "拖放体验位已保留 · 对象存储上传接口待接入"}</small>
+              <small>{props.selectedFile ? "已选择文件；继续填写可访问的媒体地址" : "当前通过媒体地址登记，文件直传待接入"}</small>
             </label>
             <div className="field-grid">
               <label className="wide"><span className="field-label">媒体地址 <span>当前 API 必填</span></span><input className="input" value={props.mediaUri} onChange={(event) => props.setMediaUri(event.target.value)} required placeholder="S3 / HTTPS URI" /></label>
@@ -915,8 +928,8 @@ function StudioWorkspace(props: StudioProps) {
         </article>
 
         <article className="pipeline-console">
-          <div className="pipeline-head"><div><div className="panel-kicker">Processing trace</div><h2>内容处理轨迹</h2></div><span className={`content-state ${props.content?.status.toLowerCase() ?? "idle"}`}>{props.content?.status ?? "IDLE"}</span></div>
-          <div className="content-id-box"><label htmlFor="content-id">Content ID</label><input id="content-id" value={props.contentId} onChange={(event) => props.setContentId(event.target.value)} placeholder="登记后自动填入，也可粘贴已有 ID" /></div>
+          <div className="pipeline-head"><div><div className="panel-kicker">步骤 2</div><h2>查看处理状态</h2></div><span className={`content-state ${props.content?.status.toLowerCase() ?? "idle"}`}>{props.content?.status ?? "IDLE"}</span></div>
+          <div className="content-id-box"><label htmlFor="content-id">内容 ID</label><input id="content-id" value={props.contentId} onChange={(event) => props.setContentId(event.target.value)} placeholder="登记后自动填入，也可粘贴已有 ID" /></div>
           <div className="pipeline">
             {pipeline.map(([name, detail], index) => {
               const state = index < props.currentStage ? "done" : index === props.currentStage && props.content ? "current" : "";
@@ -928,9 +941,14 @@ function StudioWorkspace(props: StudioProps) {
         </article>
 
         <article className="panel profile-editor">
-          <div className="panel-header"><div><div className="panel-kicker">Human in the loop</div><h2>内容画像校准</h2></div><span className="status-tag">版本化发布已接通</span></div>
+          <div className="panel-header"><div><div className="panel-kicker">步骤 3</div><h2>校准并发布画像</h2></div><span className="status-tag">{hasContent ? "可编辑" : "等待登记"}</span></div>
           <div className="profile-shell">
-            <div className="profile-intro"><div className="profile-preview palette-1"><Icon name="spark" /><span>PROFILE</span></div><h3>先校准，再进入搜索和推荐。</h3><p>ASR、OCR 与视觉理解接入前，可以手工填写摘要、标签与转写，复用同一份画像完成和发布契约。</p><code>PUT /profile → POST /publish</code></div>
+            <div className="editor-checklist">
+              <strong>发布前检查</strong>
+              <span className={hasContent ? "done" : ""}><i>{hasContent ? "✓" : "1"}</i> 已关联内容 ID</span>
+              <span className={props.profileSummary && props.profileTags ? "done" : ""}><i>{props.profileSummary && props.profileTags ? "✓" : "2"}</i> 已补充标签与摘要</span>
+              <span className={published ? "done" : ""}><i>{published ? "✓" : "3"}</i> 发布到搜索和推荐</span>
+            </div>
             <form onSubmit={props.publishProfile}>
               <div className="field-grid">
                 <label><span className="field-label">画像版本</span><input className="input" type="number" min={1} value={props.profileVersion} onChange={(event) => props.setProfileVersion(Number(event.target.value))} /></label>
@@ -938,12 +956,27 @@ function StudioWorkspace(props: StudioProps) {
                 <label className="wide"><span className="field-label">画像摘要</span><textarea className="textarea" value={props.profileSummary} onChange={(event) => props.setProfileSummary(event.target.value)} required /></label>
                 <label className="wide"><span className="field-label">ASR 转写 <span>当前可选</span></span><textarea className="textarea" value={props.transcript} onChange={(event) => props.setTranscript(event.target.value)} placeholder="粘贴语音转写文本，用于检索召回…" /></label>
               </div>
-              <div className="form-actions"><button className="button" disabled={!props.contentId || props.busy === "profile-publish"}>保存并发布</button><button type="button" className="button danger-ghost" disabled={!props.contentId || props.busy === "content-withdraw"} onClick={() => void props.withdrawContent()}>撤回内容</button></div>
+              <div className="form-actions"><button className="button" disabled={!props.contentId || props.busy === "profile-publish"}>保存画像并发布</button><button type="button" className="button danger-ghost" disabled={!props.contentId || props.busy === "content-withdraw"} onClick={() => void props.withdrawContent()}>撤回内容</button></div>
             </form>
           </div>
         </article>
       </section>
     </>
+  );
+}
+
+type TaskGuideItem = { title: string; detail: string; state: "done" | "active" | "pending" };
+
+function TaskGuide({ items }: { items: TaskGuideItem[] }) {
+  return (
+    <ol className="task-guide" aria-label="操作步骤">
+      {items.map((item, index) => (
+        <li className={item.state} key={item.title}>
+          <span className="task-number">{item.state === "done" ? "✓" : index + 1}</span>
+          <span><strong>{item.title}</strong><small>{item.detail}</small></span>
+        </li>
+      ))}
+    </ol>
   );
 }
 
