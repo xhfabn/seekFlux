@@ -6,7 +6,6 @@ import io.seekflux.content.application.ContentApplicationService;
 import io.seekflux.content.domain.ContentId;
 import io.seekflux.content.port.in.CompleteContentProfileCommand;
 import io.seekflux.content.port.in.ContentUseCase;
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import org.springframework.kafka.annotation.KafkaListener;
@@ -47,9 +46,8 @@ public final class BasicContentProfileWorker {
 
         CompleteContentProfileCommand command = new CompleteContentProfileCommand(
                 contentId, 1, summary, tags, "");
-        contentUseCase.completeProfile(command)
-                .then(contentUseCase.publish(contentId))
-                .block(Duration.ofSeconds(30));
+        contentUseCase.completeProfile(command);
+        contentUseCase.publish(contentId);
     }
 
     private static String requiredText(JsonNode payload, String field) {

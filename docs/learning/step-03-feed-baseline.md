@@ -22,9 +22,10 @@ flowchart LR
     User[Feed 页面 / API] --> API[RecommendationController]
     API --> Rec[RecommendationApplicationService]
     Rec --> Interest[ExplicitInterestService]
-    Rec -->|并行| Trending[TRENDING Retriever]
-    Rec -->|并行| Topic[INTEREST Retriever]
-    Rec -->|并行| Similar[SIMILAR Retriever]
+    Rec --> Pool[有界召回线程池]
+    Pool -->|并行| Trending[TRENDING Retriever]
+    Pool -->|并行| Topic[INTEREST Retriever]
+    Pool -->|并行| Similar[SIMILAR Retriever]
     Trending --> ES[(Elasticsearch)]
     Topic --> ES
     Similar --> ES
@@ -67,7 +68,9 @@ API 返回 `score`、`sources` 和 `reason`，因此可以解释一条内容为�
 
 Cursor 包含版本、下一页偏移、过期时间和请求指纹，并使用 HMAC-SHA256 签名。指纹绑定场景、用户、兴趣和种子内容，所以不能把 A 用户或 A 兴趣下的 Cursor 用到另一请求；默认 15 分钟过期。当前候选规模固定为 200，适合基线实验；后续规模化时应下推为各 Retriever 的 `search_after` 边界。
 
-三个召回源分别应用 250 ms 超时。单路错误或超时不会中断整个 Feed，而是在响应中返回：
+三个召回源只在 `seekflux-recall-*` 命名的有界线程池内通过 `CompletableFuture` 并行，默认核心线程 4、最大线程 8、队列 100，单路超时 1500 ms。HTTP Controller、领域 Port 和应用服务仍使用普通同步返回值；并发是推荐编排内部的局部实现，不扩散成项目级响应式调用链。队列饱和时使用调用方执行作为反压，避免创建无界任务。
+
+单路错误或超时不会中断整个 Feed，而是在响应中返回：
 
 ```json
 {

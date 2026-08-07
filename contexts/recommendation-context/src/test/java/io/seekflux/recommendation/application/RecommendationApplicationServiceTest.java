@@ -19,9 +19,11 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.Executor;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import org.junit.jupiter.api.Test;
-import reactor.core.publisher.Mono;
-import reactor.test.StepVerifier;
 
 class RecommendationApplicationServiceTest {
 
@@ -33,51 +35,72 @@ class RecommendationApplicationServiceTest {
         RecommendationRetriever retriever = new StubRetriever(false);
         var service = service(retriever);
 
-        StepVerifier.create(service.feed(new FeedRequest("user-1", List.of("露营"), "seed", null, 1)))
-                .assertNext(page -> {
-                    assertFalse(page.degraded());
-                    assertNotNull(page.nextCursor());
-                    assertTrue(page.items().getFirst().sources().contains("INTEREST"));
-                    assertTrue(page.items().getFirst().sources().contains("TRENDING"));
-                    assertTrue(page.items().stream().allMatch(item -> item.tags().contains("露营")));
-                })
-                .verifyComplete();
+        var page = service.feed(new FeedRequest("user-1", List.of("露营"), "seed", null, 1));
+        assertFalse(page.degraded());
+        assertNotNull(page.nextCursor());
+        assertTrue(page.items().getFirst().sources().contains("INTEREST"));
+        assertTrue(page.items().getFirst().sources().contains("TRENDING"));
+        assertTrue(page.items().stream().allMatch(item -> item.tags().contains("露营")));
     }
 
     @Test
     void keepsServingWhenOneRecallSourceFails() {
         var service = service(new StubRetriever(true));
 
-        StepVerifier.create(service.feed(new FeedRequest("user-1", List.of("露营"), null, null, 10)))
-                .assertNext(page -> {
-                    assertTrue(page.degraded());
-                    assertTrue(page.unavailableSources().contains("INTEREST"));
-                    assertFalse(page.items().isEmpty());
-                })
-                .verifyComplete();
+        var page = service.feed(new FeedRequest("user-1", List.of("露营"), null, null, 10));
+        assertTrue(page.degraded());
+        assertTrue(page.unavailableSources().contains("INTEREST"));
+        assertFalse(page.items().isEmpty());
+    }
+
+    @Test
+    void degradesARecallThatExceedsItsTimeoutOnTheDedicatedExecutor() {
+        RecommendationRetriever slowRetriever = new StubRetriever(false) {
+            @Override
+            public List<RankingCandidate> byInterests(List<String> topics, int limit) {
+                try {
+                    Thread.sleep(500);
+                } catch (InterruptedException exception) {
+                    Thread.currentThread().interrupt();
+                }
+                return super.byInterests(topics, limit);
+            }
+        };
+        ExecutorService executor = Executors.newFixedThreadPool(2);
+        try {
+            var service = service(
+                    slowRetriever,
+                    new EmptyInterestRepository(),
+                    executor,
+                    Duration.ofMillis(25));
+
+            var page = service.feed(new FeedRequest("user-1", List.of("露营"), null, null, 10));
+
+            assertTrue(page.degraded());
+            assertTrue(page.unavailableSources().contains("INTEREST"));
+            assertFalse(page.items().isEmpty());
+        } finally {
+            executor.shutdownNow();
+        }
     }
 
     @Test
     void loadsThePersistedProfileWhenTheFeedRequestHasNoInterestOverride() {
         UserInterestRepository repository = new UserInterestRepository() {
             @Override
-            public Mono<InterestProfile> findByUserId(String userId) {
-                return Mono.just(new InterestProfile(userId, List.of("咖啡"), NOW));
+            public Optional<InterestProfile> findByUserId(String userId) {
+                return Optional.of(new InterestProfile(userId, List.of("咖啡"), NOW));
             }
 
             @Override
-            public Mono<Void> save(InterestProfile profile) {
-                return Mono.empty();
+            public void save(InterestProfile profile) {
             }
         };
         var service = service(new StubRetriever(false), repository);
 
-        StepVerifier.create(service.feed(new FeedRequest("user-1", List.of(), null, null, 10)))
-                .assertNext(page -> {
-                    assertFalse(page.items().isEmpty());
-                    assertTrue(page.items().stream().allMatch(item -> item.tags().contains("咖啡")));
-                })
-                .verifyComplete();
+        var page = service.feed(new FeedRequest("user-1", List.of(), null, null, 10));
+        assertFalse(page.items().isEmpty());
+        assertTrue(page.items().stream().allMatch(item -> item.tags().contains("咖啡")));
     }
 
     @Test
@@ -103,9 +126,9 @@ class RecommendationApplicationServiceTest {
     void cursorContinuesWithoutRepeatingTheFirstItem() {
         var service = service(new StubRetriever(false));
         FeedRequest firstRequest = new FeedRequest("user-1", List.of("露营"), "seed", null, 1);
-        var firstPage = service.feed(firstRequest).block();
+        var firstPage = service.feed(firstRequest);
         var secondPage = service.feed(new FeedRequest(
-                "user-1", List.of("露营"), "seed", firstPage.nextCursor(), 1)).block();
+                "user-1", List.of("露营"), "seed", firstPage.nextCursor(), 1));
 
         assertNotNull(firstPage);
         assertNotNull(secondPage);
@@ -119,13 +142,22 @@ class RecommendationApplicationServiceTest {
     private static RecommendationApplicationService service(
             RecommendationRetriever retriever,
             UserInterestRepository repository) {
+        return service(retriever, repository, Runnable::run, Duration.ofMillis(100));
+    }
+
+    private static RecommendationApplicationService service(
+            RecommendationRetriever retriever,
+            UserInterestRepository repository,
+            Executor executor,
+            Duration timeout) {
         return new RecommendationApplicationService(
                 retriever,
                 new ExplicitInterestService(CLOCK, repository),
                 new RuleRankingService(),
                 new SignedRecommendationCursorCodec("test-secret-at-least-16-characters"),
                 CLOCK,
-                Duration.ofMillis(100));
+                timeout,
+                executor);
     }
 
     private static RankingCandidate candidate(String id, RetrievalSource source, int rank, List<String> tags) {
@@ -134,7 +166,7 @@ class RecommendationApplicationServiceTest {
                 "summary-" + id, tags, 1, NOW.minusSeconds(rank * 60L), source, rank, 1.0 / rank);
     }
 
-    private static final class StubRetriever implements RecommendationRetriever {
+    private static class StubRetriever implements RecommendationRetriever {
         private final boolean failInterests;
 
         private StubRetriever(boolean failInterests) {
@@ -142,34 +174,34 @@ class RecommendationApplicationServiceTest {
         }
 
         @Override
-        public Mono<List<RankingCandidate>> trending(int limit) {
-            return Mono.just(List.of(
+        public List<RankingCandidate> trending(int limit) {
+            return List.of(
                     candidate("camp", RetrievalSource.TRENDING, 1, List.of("露营")),
-                    candidate("coffee", RetrievalSource.TRENDING, 2, List.of("咖啡"))));
+                    candidate("coffee", RetrievalSource.TRENDING, 2, List.of("咖啡")));
         }
 
         @Override
-        public Mono<List<RankingCandidate>> byInterests(List<String> topics, int limit) {
-            return failInterests
-                    ? Mono.error(new IllegalStateException("interest source unavailable"))
-                    : Mono.just(List.of(candidate("camp", RetrievalSource.INTEREST, 1, List.of("露营"))));
+        public List<RankingCandidate> byInterests(List<String> topics, int limit) {
+            if (failInterests) {
+                throw new IllegalStateException("interest source unavailable");
+            }
+            return List.of(candidate("camp", RetrievalSource.INTEREST, 1, List.of("露营")));
         }
 
         @Override
-        public Mono<List<RankingCandidate>> similarTo(String contentId, int limit) {
-            return Mono.just(List.of(candidate("similar", RetrievalSource.SIMILAR, 1, List.of("露营"))));
+        public List<RankingCandidate> similarTo(String contentId, int limit) {
+            return List.of(candidate("similar", RetrievalSource.SIMILAR, 1, List.of("露营")));
         }
     }
 
     private static final class EmptyInterestRepository implements UserInterestRepository {
         @Override
-        public Mono<InterestProfile> findByUserId(String userId) {
-            return Mono.empty();
+        public Optional<InterestProfile> findByUserId(String userId) {
+            return Optional.empty();
         }
 
         @Override
-        public Mono<Void> save(InterestProfile profile) {
-            return Mono.empty();
+        public void save(InterestProfile profile) {
         }
     }
 }

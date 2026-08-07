@@ -11,9 +11,13 @@ import io.seekflux.userinterest.port.in.UserInterestUseCase;
 import io.seekflux.userinterest.port.out.UserInterestRepository;
 import java.time.Clock;
 import java.time.Duration;
+import java.util.concurrent.Executor;
+import java.util.concurrent.ThreadPoolExecutor;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
 @Configuration
 class RecommendationConfiguration {
@@ -41,6 +45,22 @@ class RecommendationConfiguration {
         return new SignedRecommendationCursorCodec(secret);
     }
 
+    @Bean(name = "recommendationRecallExecutor")
+    ThreadPoolTaskExecutor recommendationRecallExecutor(
+            @Value("${seekflux.recommendation.recall-pool.core-size:4}") int coreSize,
+            @Value("${seekflux.recommendation.recall-pool.max-size:8}") int maxSize,
+            @Value("${seekflux.recommendation.recall-pool.queue-capacity:100}") int queueCapacity) {
+        ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
+        executor.setCorePoolSize(coreSize);
+        executor.setMaxPoolSize(maxSize);
+        executor.setQueueCapacity(queueCapacity);
+        executor.setThreadNamePrefix("seekflux-recall-");
+        executor.setRejectedExecutionHandler(new ThreadPoolExecutor.CallerRunsPolicy());
+        executor.setWaitForTasksToCompleteOnShutdown(true);
+        executor.setAwaitTerminationSeconds(10);
+        return executor;
+    }
+
     @Bean
     RecommendationUseCase recommendationUseCase(
             RecommendationRetriever retriever,
@@ -48,13 +68,15 @@ class RecommendationConfiguration {
             RankingUseCase ranking,
             SignedRecommendationCursorCodec cursorCodec,
             Clock recommendationClock,
-            @Value("${seekflux.recommendation.source-timeout-ms:250}") long sourceTimeoutMillis) {
+            @Value("${seekflux.recommendation.source-timeout-ms:1500}") long sourceTimeoutMillis,
+            @Qualifier("recommendationRecallExecutor") Executor recallExecutor) {
         return new RecommendationApplicationService(
                 retriever,
                 userInterest,
                 ranking,
                 cursorCodec,
                 recommendationClock,
-                Duration.ofMillis(sourceTimeoutMillis));
+                Duration.ofMillis(sourceTimeoutMillis),
+                recallExecutor);
     }
 }

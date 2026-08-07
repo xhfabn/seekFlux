@@ -5,10 +5,6 @@ spring:
     web-application-type: none
   profiles:
     active: ${SEEKFLUX_ENV:local}
-  r2dbc:
-    url: ${POSTGRES_R2DBC_URL:r2dbc:postgresql://localhost:5432/seekflux}
-    username: ${POSTGRES_USER:seekflux}
-    password: ${POSTGRES_PASSWORD:seekflux_local}
   datasource:
     url: ${POSTGRES_JDBC_URL:jdbc:postgresql://localhost:5432/seekflux}
     username: ${POSTGRES_USER:seekflux}
@@ -28,9 +24,13 @@ spring:
 seekflux:
   search:
     index: ${CONTENT_SEARCH_INDEX:seekflux-content-v1}
+  retrieval:
+    connect-timeout-ms: ${RETRIEVAL_CONNECT_TIMEOUT_MS:1000}
+    read-timeout-ms: ${RETRIEVAL_READ_TIMEOUT_MS:2000}
   outbox:
     relay-delay-ms: ${OUTBOX_RELAY_DELAY_MS:1000}
     batch-size: ${OUTBOX_BATCH_SIZE:50}
+    send-timeout-ms: ${OUTBOX_SEND_TIMEOUT_MS:10000}
   object-storage:
     endpoint: ${S3_ENDPOINT:http://localhost:9000}
     bucket: ${S3_BUCKET:seekflux-artifacts}

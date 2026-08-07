@@ -1,6 +1,7 @@
 package io.seekflux.content.application;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import io.seekflux.content.domain.Content;
 import io.seekflux.content.domain.ContentId;
@@ -16,12 +17,11 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import reactor.core.publisher.Mono;
-import reactor.test.StepVerifier;
 
 class ContentApplicationServiceTest {
 
@@ -45,12 +45,9 @@ class ContentApplicationServiceTest {
                 "周末路线",
                 List.of("露营", "杭州"));
 
-        StepVerifier.create(service.submit(command))
-                .assertNext(view -> {
-                    assertEquals(ContentStatus.SUBMITTED, view.status());
-                    assertEquals(0, view.version());
-                })
-                .verifyComplete();
+        var view = service.submit(command);
+        assertEquals(ContentStatus.SUBMITTED, view.status());
+        assertEquals(0, view.version());
 
         assertEquals(1, repository.contents.size());
         assertEquals(ContentApplicationService.CONTENT_SUBMITTED,
@@ -61,21 +58,18 @@ class ContentApplicationServiceTest {
     void completesAndPublishesAProfileIdempotently() {
         ContentId contentId = service.submit(new SubmitContentCommand(
                         "creator-1", "s3://bucket/video.mp4", "标题", "描述", List.of("标签")))
-                .block().id();
+                .id();
         CompleteContentProfileCommand profile = new CompleteContentProfileCommand(
                 contentId, 1, "标题 — 描述", List.of("标签"), "");
 
-        service.completeProfile(profile).block();
-        service.publish(contentId).block();
-        service.publish(contentId).block();
+        service.completeProfile(profile);
+        service.publish(contentId);
+        service.publish(contentId);
 
-        StepVerifier.create(service.get(contentId))
-                .assertNext(view -> {
-                    assertEquals(ContentStatus.PUBLISHED, view.status());
-                    assertEquals(2, view.version());
-                    assertEquals(1, view.profile().version());
-                })
-                .verifyComplete();
+        var view = service.get(contentId);
+        assertEquals(ContentStatus.PUBLISHED, view.status());
+        assertEquals(2, view.version());
+        assertEquals(1, view.profile().version());
         assertEquals(3, repository.events.size());
         assertEquals(ContentApplicationService.CONTENT_PROFILE_PUBLISHED,
                 repository.events.getLast().eventType());
@@ -83,9 +77,8 @@ class ContentApplicationServiceTest {
 
     @Test
     void reportsMissingContent() {
-        StepVerifier.create(service.get(new ContentId(new UUID(9, 9))))
-                .expectError(ContentNotFoundException.class)
-                .verify();
+        assertThrows(ContentNotFoundException.class,
+                () -> service.get(new ContentId(new UUID(9, 9))));
     }
 
     private static final class InMemoryContentRepository implements ContentRepository {
@@ -94,26 +87,25 @@ class ContentApplicationServiceTest {
         private final List<ContentEvent> events = new ArrayList<>();
 
         @Override
-        public Mono<Content> findById(ContentId contentId) {
-            return Mono.justOrEmpty(contents.get(contentId));
+        public Optional<Content> findById(ContentId contentId) {
+            return Optional.ofNullable(contents.get(contentId));
         }
 
         @Override
-        public Mono<Void> insert(Content content, ContentEvent event) {
+        public void insert(Content content, ContentEvent event) {
             contents.put(content.id(), content);
             events.add(event);
-            return Mono.empty();
         }
 
         @Override
-        public Mono<Boolean> update(Content content, long expectedVersion, ContentEvent event) {
+        public boolean update(Content content, long expectedVersion, ContentEvent event) {
             Content current = contents.get(content.id());
             if (current == null || current.version() != expectedVersion) {
-                return Mono.just(false);
+                return false;
             }
             contents.put(content.id(), content);
             events.add(event);
-            return Mono.just(true);
+            return true;
         }
     }
 }

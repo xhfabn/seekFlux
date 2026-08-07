@@ -5,7 +5,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.seekflux.content.application.ContentApplicationService;
 import io.seekflux.search.port.out.SearchDocument;
 import io.seekflux.search.port.out.SearchIndex;
-import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
@@ -42,7 +41,7 @@ public final class ContentSearchIndexWorker {
                 payload.path("transcript").asText(""),
                 payload.path("profile_version").asInt(),
                 Instant.parse(requiredText(envelope, "event_time")));
-        searchIndex.upsert(document).block(Duration.ofSeconds(30));
+        searchIndex.upsert(document);
     }
 
     @KafkaListener(
@@ -51,7 +50,7 @@ public final class ContentSearchIndexWorker {
     public void removeWithdrawn(String envelopeJson) throws Exception {
         JsonNode payload = objectMapper.readTree(envelopeJson).path("payload");
         if ("WITHDRAWN".equals(payload.path("distribution_status").asText())) {
-            searchIndex.delete(requiredText(payload, "content_id")).block(Duration.ofSeconds(30));
+            searchIndex.delete(requiredText(payload, "content_id"));
         }
     }
 

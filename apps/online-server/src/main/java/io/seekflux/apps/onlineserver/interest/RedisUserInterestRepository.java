@@ -9,36 +9,40 @@ import java.time.Instant;
 import java.util.Base64;
 import java.util.List;
 import java.util.Objects;
-import org.springframework.data.redis.core.ReactiveStringRedisTemplate;
+import java.util.Optional;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Component;
-import reactor.core.publisher.Mono;
 
 @Component
 public final class RedisUserInterestRepository implements UserInterestRepository {
 
     private static final String KEY_PREFIX = "seekflux:user-interest:";
 
-    private final ReactiveStringRedisTemplate redis;
+    private final StringRedisTemplate redis;
     private final ObjectMapper objectMapper;
 
     public RedisUserInterestRepository(
-            ReactiveStringRedisTemplate redis,
+            StringRedisTemplate redis,
             ObjectMapper objectMapper) {
         this.redis = Objects.requireNonNull(redis, "redis must not be null");
         this.objectMapper = Objects.requireNonNull(objectMapper, "objectMapper must not be null");
     }
 
     @Override
-    public Mono<InterestProfile> findByUserId(String userId) {
-        return redis.opsForValue().get(key(userId)).map(json -> decode(userId, json));
+    public Optional<InterestProfile> findByUserId(String userId) {
+        return Optional.ofNullable(redis.opsForValue().get(key(userId)))
+                .map(json -> decode(userId, json));
     }
 
     @Override
-    public Mono<Void> save(InterestProfile profile) {
-        return Mono.fromCallable(() -> objectMapper.writeValueAsString(
-                        new StoredProfile(profile.topics(), profile.updatedAt())))
-                .flatMap(json -> redis.opsForValue().set(key(profile.userId()), json))
-                .then();
+    public void save(InterestProfile profile) {
+        try {
+            String json = objectMapper.writeValueAsString(
+                    new StoredProfile(profile.topics(), profile.updatedAt()));
+            redis.opsForValue().set(key(profile.userId()), json);
+        } catch (JsonProcessingException exception) {
+            throw new IllegalStateException("failed to serialize user interest profile", exception);
+        }
     }
 
     private InterestProfile decode(String userId, String json) {

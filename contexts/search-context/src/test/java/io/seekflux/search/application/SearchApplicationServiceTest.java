@@ -8,23 +8,18 @@ import io.seekflux.search.port.in.SearchResultPage;
 import io.seekflux.search.port.out.SearchRetriever;
 import java.util.List;
 import org.junit.jupiter.api.Test;
-import reactor.core.publisher.Mono;
-import reactor.test.StepVerifier;
 
 class SearchApplicationServiceTest {
 
     @Test
     void delegatesAValidatedQueryToRetriever() {
-        SearchRetriever retriever = query -> Mono.just(
-                new SearchResultPage(query.text(), 0, query.page(), query.size(), 3, List.of()));
+        SearchRetriever retriever = query ->
+                new SearchResultPage(query.text(), 0, query.page(), query.size(), 3, List.of());
         var service = new SearchApplicationService(retriever);
 
-        StepVerifier.create(service.search(new SearchQuery("  杭州露营  ", 0, 10)))
-                .assertNext(result -> {
-                    assertEquals("杭州露营", result.query());
-                    assertEquals(10, result.size());
-                })
-                .verifyComplete();
+        var result = service.search(new SearchQuery("  杭州露营  ", 0, 10));
+        assertEquals("杭州露营", result.query());
+        assertEquals(10, result.size());
     }
 
     @Test

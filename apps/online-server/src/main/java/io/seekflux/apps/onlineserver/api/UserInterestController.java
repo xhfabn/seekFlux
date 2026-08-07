@@ -11,7 +11,6 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
-import reactor.core.publisher.Mono;
 
 @Validated
 @RestController
@@ -25,15 +24,15 @@ public class UserInterestController {
     }
 
     @GetMapping
-    public Mono<UserInterestResponse> get(
+    public UserInterestResponse get(
             @PathVariable("userId") @Size(min = 1, max = 128) String userId) {
-        return userInterest.resolve(userId, List.of()).map(UserInterestResponse::from);
+        return UserInterestResponse.from(userInterest.resolve(userId, List.of()));
     }
 
     @PutMapping
-    public Mono<UserInterestResponse> save(
+    public UserInterestResponse save(
             @PathVariable("userId") @Size(min = 1, max = 128) String userId,
             @Valid @RequestBody UpdateInterestProfileRequest request) {
-        return userInterest.save(userId, request.topics()).map(UserInterestResponse::from);
+        return UserInterestResponse.from(userInterest.save(userId, request.topics()));
     }
 }

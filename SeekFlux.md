@@ -352,7 +352,7 @@ Application → Output Port ← Outbound Adapter
 Domain 不依赖 Spring、Elasticsearch、Redis、Kafka、Flink 或模型 SDK。
 ```
 
-Controller 只负责协议、校验、鉴权上下文和 DTO 转换，不直接查询索引、不拼装排序公式、不修改用户画像。响应式编程用于 I/O 调度，但不渗透领域模型。
+Controller 只负责协议、校验、鉴权上下文和 DTO 转换，不直接查询索引、不拼装排序公式、不修改用户画像。在线接口采用 Spring MVC 和普通返回值，领域 Port 与应用服务不暴露响应式类型；只有多路召回等确有并发收益的局部流程，才使用独立、有界、可监控的线程池。
 
 ### 6.3 聚合与一致性边界
 
@@ -1636,7 +1636,7 @@ feature_bytes_per_second ≈ (Q_search + Q_feed) × K_rank × F_online
 
 | 领域 | 首期推荐 | 选择依据 |
 | --- | --- | --- |
-| 在线服务 | Java 21、Spring Boot、WebFlux | 低延迟 I/O、清晰 DDD 模块、适合展示 Java 后端能力 |
+| 在线服务 | Java 21、Spring Boot、Spring MVC | 普通返回值便于断点调试和事务追踪；高并发扇出按场景使用有界线程池 |
 | 控制面数据库 | PostgreSQL | 内容状态、实验、模型、任务和 Outbox 事务 |
 | 文本检索 | Elasticsearch | BM25、中文分析、过滤、Geo、补全和 Alias |
 | 向量检索 | 首期 ES 向量；规模化评估专用向量库 | 先降低运维面，通过 Port 保持可替换 |

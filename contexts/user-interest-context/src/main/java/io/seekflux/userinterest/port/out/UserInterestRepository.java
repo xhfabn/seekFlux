@@ -1,11 +1,11 @@
 package io.seekflux.userinterest.port.out;
 
 import io.seekflux.userinterest.domain.InterestProfile;
-import reactor.core.publisher.Mono;
+import java.util.Optional;
 
 public interface UserInterestRepository {
 
-    Mono<InterestProfile> findByUserId(String userId);
+    Optional<InterestProfile> findByUserId(String userId);
 
-    Mono<Void> save(InterestProfile profile);
+    void save(InterestProfile profile);
 }

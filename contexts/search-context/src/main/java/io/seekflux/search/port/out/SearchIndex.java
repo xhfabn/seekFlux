@@ -1,10 +1,8 @@
 package io.seekflux.search.port.out;
 
-import reactor.core.publisher.Mono;
-
 public interface SearchIndex {
 
-    Mono<Void> upsert(SearchDocument document);
+    void upsert(SearchDocument document);
 
-    Mono<Void> delete(String contentId);
+    void delete(String contentId);
 }

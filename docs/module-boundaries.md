@@ -23,7 +23,7 @@ adapter/in/   HTTP、Kafka Consumer、Job、管理命令
 adapter/out/  PostgreSQL、Redis、Kafka、Elasticsearch、S3、模型服务
 ```
 
-`domain` 不允许依赖 Spring、Reactor、Kafka、Redis、Elasticsearch、Flink 或模型 SDK。响应式类型停留在 Adapter/Application 边界，不进入领域对象。
+`domain` 不允许依赖 Spring、Reactor、Kafka、Redis、Elasticsearch、Flink 或模型 SDK。输入 Port、输出 Port 和应用服务使用普通 Java 返回值；异步并发只允许在明确的编排点通过命名且有界的执行器引入，不成为跨层接口类型。
 
 ## 物理部署基线
 
@@ -38,4 +38,3 @@ adapter/out/  PostgreSQL、Redis、Kafka、Elasticsearch、S3、模型服务
 ## 拆分触发条件
 
 只有满足至少一项时才考虑拆出独立服务：需要独立扩缩容、需要不同资源类型、发布节奏冲突、故障隔离不足，或团队所有权已经独立。拆分前先确保 Port 和契约稳定。
-

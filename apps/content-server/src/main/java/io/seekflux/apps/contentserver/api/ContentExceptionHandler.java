@@ -6,8 +6,9 @@ import io.seekflux.content.domain.ContentStateException;
 import java.time.Instant;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.support.WebExchangeBindException;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 @RestControllerAdvice
@@ -23,7 +24,11 @@ public final class ContentExceptionHandler {
         return error(HttpStatus.CONFLICT, "CONTENT_STATE_CONFLICT", exception.getMessage());
     }
 
-    @ExceptionHandler({IllegalArgumentException.class, WebExchangeBindException.class})
+    @ExceptionHandler({
+            IllegalArgumentException.class,
+            MethodArgumentNotValidException.class,
+            HttpMessageNotReadableException.class
+    })
     ResponseEntity<ApiError> badRequest(Exception exception) {
         return error(HttpStatus.BAD_REQUEST, "INVALID_REQUEST", exception.getMessage());
     }

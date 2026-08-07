@@ -2,53 +2,60 @@ package io.seekflux.platform.messaging.outbox;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.r2dbc.spi.Row;
+import java.sql.ResultSet;
+import java.sql.SQLException;
 import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.kafka.core.KafkaTemplate;
-import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
-import reactor.core.publisher.Flux;
-import reactor.core.publisher.Mono;
 
 @Component
 public final class KafkaOutboxRelay {
 
     private static final Logger logger = LoggerFactory.getLogger(KafkaOutboxRelay.class);
 
-    private final DatabaseClient databaseClient;
+    private final JdbcClient jdbcClient;
     private final KafkaTemplate<String, String> kafkaTemplate;
     private final ObjectMapper objectMapper;
     private final int batchSize;
+    private final long sendTimeoutMillis;
 
     public KafkaOutboxRelay(
-            DatabaseClient databaseClient,
+            JdbcClient jdbcClient,
             KafkaTemplate<String, String> kafkaTemplate,
             ObjectMapper objectMapper,
-            @Value("${seekflux.outbox.batch-size:50}") int batchSize) {
-        this.databaseClient = databaseClient;
+            @Value("${seekflux.outbox.batch-size:50}") int batchSize,
+            @Value("${seekflux.outbox.send-timeout-ms:10000}") long sendTimeoutMillis) {
+        this.jdbcClient = jdbcClient;
         this.kafkaTemplate = kafkaTemplate;
         this.objectMapper = objectMapper;
         this.batchSize = batchSize;
+        this.sendTimeoutMillis = sendTimeoutMillis;
     }
 
     @Scheduled(fixedDelayString = "${seekflux.outbox.relay-delay-ms:1000}")
     public void relay() {
-        claimBatch()
-                .flatMap(this::publish, 8)
-                .doOnError(error -> logger.error("Outbox relay iteration failed", error))
-                .onErrorResume(error -> Mono.empty())
-                .subscribe();
+        try {
+            for (OutboxRecord record : claimBatch()) {
+                publish(record);
+            }
+        } catch (RuntimeException error) {
+            logger.error("Outbox relay iteration failed", error);
+        }
     }
 
-    Flux<OutboxRecord> claimBatch() {
-        return databaseClient.sql("""
+    List<OutboxRecord> claimBatch() {
+        return jdbcClient.sql("""
                         WITH candidates AS (
                             SELECT event_id
                             FROM outbox.events
@@ -66,21 +73,23 @@ public final class KafkaOutboxRelay {
                                   event.schema_version, event.event_time,
                                   event.created_at, event.payload::text AS payload
                         """)
-                .bind("batchSize", batchSize)
-                .map((row, metadata) -> mapRecord(row))
-                .all();
+                .param("batchSize", batchSize)
+                .query(KafkaOutboxRelay::mapRecord)
+                .list();
     }
 
-    private Mono<Void> publish(OutboxRecord record) {
-        String envelope;
+    private void publish(OutboxRecord record) {
         try {
-            envelope = objectMapper.writeValueAsString(envelope(record));
-        } catch (JsonProcessingException exception) {
-            return markFailed(record.eventId(), exception);
+            String envelope = objectMapper.writeValueAsString(envelope(record));
+            kafkaTemplate.send(record.eventType(), record.aggregateId(), envelope)
+                    .get(sendTimeoutMillis, TimeUnit.MILLISECONDS);
+            markPublished(record.eventId());
+        } catch (InterruptedException exception) {
+            Thread.currentThread().interrupt();
+            markFailed(record.eventId(), exception);
+        } catch (Exception exception) {
+            markFailed(record.eventId(), exception);
         }
-        return Mono.fromFuture(kafkaTemplate.send(record.eventType(), record.aggregateId(), envelope))
-                .flatMap(result -> markPublished(record.eventId()))
-                .onErrorResume(error -> markFailed(record.eventId(), error));
     }
 
     private Map<String, Object> envelope(OutboxRecord record) throws JsonProcessingException {
@@ -95,56 +104,48 @@ public final class KafkaOutboxRelay {
         return envelope;
     }
 
-    private Mono<Void> markPublished(UUID eventId) {
-        return databaseClient.sql("""
+    private void markPublished(UUID eventId) {
+        jdbcClient.sql("""
                         UPDATE outbox.events
                         SET status = 'PUBLISHED', published_at = now(), locked_at = NULL,
                             last_error = NULL
                         WHERE event_id = :eventId AND status = 'PUBLISHING'
                         """)
-                .bind("eventId", eventId)
-                .fetch()
-                .rowsUpdated()
-                .then();
+                .param("eventId", eventId)
+                .update();
     }
 
-    private Mono<Void> markFailed(UUID eventId, Throwable error) {
+    private void markFailed(UUID eventId, Throwable error) {
         String rawMessage = error.getMessage() == null
                 ? error.getClass().getSimpleName()
                 : error.getMessage();
         String message = rawMessage.length() > 2_000 ? rawMessage.substring(0, 2_000) : rawMessage;
-        return databaseClient.sql("""
+        jdbcClient.sql("""
                         UPDATE outbox.events
                         SET status = 'PENDING', attempts = attempts + 1,
                             next_attempt_at = now() + LEAST(attempts + 1, 60) * interval '1 second',
                             locked_at = NULL, last_error = :lastError
                         WHERE event_id = :eventId AND status = 'PUBLISHING'
                         """)
-                .bind("eventId", eventId)
-                .bind("lastError", message)
-                .fetch()
-                .rowsUpdated()
-                .doOnNext(ignored -> logger.warn("Failed to publish outbox event {}: {}", eventId, message))
-                .then();
+                .param("eventId", eventId)
+                .param("lastError", message)
+                .update();
+        logger.warn("Failed to publish outbox event {}: {}", eventId, message);
     }
 
-    private static OutboxRecord mapRecord(Row row) {
+    private static OutboxRecord mapRecord(ResultSet row, int rowNumber) throws SQLException {
         return new OutboxRecord(
-                required(row, "event_id", UUID.class),
-                required(row, "aggregate_id", String.class),
-                required(row, "event_type", String.class),
-                required(row, "schema_version", Integer.class),
-                required(row, "event_time", Instant.class),
-                required(row, "created_at", Instant.class),
-                required(row, "payload", String.class));
+                row.getObject("event_id", UUID.class),
+                row.getString("aggregate_id"),
+                row.getString("event_type"),
+                row.getInt("schema_version"),
+                instant(row, "event_time"),
+                instant(row, "created_at"),
+                row.getString("payload"));
     }
 
-    private static <T> T required(Row row, String column, Class<T> type) {
-        T value = row.get(column, type);
-        if (value == null) {
-            throw new IllegalStateException("outbox column must not be null: " + column);
-        }
-        return value;
+    private static Instant instant(ResultSet row, String column) throws SQLException {
+        return row.getObject(column, OffsetDateTime.class).toInstant();
     }
 
     record OutboxRecord(

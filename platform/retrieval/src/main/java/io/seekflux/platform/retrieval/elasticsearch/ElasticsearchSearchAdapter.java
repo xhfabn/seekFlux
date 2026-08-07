@@ -14,6 +14,10 @@ import io.seekflux.search.port.out.SearchDocument;
 import io.seekflux.search.port.out.SearchIndex;
 import io.seekflux.search.port.out.SearchRetriever;
 import java.time.Instant;
+import java.time.Duration;
+import java.net.http.HttpClient;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -21,33 +25,40 @@ import java.util.Locale;
 import java.util.Set;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
+import org.springframework.http.client.ClientHttpResponse;
+import org.springframework.http.client.JdkClientHttpRequestFactory;
 import org.springframework.stereotype.Component;
-import org.springframework.web.reactive.function.client.ClientResponse;
-import org.springframework.web.reactive.function.client.WebClient;
-import reactor.core.publisher.Mono;
+import org.springframework.web.client.RestClient;
 
 @Component
 public final class ElasticsearchSearchAdapter implements SearchIndex, SearchRetriever, RecommendationRetriever {
 
-    private final WebClient client;
+    private final RestClient client;
     private final ObjectMapper objectMapper;
     private final String indexName;
-    private final Mono<Void> indexReady;
+    private final Object indexMonitor = new Object();
+    private volatile boolean indexReady;
 
     public ElasticsearchSearchAdapter(
-            WebClient.Builder builder,
+            RestClient.Builder builder,
             ObjectMapper objectMapper,
             @Value("${spring.elasticsearch.uris:http://localhost:9200}") String elasticsearchUris,
-            @Value("${seekflux.search.index:seekflux-content-v1}") String indexName) {
+            @Value("${seekflux.search.index:seekflux-content-v1}") String indexName,
+            @Value("${seekflux.retrieval.connect-timeout-ms:1000}") long connectTimeoutMillis,
+            @Value("${seekflux.retrieval.read-timeout-ms:2000}") long readTimeoutMillis) {
         String baseUrl = elasticsearchUris.split(",")[0].trim();
-        this.client = builder.baseUrl(baseUrl).build();
+        HttpClient httpClient = HttpClient.newBuilder()
+                .connectTimeout(Duration.ofMillis(connectTimeoutMillis))
+                .build();
+        JdkClientHttpRequestFactory requestFactory = new JdkClientHttpRequestFactory(httpClient);
+        requestFactory.setReadTimeout(Duration.ofMillis(readTimeoutMillis));
+        this.client = builder.baseUrl(baseUrl).requestFactory(requestFactory).build();
         this.objectMapper = objectMapper;
         this.indexName = indexName;
-        this.indexReady = ensureIndex().cache();
     }
 
     @Override
-    public Mono<Void> upsert(SearchDocument document) {
+    public void upsert(SearchDocument document) {
         ObjectNode body = objectMapper.createObjectNode();
         body.put("content_id", document.contentId());
         body.put("creator_id", document.creatorId());
@@ -63,43 +74,46 @@ public final class ElasticsearchSearchAdapter implements SearchIndex, SearchRetr
                 document.title(), document.description(), document.summary(),
                 String.join(" ", document.tags()), document.transcript())));
 
-        return indexReady.then(client.put()
+        ensureIndex();
+        client.put()
                 .uri("/{index}/_doc/{id}?refresh=wait_for", indexName, document.contentId())
                 .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue(body)
-                .exchangeToMono(this::requireSuccess)
-                .then());
+                .body(body)
+                .exchange((request, response) -> {
+                    requireSuccess(response);
+                    return null;
+                });
     }
 
     @Override
-    public Mono<Void> delete(String contentId) {
-        return indexReady.then(client.delete()
+    public void delete(String contentId) {
+        ensureIndex();
+        client.delete()
                 .uri("/{index}/_doc/{id}?refresh=wait_for", indexName, contentId)
-                .exchangeToMono(response -> {
-                    if (response.statusCode().is2xxSuccessful() || response.statusCode().value() == 404) {
-                        return response.releaseBody();
+                .exchange((request, response) -> {
+                    if (!response.getStatusCode().is2xxSuccessful()
+                            && response.getStatusCode().value() != 404) {
+                        throw requestFailure(response);
                     }
-                    return error(response);
-                }));
+                    return null;
+                });
     }
 
     @Override
-    public Mono<SearchResultPage> search(SearchQuery query) {
+    public SearchResultPage search(SearchQuery query) {
         ObjectNode body = searchBody(query);
         long startedAt = System.nanoTime();
-        return indexReady.then(client.post()
+        ensureIndex();
+        JsonNode response = client.post()
                 .uri("/{index}/_search", indexName)
                 .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue(body)
-                .exchangeToMono(response -> response.statusCode().is2xxSuccessful()
-                        ? response.bodyToMono(JsonNode.class)
-                        : error(response).then(Mono.empty())))
-                .map(response -> mapResults(query, response,
-                        (System.nanoTime() - startedAt) / 1_000_000));
+                .body(body)
+                .exchange((request, result) -> responseBody(result));
+        return mapResults(query, response, (System.nanoTime() - startedAt) / 1_000_000);
     }
 
     @Override
-    public Mono<List<RankingCandidate>> trending(int limit) {
+    public List<RankingCandidate> trending(int limit) {
         ObjectNode root = recommendationBody(limit);
         root.putObject("query").putObject("match_all");
         ArrayNode sort = root.putArray("sort");
@@ -109,9 +123,9 @@ public final class ElasticsearchSearchAdapter implements SearchIndex, SearchRetr
     }
 
     @Override
-    public Mono<List<RankingCandidate>> byInterests(List<String> topics, int limit) {
+    public List<RankingCandidate> byInterests(List<String> topics, int limit) {
         if (topics == null || topics.isEmpty()) {
-            return Mono.just(List.of());
+            return List.of();
         }
         ObjectNode root = recommendationBody(limit);
         ObjectNode bool = root.putObject("query").putObject("bool");
@@ -134,40 +148,44 @@ public final class ElasticsearchSearchAdapter implements SearchIndex, SearchRetr
     }
 
     @Override
-    public Mono<List<RankingCandidate>> similarTo(String contentId, int limit) {
-        return indexReady.then(client.get()
+    public List<RankingCandidate> similarTo(String contentId, int limit) {
+        ensureIndex();
+        JsonNode seed = client.get()
                 .uri("/{index}/_doc/{id}", indexName, contentId)
-                .exchangeToMono(response -> {
-                    if (response.statusCode().value() == 404) {
-                        return response.releaseBody().thenReturn(objectMapper.missingNode());
+                .exchange((request, response) -> {
+                    if (response.getStatusCode().value() == 404) {
+                        return objectMapper.missingNode();
                     }
-                    return response.statusCode().is2xxSuccessful()
-                            ? response.bodyToMono(JsonNode.class)
-                            : error(response).then(Mono.empty());
-                }))
-                .flatMap(seed -> {
-                    if (seed.isMissingNode() || !seed.path("found").asBoolean(true)) {
-                        return Mono.just(List.of());
-                    }
-                    return searchCandidates(
-                            similarBody(seed.path("_source"), contentId, limit),
-                            RetrievalSource.SIMILAR);
+                    return responseBody(response);
                 });
+        if (seed.isMissingNode() || !seed.path("found").asBoolean(true)) {
+            return List.of();
+        }
+        return searchCandidates(
+                similarBody(seed.path("_source"), contentId, limit),
+                RetrievalSource.SIMILAR);
     }
 
-    private Mono<Void> ensureIndex() {
-        return client.head().uri("/{index}", indexName).exchangeToMono(response -> {
-            if (response.statusCode().is2xxSuccessful()) {
-                return response.releaseBody();
+    private void ensureIndex() {
+        if (indexReady) {
+            return;
+        }
+        synchronized (indexMonitor) {
+            if (indexReady) {
+                return;
             }
-            if (response.statusCode().value() != 404) {
-                return error(response);
+            int status = client.head().uri("/{index}", indexName)
+                    .exchange((request, response) -> response.getStatusCode().value());
+            if (status == 404) {
+                createIndex();
+            } else if (status < 200 || status >= 300) {
+                throw new IllegalStateException("Elasticsearch index check failed with status " + status);
             }
-            return response.releaseBody().then(createIndex());
-        });
+            indexReady = true;
+        }
     }
 
-    private Mono<Void> createIndex() {
+    private void createIndex() {
         ObjectNode root = objectMapper.createObjectNode();
         ObjectNode properties = root.putObject("mappings").putObject("properties");
         keyword(properties, "content_id");
@@ -185,21 +203,21 @@ public final class ElasticsearchSearchAdapter implements SearchIndex, SearchRetr
         searchable.putObject("fields").putObject("raw")
                 .put("type", "keyword").put("ignore_above", 8192);
 
-        return client.put().uri("/{index}", indexName)
+        client.put().uri("/{index}", indexName)
                 .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue(root)
-                .exchangeToMono(response -> {
-                    if (response.statusCode().is2xxSuccessful()) {
-                        return response.releaseBody();
-                    }
-                    return response.bodyToMono(String.class).flatMap(body -> {
-                        if (response.statusCode().value() == 400
+                .body(root)
+                .exchange((request, response) -> {
+                    if (!response.getStatusCode().is2xxSuccessful()) {
+                        String body = responseText(response);
+                        if (response.getStatusCode().value() == 400
                                 && body.contains("resource_already_exists_exception")) {
-                            return Mono.empty();
+                            return null;
                         }
-                        return Mono.error(new IllegalStateException(
-                                "Elasticsearch index creation failed: " + response.statusCode() + " " + body));
-                    });
+                        throw new IllegalStateException(
+                                "Elasticsearch index creation failed: "
+                                        + response.getStatusCode() + " " + body);
+                    }
+                    return null;
                 });
     }
 
@@ -287,15 +305,14 @@ public final class ElasticsearchSearchAdapter implements SearchIndex, SearchRetr
         return root;
     }
 
-    private Mono<List<RankingCandidate>> searchCandidates(ObjectNode body, RetrievalSource source) {
-        return indexReady.then(client.post()
+    private List<RankingCandidate> searchCandidates(ObjectNode body, RetrievalSource source) {
+        ensureIndex();
+        JsonNode response = client.post()
                 .uri("/{index}/_search", indexName)
                 .contentType(MediaType.APPLICATION_JSON)
-                .bodyValue(body)
-                .exchangeToMono(response -> response.statusCode().is2xxSuccessful()
-                        ? response.bodyToMono(JsonNode.class)
-                        : error(response).then(Mono.empty())))
-                .map(response -> mapCandidates(response, source));
+                .body(body)
+                .exchange((request, result) -> responseBody(result));
+        return mapCandidates(response, source);
     }
 
     private List<RankingCandidate> mapCandidates(JsonNode response, RetrievalSource retrievalSource) {
@@ -385,13 +402,25 @@ public final class ElasticsearchSearchAdapter implements SearchIndex, SearchRetr
         properties.putObject(name).put("type", "text");
     }
 
-    private Mono<Void> requireSuccess(ClientResponse response) {
-        return response.statusCode().is2xxSuccessful() ? response.releaseBody() : error(response);
+    private void requireSuccess(ClientHttpResponse response) throws IOException {
+        if (!response.getStatusCode().is2xxSuccessful()) {
+            throw requestFailure(response);
+        }
     }
 
-    private Mono<Void> error(ClientResponse response) {
-        return response.bodyToMono(String.class).defaultIfEmpty("").flatMap(body -> Mono.error(
-                new IllegalStateException("Elasticsearch request failed: "
-                        + response.statusCode() + " " + body)));
+    private JsonNode responseBody(ClientHttpResponse response) throws IOException {
+        if (!response.getStatusCode().is2xxSuccessful()) {
+            throw requestFailure(response);
+        }
+        return objectMapper.readTree(response.getBody());
+    }
+
+    private IllegalStateException requestFailure(ClientHttpResponse response) throws IOException {
+        return new IllegalStateException("Elasticsearch request failed: "
+                + response.getStatusCode() + " " + responseText(response));
+    }
+
+    private static String responseText(ClientHttpResponse response) throws IOException {
+        return new String(response.getBody().readAllBytes(), StandardCharsets.UTF_8);
     }
 }

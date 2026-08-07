@@ -15,7 +15,6 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-import reactor.core.publisher.Mono;
 
 @Validated
 @RestController
@@ -29,7 +28,7 @@ public class SearchController {
     }
 
     @GetMapping
-    public Mono<SearchResultPage> search(
+    public SearchResultPage search(
             @RequestParam("q") @NotBlank @Size(max = 500) String query,
             @RequestParam(value = "page", defaultValue = "0") @Min(0) int page,
             @RequestParam(value = "size", defaultValue = "12") @Min(1) @Max(50) int size) {
@@ -37,7 +36,7 @@ public class SearchController {
     }
 
     @PostMapping
-    public Mono<SearchResultPage> search(@Valid @RequestBody SearchRequest request) {
+    public SearchResultPage search(@Valid @RequestBody SearchRequest request) {
         return searchUseCase.search(new SearchQuery(
                 request.query(),
                 request.page() == null ? 0 : request.page(),

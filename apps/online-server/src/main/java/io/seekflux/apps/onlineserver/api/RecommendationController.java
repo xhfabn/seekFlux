@@ -16,7 +16,6 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
-import reactor.core.publisher.Mono;
 
 @Validated
 @RestController
@@ -30,7 +29,7 @@ public class RecommendationController {
     }
 
     @GetMapping("/feed")
-    public Mono<RecommendationPage> feed(
+    public RecommendationPage feed(
             @RequestHeader(value = "X-User-Id", defaultValue = "anonymous") @Size(max = 128) String userId,
             @RequestParam(value = "cursor", required = false) @Size(max = 2_048) String cursor,
             @RequestParam(name = "page_size", defaultValue = "20") @Min(1) @Max(50) int pageSize,
@@ -41,7 +40,7 @@ public class RecommendationController {
     }
 
     @GetMapping("/contents/{contentId}/similar")
-    public Mono<RecommendationPage> similar(
+    public RecommendationPage similar(
             @PathVariable("contentId") @Size(max = 128) String contentId,
             @RequestHeader(value = "X-User-Id", defaultValue = "anonymous") @Size(max = 128) String userId,
             @RequestParam(value = "cursor", required = false) @Size(max = 2_048) String cursor,

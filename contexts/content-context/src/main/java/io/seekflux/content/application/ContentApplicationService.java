@@ -16,7 +16,6 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.function.Supplier;
-import reactor.core.publisher.Mono;
 
 public final class ContentApplicationService implements ContentUseCase {
 
@@ -43,7 +42,7 @@ public final class ContentApplicationService implements ContentUseCase {
     }
 
     @Override
-    public Mono<ContentView> submit(SubmitContentCommand command) {
+    public ContentView submit(SubmitContentCommand command) {
         Objects.requireNonNull(command, "submit command must not be null");
         Instant now = clock.instant();
         Content content = Content.submit(
@@ -55,17 +54,18 @@ public final class ContentApplicationService implements ContentUseCase {
                 command.sourceTags(),
                 now);
         ContentEvent event = event(CONTENT_SUBMITTED, content, now, submittedPayload(content));
-        return repository.insert(content, event).thenReturn(ContentView.from(content));
+        repository.insert(content, event);
+        return ContentView.from(content);
     }
 
     @Override
-    public Mono<ContentView> get(ContentId contentId) {
+    public ContentView get(ContentId contentId) {
         Objects.requireNonNull(contentId, "content id must not be null");
-        return find(contentId).map(ContentView::from);
+        return ContentView.from(find(contentId));
     }
 
     @Override
-    public Mono<ContentView> completeProfile(CompleteContentProfileCommand command) {
+    public ContentView completeProfile(CompleteContentProfileCommand command) {
         Objects.requireNonNull(command, "profile command must not be null");
         ContentProfile profile = new ContentProfile(
                 command.profileVersion(), command.summary(), command.tags(), command.transcript());
@@ -74,13 +74,13 @@ public final class ContentApplicationService implements ContentUseCase {
     }
 
     @Override
-    public Mono<ContentView> publish(ContentId contentId) {
+    public ContentView publish(ContentId contentId) {
         return change(contentId, current -> current.publish(clock.instant()),
                 CONTENT_PROFILE_PUBLISHED, this::profilePayload);
     }
 
     @Override
-    public Mono<ContentView> withdraw(ContentId contentId) {
+    public ContentView withdraw(ContentId contentId) {
         return change(contentId, current -> current.withdraw(clock.instant()),
                 CONTENT_DISTRIBUTION_CHANGED,
                 content -> Map.of(
@@ -88,28 +88,27 @@ public final class ContentApplicationService implements ContentUseCase {
                         "distribution_status", content.status().name()));
     }
 
-    private Mono<ContentView> change(
+    private ContentView change(
             ContentId contentId,
             java.util.function.Function<Content, Content> transition,
             String eventType,
             java.util.function.Function<Content, Map<String, Object>> payloadFactory) {
         Objects.requireNonNull(contentId, "content id must not be null");
-        return find(contentId).flatMap(current -> {
-            Content changed = transition.apply(current);
-            if (changed == current) {
-                return Mono.just(ContentView.from(current));
-            }
-            ContentEvent event = event(eventType, changed, changed.updatedAt(), payloadFactory.apply(changed));
-            return repository.update(changed, current.version(), event)
-                    .flatMap(updated -> updated
-                            ? Mono.just(ContentView.from(changed))
-                            : Mono.error(new ContentConcurrencyException(contentId)));
-        });
+        Content current = find(contentId);
+        Content changed = transition.apply(current);
+        if (changed == current) {
+            return ContentView.from(current);
+        }
+        ContentEvent event = event(eventType, changed, changed.updatedAt(), payloadFactory.apply(changed));
+        if (!repository.update(changed, current.version(), event)) {
+            throw new ContentConcurrencyException(contentId);
+        }
+        return ContentView.from(changed);
     }
 
-    private Mono<Content> find(ContentId contentId) {
+    private Content find(ContentId contentId) {
         return repository.findById(contentId)
-                .switchIfEmpty(Mono.error(new ContentNotFoundException(contentId)));
+                .orElseThrow(() -> new ContentNotFoundException(contentId));
     }
 
     private ContentEvent event(

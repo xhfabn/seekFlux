@@ -6,7 +6,6 @@ import io.seekflux.userinterest.port.out.UserInterestRepository;
 import java.time.Clock;
 import java.util.List;
 import java.util.Objects;
-import reactor.core.publisher.Mono;
 
 public final class ExplicitInterestService implements UserInterestUseCase {
 
@@ -19,17 +18,18 @@ public final class ExplicitInterestService implements UserInterestUseCase {
     }
 
     @Override
-    public Mono<InterestProfile> resolve(String userId, List<String> explicitTopics) {
+    public InterestProfile resolve(String userId, List<String> explicitTopics) {
         InterestProfile explicit = new InterestProfile(userId, explicitTopics, clock.instant());
         if (!explicit.topics().isEmpty()) {
-            return Mono.just(explicit);
+            return explicit;
         }
-        return repository.findByUserId(explicit.userId()).defaultIfEmpty(explicit);
+        return repository.findByUserId(explicit.userId()).orElse(explicit);
     }
 
     @Override
-    public Mono<InterestProfile> save(String userId, List<String> topics) {
+    public InterestProfile save(String userId, List<String> topics) {
         InterestProfile profile = new InterestProfile(userId, topics, clock.instant());
-        return repository.save(profile).thenReturn(profile);
+        repository.save(profile);
+        return profile;
     }
 }

@@ -55,7 +55,7 @@ ContentApplicationService
         ↓
 Content 聚合 ──→ ContentRepository（输出 Port）
                               ↑
-                 R2dbcContentRepository
+                  JdbcContentRepository
 ```
 
 领域层不知道 Spring、PostgreSQL 或 Kafka；替换数据库实现不会改变状态机。
@@ -87,20 +87,18 @@ WHERE content_id = :contentId
 
 ## 4. SQL 由什么连接和更新
 
-本项目对同一个 PostgreSQL 使用两条职责不同的连接链路：
+本项目对同一个 PostgreSQL 统一使用 JDBC 连接链路：
 
 | 场景 | 技术 | 连接协议 | 作用 |
 | --- | --- | --- | --- |
-| 运行时查询和更新 | Spring R2DBC `DatabaseClient` + PostgreSQL R2DBC Driver | `r2dbc:postgresql://...` | 非阻塞 CRUD、响应式事务、Outbox Relay |
+| 运行时查询和更新 | Spring JDBC `JdbcClient` + PostgreSQL JDBC Driver | `jdbc:postgresql://...` | 同步 CRUD、本地事务、乐观锁和 Outbox Relay |
 | 表结构升级 | Flyway + PostgreSQL JDBC Driver | `jdbc:postgresql://...` | 启动时按版本执行 `db/migration` SQL |
 
-业务 SQL 位于 `R2dbcContentRepository` 和 `KafkaOutboxRelay`；建表 SQL 位于 `V1__content_and_outbox.sql`。`TransactionalOperator` 保证内容行和 Outbox 事件一起成功或一起回滚，因此不会出现“数据库成功但忘记发事件”的窗口。
+业务 SQL 位于 `JdbcContentRepository` 和 `KafkaOutboxRelay`；建表 SQL 位于 `V1__content_and_outbox.sql`。Spring JDBC 事务管理器与 `@Transactional` 保证内容行和 Outbox 事件一起成功或一起回滚，因此不会出现“数据库成功但忘记发事件”的窗口。
 
 ### MyBatis 和 MyBatis-Plus 能不能用
 
-能用，但当前切片有意没有采用。MyBatis/MyBatis-Plus 基于阻塞式 JDBC，而 `content-server` 使用 Spring WebFlux，持久化链路使用响应式 R2DBC。把阻塞 JDBC 直接放到事件循环会降低并发能力；同时混用 JDBC 与 R2DBC 事务管理器，也无法自然组成同一个本地事务。
-
-如果项目决定走传统阻塞式技术栈，可以整体调整为 `Spring MVC + JDBC + MyBatis-Plus + JDBC TransactionManager`，并继续保留领域层、Port、状态机和事务 Outbox。两条路线都成立，选择标准是运行模型的一致性，不是某个框架“能不能写 SQL”。当前继续选择 WebFlux/R2DBC，所以 SQL 通过 `DatabaseClient` 显式编写。
+能用，但当前切片使用 Spring `JdbcClient` 显式编写少量 SQL，避免在项目早期额外引入 ORM 映射层。`content-server` 已统一为 Spring MVC + JDBC；后续如果查询数量和动态条件明显增加，可以在 `ContentRepository` Port 后替换为 MyBatis/MyBatis-Plus，而不改变领域状态机和 HTTP 契约。
 
 ## 5. 为什么需要事务 Outbox
 
@@ -117,7 +115,7 @@ Relay 使用 `FOR UPDATE SKIP LOCKED` 原子认领批次，允许多个实例竞
 | 用例编排和事件创建 | `contexts/content-context/.../application/ContentApplicationService.java` |
 | 状态机与业务不变量 | `contexts/content-context/.../domain/Content.java` |
 | Repository 抽象 | `contexts/content-context/.../port/out/ContentRepository.java` |
-| R2DBC SQL、事务和乐观锁 | `platform/persistence/.../content/R2dbcContentRepository.java` |
+| JDBC SQL、事务和乐观锁 | `platform/persistence/.../content/JdbcContentRepository.java` |
 | Flyway 建表升级 | `platform/persistence/src/main/resources/db/migration/V1__content_and_outbox.sql` |
 | Outbox 到 Kafka | `platform/messaging/.../outbox/KafkaOutboxRelay.java` |
 | Kafka 消费和基础画像 | `apps/worker-runner/.../content/BasicContentProfileWorker.java` |

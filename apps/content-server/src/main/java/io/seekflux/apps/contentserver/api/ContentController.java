@@ -15,7 +15,6 @@ import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
-import reactor.core.publisher.Mono;
 
 @RestController
 @RequestMapping("/v1/contents")
@@ -28,7 +27,7 @@ public final class ContentController {
     }
 
     @PostMapping
-    public Mono<ResponseEntity<ContentResponse>> submit(
+    public ResponseEntity<ContentResponse> submit(
             @Valid @RequestBody SubmitContentRequest request) {
         SubmitContentCommand command = new SubmitContentCommand(
                 request.creatorId(),
@@ -36,19 +35,20 @@ public final class ContentController {
                 request.title(),
                 request.description(),
                 request.sourceTags());
-        return contentUseCase.submit(command).map(view -> ResponseEntity
+        var view = contentUseCase.submit(command);
+        return ResponseEntity
                 .accepted()
                 .location(URI.create("/v1/contents/" + view.id()))
-                .body(ContentResponse.from(view)));
+                .body(ContentResponse.from(view));
     }
 
     @GetMapping("/{contentId}")
-    public Mono<ContentResponse> get(@PathVariable("contentId") String contentId) {
-        return contentUseCase.get(ContentId.parse(contentId)).map(ContentResponse::from);
+    public ContentResponse get(@PathVariable("contentId") String contentId) {
+        return ContentResponse.from(contentUseCase.get(ContentId.parse(contentId)));
     }
 
     @PutMapping("/{contentId}/profile")
-    public Mono<ContentResponse> completeProfile(
+    public ContentResponse completeProfile(
             @PathVariable("contentId") String contentId,
             @Valid @RequestBody CompleteProfileRequest request) {
         CompleteContentProfileCommand command = new CompleteContentProfileCommand(
@@ -57,16 +57,16 @@ public final class ContentController {
                 request.summary(),
                 request.tags(),
                 request.transcript());
-        return contentUseCase.completeProfile(command).map(ContentResponse::from);
+        return ContentResponse.from(contentUseCase.completeProfile(command));
     }
 
     @PostMapping("/{contentId}/publish")
-    public Mono<ContentResponse> publish(@PathVariable("contentId") String contentId) {
-        return contentUseCase.publish(ContentId.parse(contentId)).map(ContentResponse::from);
+    public ContentResponse publish(@PathVariable("contentId") String contentId) {
+        return ContentResponse.from(contentUseCase.publish(ContentId.parse(contentId)));
     }
 
     @DeleteMapping("/{contentId}")
-    public Mono<ContentResponse> withdraw(@PathVariable("contentId") String contentId) {
-        return contentUseCase.withdraw(ContentId.parse(contentId)).map(ContentResponse::from);
+    public ContentResponse withdraw(@PathVariable("contentId") String contentId) {
+        return ContentResponse.from(contentUseCase.withdraw(ContentId.parse(contentId)));
     }
 }

@@ -21,8 +21,9 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executor;
 import java.util.function.Supplier;
-import reactor.core.publisher.Mono;
 
 public final class RecommendationApplicationService implements RecommendationUseCase {
 
@@ -35,6 +36,7 @@ public final class RecommendationApplicationService implements RecommendationUse
     private final SignedRecommendationCursorCodec cursorCodec;
     private final Clock clock;
     private final Duration sourceTimeout;
+    private final Executor recallExecutor;
 
     public RecommendationApplicationService(
             RecommendationRetriever retriever,
@@ -42,74 +44,78 @@ public final class RecommendationApplicationService implements RecommendationUse
             RankingUseCase ranking,
             SignedRecommendationCursorCodec cursorCodec,
             Clock clock,
-            Duration sourceTimeout) {
+            Duration sourceTimeout,
+            Executor recallExecutor) {
         this.retriever = Objects.requireNonNull(retriever, "retriever must not be null");
         this.userInterest = Objects.requireNonNull(userInterest, "userInterest must not be null");
         this.ranking = Objects.requireNonNull(ranking, "ranking must not be null");
         this.cursorCodec = Objects.requireNonNull(cursorCodec, "cursorCodec must not be null");
         this.clock = Objects.requireNonNull(clock, "clock must not be null");
         this.sourceTimeout = Objects.requireNonNull(sourceTimeout, "sourceTimeout must not be null");
+        this.recallExecutor = Objects.requireNonNull(recallExecutor, "recallExecutor must not be null");
         if (sourceTimeout.isNegative() || sourceTimeout.isZero()) {
             throw new IllegalArgumentException("source timeout must be positive");
         }
     }
 
     @Override
-    public Mono<RecommendationPage> feed(FeedRequest request) {
+    public RecommendationPage feed(FeedRequest request) {
         Objects.requireNonNull(request, "feed request must not be null");
-        return userInterest.resolve(request.userId(), request.explicitInterests()).flatMap(profile -> {
-            String fingerprint = fingerprint("feed", request.userId(), profile.topics(), request.seedContentId());
-            int offset = cursorCodec.decode(request.cursor(), fingerprint, clock.instant());
-            if (profile.topics().isEmpty()) {
-                return Mono.just(page(List.of(), profile, fingerprint, offset, request.pageSize()));
-            }
+        InterestProfile profile = userInterest.resolve(request.userId(), request.explicitInterests());
+        String fingerprint = fingerprint("feed", request.userId(), profile.topics(), request.seedContentId());
+        int offset = cursorCodec.decode(request.cursor(), fingerprint, clock.instant());
+        if (profile.topics().isEmpty()) {
+            return page(List.of(), profile, fingerprint, offset, request.pageSize());
+        }
 
-            Mono<SourceResult> trending = retrieve("TRENDING", () -> retriever.trending(CANDIDATE_LIMIT));
-            Mono<SourceResult> interests = retrieve(
-                    "INTEREST", () -> retriever.byInterests(profile.topics(), CANDIDATE_LIMIT));
-            Mono<SourceResult> similar = request.seedContentId() == null
-                    ? Mono.just(SourceResult.empty("SIMILAR"))
-                    : retrieve("SIMILAR", () -> retriever.similarTo(request.seedContentId(), CANDIDATE_LIMIT));
+        CompletableFuture<SourceResult> trending = retrieve(
+                "TRENDING", () -> retriever.trending(CANDIDATE_LIMIT));
+        CompletableFuture<SourceResult> interests = retrieve(
+                "INTEREST", () -> retriever.byInterests(profile.topics(), CANDIDATE_LIMIT));
+        CompletableFuture<SourceResult> similar = request.seedContentId() == null
+                ? CompletableFuture.completedFuture(SourceResult.empty("SIMILAR"))
+                : retrieve("SIMILAR", () -> retriever.similarTo(request.seedContentId(), CANDIDATE_LIMIT));
 
-            return Mono.zip(trending, interests, similar)
-                    .map(results -> page(
-                            List.of(results.getT1(), results.getT2(), results.getT3()),
-                            profile,
-                            fingerprint,
-                            offset,
-                            request.pageSize()));
-        });
+        return page(
+                List.of(trending.join(), interests.join(), similar.join()),
+                profile,
+                fingerprint,
+                offset,
+                request.pageSize());
     }
 
     @Override
-    public Mono<RecommendationPage> similar(SimilarContentRequest request) {
+    public RecommendationPage similar(SimilarContentRequest request) {
         Objects.requireNonNull(request, "similar content request must not be null");
-        return userInterest.resolve(request.userId(), request.explicitInterests()).flatMap(profile -> {
-            String fingerprint = fingerprint("similar", request.userId(), profile.topics(), request.contentId());
-            int offset = cursorCodec.decode(request.cursor(), fingerprint, clock.instant());
-            if (profile.topics().isEmpty()) {
-                return Mono.just(page(List.of(), profile, fingerprint, offset, request.pageSize()));
-            }
+        InterestProfile profile = userInterest.resolve(request.userId(), request.explicitInterests());
+        String fingerprint = fingerprint("similar", request.userId(), profile.topics(), request.contentId());
+        int offset = cursorCodec.decode(request.cursor(), fingerprint, clock.instant());
+        if (profile.topics().isEmpty()) {
+            return page(List.of(), profile, fingerprint, offset, request.pageSize());
+        }
 
-            Mono<SourceResult> similar = retrieve(
-                    "SIMILAR", () -> retriever.similarTo(request.contentId(), CANDIDATE_LIMIT));
-            Mono<SourceResult> fallback = retrieve("TRENDING", () -> retriever.trending(CANDIDATE_LIMIT));
-            return Mono.zip(similar, fallback).map(results -> {
-                SourceResult primary = results.getT1();
-                SourceResult trending = results.getT2();
-                List<SourceResult> selected = primary.candidates().isEmpty()
-                        ? List.of(primary, trending)
-                        : List.of(primary);
-                return page(selected, profile, fingerprint, offset, request.pageSize());
-            });
-        });
+        CompletableFuture<SourceResult> similar = retrieve(
+                "SIMILAR", () -> retriever.similarTo(request.contentId(), CANDIDATE_LIMIT));
+        CompletableFuture<SourceResult> fallback = retrieve(
+                "TRENDING", () -> retriever.trending(CANDIDATE_LIMIT));
+        SourceResult primary = similar.join();
+        SourceResult trending = fallback.join();
+        List<SourceResult> selected = primary.candidates().isEmpty()
+                ? List.of(primary, trending)
+                : List.of(primary);
+        return page(selected, profile, fingerprint, offset, request.pageSize());
     }
 
-    private Mono<SourceResult> retrieve(String source, Supplier<Mono<List<RankingCandidate>>> operation) {
-        return Mono.defer(operation)
-                .timeout(sourceTimeout)
-                .map(candidates -> new SourceResult(source, candidates, false))
-                .onErrorResume(error -> Mono.just(new SourceResult(source, List.of(), true)));
+    private CompletableFuture<SourceResult> retrieve(
+            String source,
+            Supplier<List<RankingCandidate>> operation) {
+        return CompletableFuture
+                .supplyAsync(() -> new SourceResult(source, operation.get(), false), recallExecutor)
+                .completeOnTimeout(
+                        new SourceResult(source, List.of(), true),
+                        sourceTimeout.toMillis(),
+                        java.util.concurrent.TimeUnit.MILLISECONDS)
+                .exceptionally(error -> new SourceResult(source, List.of(), true));
     }
 
     private RecommendationPage page(

@@ -24,6 +24,8 @@ SeekFlux 是面向短视频内容平台的多模态搜索与推荐中台。当�
 
 首期保持模块化单体，`online-server` 装配 Search/Recommendation 等 Context。只有出现独立扩缩容、发布或故障隔离需求后，才将模块拆成服务。
 
+在线与内容接口统一采用 Spring MVC 普通返回值，PostgreSQL 使用 JDBC/HikariCP，Redis 与 Elasticsearch Adapter 使用同步客户端。Kafka Worker 保持事件驱动；推荐的多路召回仅在独立有界线程池内并行，不向 Controller 或领域 Port 暴露 `Mono`/`Flux`。
+
 ## 当前可操作页面
 
 - SeekFlux Web：`http://localhost:3001/`

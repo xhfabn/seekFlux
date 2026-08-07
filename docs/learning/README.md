@@ -11,7 +11,7 @@
 
 - [00：架构选择与实现路线](00-architecture-and-roadmap.md)：先建立系统全貌，了解模块职责、依赖方向和纵向交付顺序。
 - [Phase 0：工程基线](phase-00-engineering-baseline.md)：当前已经完成的目录、构建、契约和本地基础设施，以及这些工作背后的知识点。
-- [Step 1：内容登记与画像发布](step-01-content-pipeline.md)：沿完整纵向切片学习领域状态机、R2DBC、事务 Outbox、Kafka 和幂等 Worker。
+- [Step 1：内容登记与画像发布](step-01-content-pipeline.md)：沿完整纵向切片学习领域状态机、JDBC 事务、事务 Outbox、Kafka 和幂等 Worker。
 - [Step 2：已发布画像的关键词检索](step-02-keyword-search.md)：学习事件驱动索引、Elasticsearch 读模型、关键词召回以及两个可操作页面。
 - [Step 3：热门、兴趣与相似内容 Feed](step-03-feed-baseline.md)：学习多路召回、RRF 融合、规则排序、多样性、Cursor 与召回源降级。
 - [阶段学习文档模板](template.md)：以后每完成一个可运行部分时使用。
