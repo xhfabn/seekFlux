@@ -641,11 +641,15 @@ apps_up() {
 start_web_app() {
   local pidfile="${LOCAL_DIR}/apps/run/web.pid"
   local log_file="${LOCAL_DIR}/apps/logs/web.log"
+  local node_bin_dir npm_bin_dir
   if curl --noproxy '*' -fsS "http://localhost:${WEB_SERVER_PORT}/" >/dev/null 2>&1; then
     log "Web 已在运行"
     return
   fi
+  require_command node
   require_command npm
+  node_bin_dir="$(dirname "$(command -v node)")"
+  npm_bin_dir="$(dirname "$(command -v npm)")"
   if [[ ! -x "${ROOT_DIR}/apps/web/node_modules/.bin/vinext" ]]; then
     log "安装 Web 依赖"
     (cd "${ROOT_DIR}/apps/web" && npm ci)
@@ -662,7 +666,7 @@ start_web_app() {
     fi
     launchctl remove "${label}" >/dev/null 2>&1 || true
     launchctl submit -l "${label}" -o "${log_file}" -e "${log_file}" -- \
-      "${ROOT_DIR}/deploy/local/run-web-app.sh" "${WEB_SERVER_PORT}"
+      "${ROOT_DIR}/deploy/local/run-web-app.sh" "${WEB_SERVER_PORT}" "${node_bin_dir}" "${npm_bin_dir}"
     for _ in {1..20}; do
       app_pid="$(launchd_pid "${label}" || true)"
       [[ "${app_pid}" =~ ^[0-9]+$ ]] && break
@@ -670,7 +674,7 @@ start_web_app() {
     done
     [[ "${app_pid}" =~ ^[0-9]+$ ]] || fail "Web 未能注册到 launchd"
   else
-    nohup "${ROOT_DIR}/deploy/local/run-web-app.sh" "${WEB_SERVER_PORT}" >"${log_file}" 2>&1 </dev/null &
+    nohup "${ROOT_DIR}/deploy/local/run-web-app.sh" "${WEB_SERVER_PORT}" "${node_bin_dir}" "${npm_bin_dir}" >"${log_file}" 2>&1 </dev/null &
     app_pid="$!"
   fi
   printf '%s\n' "${app_pid}" >"${pidfile}"
