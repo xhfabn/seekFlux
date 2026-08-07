@@ -82,47 +82,137 @@ const sampleContent = {
 const placeholderItems: ContentItem[] = [
   {
     contentId: "preview_first_video",
-    creatorId: "你的创作者账号",
+    creatorId: "周末去野",
     mediaUri: "",
-    title: "第一条视频会在这里开始播放",
-    description: "内容发布后，推荐 Feed 会把真实视频、作者信息和推荐理由装进这张卡片。",
-    summary: "当前保留完整的视频消费位，等待对象存储和媒体转码链路接入。",
-    tags: ["视频占位", "推荐流", "待发布"],
+    title: "杭州周末｜3 个新手也能轻松抵达的露营地",
+    description: "不赶路、不负重，整理了三条适合第一次露营的杭州周边路线。",
+    summary: "不赶路、不负重，整理了三条适合第一次露营的杭州周边路线。",
+    tags: ["露营", "杭州", "周末"],
     profileVersion: 0,
     score: 0,
     publishedAt: "",
-    sources: ["FEED_SHELL"],
-    reason: "产品结构已就绪 · 暂无已发布视频",
+    sources: ["TRENDING"],
+    reason: "你最近关注了露营",
     placeholder: true,
   },
   {
     contentId: "preview_search_to_feed",
-    creatorId: "SeekFlux",
+    creatorId: "咖啡先森",
     mediaUri: "",
-    title: "搜索之后，继续刷相似内容",
-    description: "搜索命中的内容可以直接成为 Item-Item 召回种子，继续生成相似 Feed。",
-    summary: "C 端把搜索、推荐和相似内容串成一条连续消费路径。",
-    tags: ["主动搜索", "相似召回", "连续发现"],
+    title: "手冲咖啡总是发酸？先调整这三个变量",
+    description: "水温、研磨度和注水节奏，一次讲清新手最常见的问题。",
+    summary: "水温、研磨度和注水节奏，一次讲清新手最常见的问题。",
+    tags: ["咖啡", "手冲", "教程"],
     profileVersion: 0,
     score: 0,
     publishedAt: "",
-    sources: ["SEARCH", "SIMILAR"],
-    reason: "交互占位 · 接口已经接入",
+    sources: ["INTEREST"],
+    reason: "来自你的咖啡兴趣",
     placeholder: true,
   },
   {
     contentId: "preview_feedback_loop",
-    creatorId: "SeekFlux",
+    creatorId: "带娃看世界",
     mediaUri: "",
-    title: "每一次喜欢，都会成为下一次信号",
-    description: "曝光、播放、喜欢和不感兴趣会先进入本地事件队列，等待 Interaction API 接棒。",
-    summary: "反馈结构已保留，后续可以无缝接入实时兴趣与排序。",
-    tags: ["行为反馈", "实时兴趣", "架构占位"],
+    title: "上海亲子博物馆一日路线，雨天也能玩",
+    description: "从上午十点到下午四点，适合 4—10 岁孩子的轻松路线。",
+    summary: "从上午十点到下午四点，适合 4—10 岁孩子的轻松路线。",
+    tags: ["亲子", "上海", "博物馆"],
     profileVersion: 0,
     score: 0,
     publishedAt: "",
-    sources: ["LOCAL_SIGNAL"],
-    reason: "行为链路占位 · 数据不会伪报成功",
+    sources: ["INTEREST"],
+    reason: "亲子主题热度上升",
+    placeholder: true,
+  },
+  {
+    contentId: "preview_west_sichuan",
+    creatorId: "阿野在路上",
+    mediaUri: "",
+    title: "川西自驾摄影｜这 5 个机位不要错过",
+    description: "雪山、湖泊和公路，三天两夜路线与拍摄时间一次整理。",
+    summary: "雪山、湖泊和公路，三天两夜路线与拍摄时间一次整理。",
+    tags: ["旅行", "摄影", "川西"],
+    profileVersion: 0,
+    score: 0,
+    publishedAt: "",
+    sources: ["TRENDING"],
+    reason: "旅行频道热门",
+    placeholder: true,
+  },
+  {
+    contentId: "preview_dinner",
+    creatorId: "今天吃点好",
+    mediaUri: "",
+    title: "下班后 20 分钟，一人食也可以很认真",
+    description: "一口锅完成番茄炖饭，少洗碗也不将就。",
+    summary: "一口锅完成番茄炖饭，少洗碗也不将就。",
+    tags: ["美食", "一人食", "晚餐"],
+    profileVersion: 0,
+    score: 0,
+    publishedAt: "",
+    sources: ["TRENDING"],
+    reason: "今晚大家都在看",
+    placeholder: true,
+  },
+  {
+    contentId: "preview_photo",
+    creatorId: "手机摄影课",
+    mediaUri: "",
+    title: "手机拍日落，记住这两个曝光设置",
+    description: "不用滤镜也能保留天空层次，新手一分钟就能学会。",
+    summary: "不用滤镜也能保留天空层次，新手一分钟就能学会。",
+    tags: ["摄影", "手机", "日落"],
+    profileVersion: 0,
+    score: 0,
+    publishedAt: "",
+    sources: ["SIMILAR"],
+    reason: "与你收藏的内容相似",
+    placeholder: true,
+  },
+  {
+    contentId: "preview_citywalk",
+    creatorId: "城市散步指南",
+    mediaUri: "",
+    title: "周末 Citywalk：从老街走到江边日落",
+    description: "全程六公里，沿途有咖啡馆、旧书店和最好看的江景。",
+    summary: "全程六公里，沿途有咖啡馆、旧书店和最好看的江景。",
+    tags: ["Citywalk", "城市", "周末"],
+    profileVersion: 0,
+    score: 0,
+    publishedAt: "",
+    sources: ["INTEREST"],
+    reason: "适合你的周末计划",
+    placeholder: true,
+  },
+  {
+    contentId: "preview_tech",
+    creatorId: "数码观察员",
+    mediaUri: "",
+    title: "AI 办公到底能省多少时间？实测一整天",
+    description: "从会议纪要到周报整理，看看哪些环节真的有用。",
+    summary: "从会议纪要到周报整理，看看哪些环节真的有用。",
+    tags: ["科技", "AI", "效率"],
+    profileVersion: 0,
+    score: 0,
+    publishedAt: "",
+    sources: ["TRENDING"],
+    reason: "科技频道热门",
+    placeholder: true,
+  },
+  {
+    contentId: "preview_home",
+    creatorId: "好好住研究所",
+    mediaUri: "",
+    title: "小户型收纳：真正好用的是留白",
+    description: "减少看得见的杂物，让 40 平米也能住得松弛。",
+    summary: "减少看得见的杂物，让 40 平米也能住得松弛。",
+    tags: ["家居", "收纳", "生活"],
+    profileVersion: 0,
+    score: 0,
+    publishedAt: "",
+    sources: ["SIMILAR"],
+    reason: "生活方式相似内容",
     placeholder: true,
   },
 ];
@@ -484,39 +574,59 @@ export function SeekFluxApp() {
   return (
     <div className={`app-shell workspace-${workspace}`}>
       {busy && <div className="loading-bar" aria-label="处理中" />}
-      <aside className="sidebar">
-        <button className="brand-lockup" onClick={() => navigate("discover")} aria-label="回到发现页">
-          <span className="brand-mark" aria-hidden="true">S</span>
-          <span><strong className="brand-name">SeekFlux</strong><small className="brand-subtitle">Search to discovery</small></span>
-        </button>
-        <nav className="side-nav" aria-label="产品导航">
-          {navItems.map((item) => (
-            <button key={item.key} className={`side-nav-button ${workspace === item.key ? "active" : ""}`} onClick={() => navigate(item.key)}>
-              <span className="nav-number">{item.number}</span>
-              <span className="nav-copy"><strong>{item.title}</strong><small>{item.subtitle}</small></span>
-              <span className="nav-role">{item.role}</span>
-            </button>
-          ))}
-        </nav>
-        <div className="side-status">
-          <div className="side-status-title"><span className="pulse-dot" /> 当前实现边界</div>
-          <p>搜索、推荐和内容画像已接真实接口；媒体上传与实时行为回流保留清晰占位。</p>
-        </div>
-        <div className="side-version">PRODUCT SHELL / STEP 3</div>
-      </aside>
+      {workspace === "discover" ? (
+        <ConsumerSidebar
+          mode={discoverMode}
+          setMode={setDiscoverMode}
+          runFeed={runFeed}
+          navigate={navigate}
+          userId={userId}
+          busy={busy}
+        />
+      ) : (
+        <aside className="sidebar">
+          <button className="brand-lockup" onClick={() => navigate("discover")} aria-label="回到发现页">
+            <span className="brand-mark" aria-hidden="true">S</span>
+            <span><strong className="brand-name">SeekFlux</strong><small className="brand-subtitle">Search to discovery</small></span>
+          </button>
+          <nav className="side-nav" aria-label="产品导航">
+            {navItems.map((item) => (
+              <button key={item.key} className={`side-nav-button ${workspace === item.key ? "active" : ""}`} onClick={() => navigate(item.key)}>
+                <span className="nav-number">{item.number}</span>
+                <span className="nav-copy"><strong>{item.title}</strong><small>{item.subtitle}</small></span>
+                <span className="nav-role">{item.role}</span>
+              </button>
+            ))}
+          </nav>
+          <div className="side-status">
+            <div className="side-status-title"><span className="pulse-dot" /> 当前实现边界</div>
+            <p>搜索、推荐和内容画像已接真实接口；媒体上传与实时行为回流保留清晰占位。</p>
+          </div>
+          <div className="side-version">PRODUCT SHELL / STEP 3</div>
+        </aside>
+      )}
 
-      <div className="mobile-header">
-        <button className="mobile-brand" onClick={() => navigate("discover")}><span className="brand-mark">S</span><strong>SeekFlux</strong></button>
-        <div className="mobile-tabs">
-          {navItems.map((item) => <button key={item.key} className={workspace === item.key ? "active" : ""} onClick={() => navigate(item.key)}>{item.title}</button>)}
+      {workspace === "discover" ? (
+        <div className="consumer-mobile-header">
+          <button className="consumer-mobile-brand" onClick={() => navigate("discover")}><span className="consumer-brand-mark">S</span><strong>SeekFlux</strong></button>
+          <div><button onClick={() => navigate("audience")}>画像</button><button onClick={() => navigate("studio")}>投稿</button></div>
         </div>
-      </div>
+      ) : (
+        <div className="mobile-header">
+          <button className="mobile-brand" onClick={() => navigate("discover")}><span className="brand-mark">S</span><strong>SeekFlux</strong></button>
+          <div className="mobile-tabs">
+            {navItems.map((item) => <button key={item.key} className={workspace === item.key ? "active" : ""} onClick={() => navigate(item.key)}>{item.title}</button>)}
+          </div>
+        </div>
+      )}
 
       <main className="main-stage">
-        <header className="topbar">
-          <div><span className="surface-badge">{workspace === "discover" ? "C 端" : "B 端"}</span><span className="topbar-path">SeekFlux / <strong>{navItems.find((item) => item.key === workspace)?.title}</strong></span></div>
-          <div className="service-cluster" aria-label="后端服务状态"><ServicePill name="Content" state={health.content} /><ServicePill name="Online" state={health.online} /></div>
-        </header>
+        {workspace !== "discover" && (
+          <header className="topbar">
+            <div><span className="surface-badge">B 端</span><span className="topbar-path">SeekFlux / <strong>{navItems.find((item) => item.key === workspace)?.title}</strong></span></div>
+            <div className="service-cluster" aria-label="后端服务状态"><ServicePill name="Content" state={health.content} /><ServicePill name="Online" state={health.online} /></div>
+          </header>
+        )}
 
         {workspace === "discover" && (
           <DiscoverWorkspace
@@ -557,6 +667,37 @@ export function SeekFluxApp() {
   );
 }
 
+function ConsumerSidebar({ mode, setMode, runFeed, navigate, userId, busy }: {
+  mode: DiscoverMode;
+  setMode: (mode: DiscoverMode) => void;
+  runFeed: (cursor?: string | null, append?: boolean) => Promise<void>;
+  navigate: (workspace: Workspace) => void;
+  userId: string;
+  busy: string | null;
+}) {
+  function focusSearch() {
+    setMode("search");
+    window.setTimeout(() => document.getElementById("consumer-search-input")?.focus(), 0);
+  }
+  return (
+    <aside className="consumer-sidebar">
+      <button className="consumer-brand" onClick={() => navigate("discover")} aria-label="SeekFlux 首页">
+        <span className="consumer-brand-mark">S</span><span><strong>SeekFlux</strong><small>发现每一种兴趣</small></span>
+      </button>
+      <nav className="consumer-side-nav" aria-label="发现页导航">
+        <button className={mode === "feed" ? "active" : ""} onClick={() => void runFeed()} disabled={busy === "feed"}><Icon name="play" /><span>推荐</span></button>
+        <button className={mode === "search" ? "active" : ""} onClick={focusSearch}><Icon name="search" /><span>搜索</span></button>
+        <div className="consumer-nav-divider" />
+        <button onClick={() => navigate("audience")}><Icon name="pulse" /><span>用户画像</span></button>
+        <button onClick={() => navigate("studio")}><Icon name="upload" /><span>内容工作台</span></button>
+      </nav>
+      <button className="consumer-account" onClick={() => navigate("audience")}>
+        <span className="avatar">{userId.slice(0, 1).toUpperCase() || "U"}</span><span><strong>{userId || "未登录用户"}</strong><small>查看我的兴趣</small></span>
+      </button>
+    </aside>
+  );
+}
+
 function ServicePill({ name, state }: { name: string; state: HealthState }) {
   const label = state === "checking" ? "检测中" : state === "online" ? "已连接" : "未连接";
   return <div className={`service-pill ${state}`} title={`${name} API ${label}`}><i />{name} · {label}</div>;
@@ -575,114 +716,102 @@ type DiscoverProps = {
 function DiscoverWorkspace(props: DiscoverProps) {
   const resultMeta = props.mode === "search" && props.searchData
     ? `${props.searchData.total} 条结果 · ${props.searchData.tookMillis} ms`
-    : props.feedData ? `${props.feedData.items.length} 条推荐` : "产品预览";
+    : props.feedData ? `${props.feedData.items.length} 条推荐` : "为你推荐";
+  const categories = ["推荐", "露营", "亲子", "咖啡", "旅行", "摄影", "知识", "科技", "生活", "美食"];
 
-  function scrollToCard(index: number) {
-    document.getElementById(`seekflux-card-${index}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+  function selectCategory(category: string) {
+    if (category === "推荐") {
+      props.setMode("feed");
+      void props.runFeed();
+      return;
+    }
+    props.setQuery(category);
+    void props.runSearch(0, category);
   }
 
   return (
-    <>
-      <section className="consumer-intro">
-        <div><div className="eyebrow">Discover / Consumer app</div><h1>搜到答案，<br />也发现<em>下一条。</em></h1></div>
-        <div className="consumer-intro-copy">
-          <p>这是面向普通用户的内容消费入口：主动搜索、个性化推荐和相似内容在同一条连续路径里完成。</p>
-          <button className="text-link" onClick={props.goProfile}>调整我的兴趣画像 <Icon name="arrow" /></button>
-        </div>
-      </section>
-
-      <section className="consumer-toolbar" aria-label="发现工具栏">
-        <div className="mode-switcher" role="tablist">
-          <button className={props.mode === "feed" ? "active" : ""} onClick={() => props.setMode("feed")}><Icon name="play" /> 推荐</button>
-          <button className={props.mode === "search" ? "active" : ""} onClick={() => props.setMode("search")}><Icon name="search" /> 搜索</button>
-        </div>
-        <form className="consumer-search" onSubmit={(event) => { event.preventDefault(); void props.runSearch(0); }}>
+    <div className="consumer-home">
+      <header className="consumer-home-header">
+        <form className="consumer-home-search" onSubmit={(event) => { event.preventDefault(); void props.runSearch(0); }}>
           <Icon name="search" />
-          <input value={props.query} onChange={(event) => props.setQuery(event.target.value)} placeholder="搜索视频、主题或一个问题" aria-label="搜索内容" />
-          <button disabled={props.busy === "search"}>搜索</button>
+          <input id="consumer-search-input" value={props.query} onChange={(event) => props.setQuery(event.target.value)} placeholder="搜索你感兴趣的内容" aria-label="搜索内容" />
+          <button disabled={props.busy === "search"}><Icon name="search" /> 搜索</button>
         </form>
-        <button className="icon-button refresh-button" title="根据当前画像刷新推荐" onClick={() => void props.runFeed()} disabled={props.busy === "feed"}><Icon name="refresh" /></button>
-      </section>
+        <div className="consumer-header-actions">
+          <button title="刷新推荐" onClick={() => void props.runFeed()} disabled={props.busy === "feed"}><Icon name="refresh" /></button>
+          <button className="consumer-profile-button" onClick={props.goProfile}><span className="avatar">{props.userId.slice(0, 1).toUpperCase() || "U"}</span><span>我的</span></button>
+        </div>
+      </header>
 
-      <div className="quick-topics" aria-label="热门搜索">
-        {["杭州 周末 露营", "新手 手冲 咖啡", "上海 亲子 博物馆", "川西 自驾 摄影"].map((topic) => (
-          <button key={topic} onClick={() => { props.setQuery(topic); void props.runSearch(0, topic); }}># {topic}</button>
-        ))}
+      <nav className="consumer-category-tabs" aria-label="内容频道">
+        {categories.map((category) => {
+          const active = category === "推荐" ? props.mode === "feed" : props.mode === "search" && props.query === category;
+          return <button key={category} className={active ? "active" : ""} onClick={() => selectCategory(category)}>{category}</button>;
+        })}
+      </nav>
+
+      {props.error && <div className="consumer-service-note"><Icon name="info" /><span>暂时无法刷新内容，先看看这些推荐。</span></div>}
+      {props.feedData?.degraded && props.mode === "feed" && <div className="consumer-service-note"><Icon name="info" /><span>部分内容源暂时不可用，已展示其余推荐。</span></div>}
+
+      <div className="consumer-result-heading">
+        <strong>{props.mode === "search" ? `“${props.query}”` : "精选推荐"}</strong>
+        <span>{resultMeta}</span>
       </div>
 
-      {props.error && <div className="connection-note"><Icon name="info" /><span>{props.error}。当前继续展示产品占位，后端恢复后可直接刷新。</span></div>}
-      {props.feedData?.degraded && props.mode === "feed" && <div className="connection-note warning"><Icon name="info" /><span>部分召回源已降级：{props.feedData.unavailableSources.join("、")}，其余结果仍可消费。</span></div>}
-
-      <section className="discover-layout">
-        <div className="feed-phone" aria-label="纵向视频 Feed">
-          <div className="feed-topline"><span>{props.mode === "feed" ? "为你推荐" : `“${props.query}”`}</span><small>{props.userId} · {resultMeta}</small></div>
-          <div className="feed-scroller">
-            {props.items.map((item, index) => (
-              <MediaSlide key={`${item.contentId}-${index}`} item={item} index={index} requestId={props.requestId} addInteraction={props.addInteraction} runSimilar={props.runSimilar} />
-            ))}
-            {props.mode === "feed" && props.feedData?.nextCursor && (
-              <div className="feed-more"><button className="button accent" onClick={() => void props.runFeed(props.feedData?.nextCursor, true)} disabled={props.busy === "feed"}>继续加载 <Icon name="down" /></button></div>
-            )}
-          </div>
-        </div>
-
-        <aside className="result-drawer">
-          <div className="drawer-head"><div><span className="panel-kicker">Queue</span><h2>{props.mode === "search" ? "搜索结果" : "接下来"}</h2></div><span className="result-count">{props.usingPlaceholders ? "占位" : props.items.length}</span></div>
-          <div className="viewer-profile-mini"><span className="avatar">{props.userId.slice(0, 1).toUpperCase() || "U"}</span><div><strong>{props.userId || "anonymous"}</strong><small>{props.interests || "暂无冷启动兴趣"}</small></div></div>
-          <div className="result-list">
-            {props.items.map((item, index) => (
-              <button className="result-row" key={`${item.contentId}-row`} onClick={() => scrollToCard(index)}>
-                <span className={`result-thumb palette-${index % 5}`}>{String(index + 1).padStart(2, "0")}</span>
-                <span><strong>{item.title}</strong><small>{item.creatorId} · {item.tags.slice(0, 2).join(" / ")}</small></span>
-                <Icon name="arrow" />
-              </button>
-            ))}
-          </div>
-          {props.mode === "search" && props.searchData && props.searchData.total > props.searchData.size && (
-            <div className="drawer-pagination">
-              <button title="上一页" disabled={props.searchPage === 0 || props.busy === "search"} onClick={() => void props.runSearch(props.searchPage - 1)}><Icon name="left" /></button>
-              <span>{props.searchPage + 1}</span>
-              <button title="下一页" disabled={(props.searchPage + 1) * props.searchData.size >= props.searchData.total || props.busy === "search"} onClick={() => void props.runSearch(props.searchPage + 1)}><Icon name="arrow" /></button>
-            </div>
-          )}
-        </aside>
+      <section className="consumer-card-grid" aria-label={props.mode === "search" ? "搜索结果" : "推荐内容"}>
+        {props.items.map((item, index) => (
+          <ConsumerContentCard key={`${item.contentId}-${index}`} item={item} index={index} requestId={props.requestId} addInteraction={props.addInteraction} runSimilar={props.runSimilar} />
+        ))}
       </section>
-    </>
+
+      <div className="consumer-pagination">
+        {props.mode === "search" && props.searchData && props.searchData.total > props.searchData.size && (
+          <>
+            <button disabled={props.searchPage === 0 || props.busy === "search"} onClick={() => void props.runSearch(props.searchPage - 1)}><Icon name="left" /> 上一页</button>
+            <span>第 {props.searchPage + 1} 页</span>
+            <button disabled={(props.searchPage + 1) * props.searchData.size >= props.searchData.total || props.busy === "search"} onClick={() => void props.runSearch(props.searchPage + 1)}>下一页 <Icon name="arrow" /></button>
+          </>
+        )}
+        {props.mode === "feed" && props.feedData?.nextCursor && <button onClick={() => void props.runFeed(props.feedData?.nextCursor, true)} disabled={props.busy === "feed"}>加载更多 <Icon name="down" /></button>}
+      </div>
+    </div>
   );
 }
 
-function MediaSlide({ item, index, requestId, addInteraction, runSimilar }: {
+function ConsumerContentCard({ item, index, requestId, addInteraction, runSimilar }: {
   item: ContentItem; index: number; requestId: string;
   addInteraction: DiscoverProps["addInteraction"]; runSimilar: (contentId: string) => Promise<void>;
 }) {
   const [mediaError, setMediaError] = useState(false);
   const canPlay = Boolean(item.mediaUri) && !item.placeholder && !mediaError;
+  const durations = ["08:21", "05:48", "10:06", "06:32", "04:19", "07:45", "09:12", "03:56", "11:08"];
+  const likes = ["2.7万", "1.2万", "8,462", "3.1万", "9,830", "1.8万", "6,521", "2.2万", "7,104"];
+  const posterWords = ["去野", "手冲", "亲子", "川西", "晚餐", "日落", "散步", "AI", "好好住"];
   return (
-    <article className="feed-slide" id={`seekflux-card-${index}`}>
-      <div className={`video-stage palette-${index % 5}`}>
+    <article className="consumer-content-card">
+      <div className={`consumer-card-cover palette-${index % 5}`}>
         {canPlay ? (
           <video src={item.mediaUri} controls playsInline preload="metadata" onError={() => setMediaError(true)} onPlay={() => addInteraction("PLAY_START", item, index + 1, requestId)} />
         ) : (
-          <div className="video-placeholder">
-            <span className="placeholder-orbit" aria-hidden="true" />
-            <span className="play-mark"><Icon name="play" /></span>
-            <strong>{item.placeholder ? "VIDEO SLOT" : "MEDIA PREVIEW"}</strong>
-            <small>{item.placeholder ? "发布视频后在这里播放" : "媒体暂不可预览"}</small>
+          <div className={`consumer-poster poster-${index % 9}`}>
+            <span className="poster-kicker">SEEKFLUX PICKS</span>
+            <strong>{posterWords[index % posterWords.length]}</strong>
+            <small>{item.tags.slice(0, 2).join(" · ")}</small>
           </div>
         )}
-        <div className="video-context">
-          <div className="creator-line"><span>@{item.creatorId}</span>{item.placeholder && <small>结构占位</small>}</div>
-          <h2>{item.title}</h2>
-          <p>{item.summary || item.description}</p>
-          <div className="video-tags">{item.tags.slice(0, 4).map((tag) => <span key={tag}>#{tag}</span>)}</div>
-          {item.reason && <div className="recommend-reason"><Icon name="spark" /> {item.reason}</div>}
+        <div className="consumer-cover-label">{item.sources?.[0] === "INTEREST" ? "猜你喜欢" : item.tags[0] || "推荐"}</div>
+        <div className="consumer-cover-meta"><button title="喜欢" onClick={() => addInteraction("LIKE", item, index + 1, requestId)}><Icon name="heart" /> {likes[index % likes.length]}</button><span>{durations[index % durations.length]}</span></div>
+      </div>
+      <div className="consumer-card-copy">
+        <h2>{item.title}</h2>
+        <div className="consumer-card-tags">{item.tags.slice(0, 3).map((tag) => <span key={tag}>#{tag}</span>)}</div>
+        <div className="consumer-card-byline">
+          <span>@{item.creatorId} · {index % 3 === 0 ? "3天前" : index % 3 === 1 ? "6小时前" : "昨天"}</span>
+          <div>
+            <button title="查看相似内容" onClick={() => void runSimilar(item.contentId)}><Icon name="layers" /></button>
+            <button title="减少此类内容" onClick={() => addInteraction("NOT_INTERESTED", item, index + 1, requestId)}><Icon name="hide" /></button>
+          </div>
         </div>
-        <div className="action-rail" aria-label="内容操作">
-          <button title="喜欢" onClick={() => addInteraction("LIKE", item, index + 1, requestId)}><Icon name="heart" /><span>喜欢</span></button>
-          <button title="查看相似内容" onClick={() => void runSimilar(item.contentId)}><Icon name="layers" /><span>相似</span></button>
-          <button title="不感兴趣" onClick={() => addInteraction("NOT_INTERESTED", item, index + 1, requestId)}><Icon name="hide" /><span>减少</span></button>
-        </div>
-        <div className="slide-index">{String(index + 1).padStart(2, "0")}</div>
       </div>
     </article>
   );

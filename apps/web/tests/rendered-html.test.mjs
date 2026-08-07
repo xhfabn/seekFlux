@@ -19,9 +19,10 @@ test("renders the SeekFlux consumer app and operator consoles", async () => {
   const html = await response.text();
   assert.match(html, /SeekFlux/);
   assert.match(html, /从搜索走向发现/);
-  assert.match(html, /C 端应用/);
+  assert.match(html, /搜索你感兴趣的内容/);
   assert.match(html, /用户画像/);
   assert.match(html, /内容工作台/);
-  assert.match(html, /第一条视频会在这里开始播放/);
+  assert.match(html, /杭州周末｜3 个新手也能轻松抵达的露营地/);
+  assert.match(html, /精选推荐/);
   assert.doesNotMatch(html, /codex-preview|Building your site|react-loading-skeleton/i);
 });
