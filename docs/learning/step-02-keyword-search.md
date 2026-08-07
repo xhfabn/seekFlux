@@ -11,7 +11,7 @@ Step 2 将 Step 1 的内容发布事件接到 Elasticsearch，并提供一套可
 - 搜索页支持输入关键词或自然问题并展示标题、摘要、标签、相关度和媒体链接；
 - OpenAPI、搜索用例测试和真实发布—索引—检索实验同步更新。
 
-管理页地址为 `http://localhost:8081/admin.html`，搜索页地址为 `http://localhost:8080/`。
+统一前端地址为 `http://localhost:3001/`：搜索位于“发现”，内容画像管理位于“内容工作台”。
 
 ## 2. 端到端架构
 
@@ -79,8 +79,8 @@ flowchart LR
 | Elasticsearch Mapping、upsert、delete、query | `platform/retrieval/.../ElasticsearchSearchAdapter.java` |
 | 发布/撤回事件消费者 | `apps/worker-runner/.../ContentSearchIndexWorker.java` |
 | Search HTTP API | `apps/online-server/.../api/SearchController.java` |
-| 画像管理页 | `apps/content-server/src/main/resources/static/admin.html` |
-| 搜索页 | `apps/online-server/src/main/resources/static/index.html` |
+| C 端搜索与 B 端画像工作台 | `apps/web/app/SeekFluxApp.tsx` |
+| 前端到后端的同源 Bridge | `apps/web/app/api/bridge/[service]/[...path]/route.ts` |
 | API 契约 | `contracts/openapi/seekflux-v1.yaml` |
 
 ## 7. 启动与验证
@@ -99,7 +99,7 @@ mvn -f apps/worker-runner/pom.xml spring-boot:run
 mvn -f apps/online-server/pom.xml spring-boot:run
 ```
 
-打开画像管理页，点击“导入 5 条演示内容”，等待其中一条变为 `PUBLISHED`。然后打开搜索页输入“杭州骑行”或“咖啡教程”。也可以直接调用：
+打开 `http://localhost:3001/`，在“内容工作台”登记内容并等待它变为 `PUBLISHED`，然后回到“发现”输入“杭州骑行”或“咖啡教程”。也可以直接调用：
 
 ```bash
 curl --get http://localhost:8080/v1/search \

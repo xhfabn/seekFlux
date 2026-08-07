@@ -12,6 +12,7 @@ SeekFlux 是面向短视频内容平台的多模态搜索与推荐中台。当�
 
 - `apps/online-server`：Search、Feed、Interaction API 的进程装配；
 - `apps/content-server`：内容控制面和处理任务入口；
+- `apps/web`：唯一前端工程，承载 C 端发现应用与 B 端画像／内容工作台；
 - `apps/worker-runner`：内容理解、索引、特征写入 Worker 的进程装配；
 - `apps/training-runner`：Python 样本、训练、评测和注册环境；
 - `contexts/`：九个 DDD 限界上下文，均预留六边形分层；
@@ -25,11 +26,9 @@ SeekFlux 是面向短视频内容平台的多模态搜索与推荐中台。当�
 
 ## 当前可操作页面
 
-- 内容画像管理：`http://localhost:8081/admin.html`
-- 关键词搜索：`http://localhost:8080/`
-- 推荐 Feed：`http://localhost:8080/feed.html`
+- SeekFlux Web：`http://localhost:3001/`
 
-管理页可以登记内容、导入演示数据、查询异步状态和调整画像；搜索页可以输入关键词或自然问题；Feed 页可以配置显式兴趣和最近内容种子，观察多路召回、融合原因、降级状态与相似内容。完整启动和实验见 [Step 2 学习文档](docs/learning/step-02-keyword-search.md)和 [Step 3 学习文档](docs/learning/step-03-feed-baseline.md)。
+`apps/web` 是项目唯一前端入口：默认的“发现”是面向普通用户的纵向内容消费应用；“用户画像”和“内容工作台”是面向运营／创作者的 B 端控制台。页面通过同源 Bridge 调用 Content API 与 Online API；媒体上传和实时行为回流尚未完成的部分会显示明确占位。完整启动和实验见 [Step 2 学习文档](docs/learning/step-02-keyword-search.md)和 [Step 3 学习文档](docs/learning/step-03-feed-baseline.md)。
 
 ## 环境要求
 
@@ -53,7 +52,7 @@ macOS 上推荐使用根目录统一脚本。它会安装并启动 PostgreSQL、
 ./seekflux.sh down
 ```
 
-首次 `up` 会通过 Homebrew 安装 PostgreSQL，并把其余版本化二进制下载到 `.runtime/`；所有项目数据和日志保存在 `.local/`。MinIO API 使用 `9000`，控制台使用 `9002`。中间件版本统一维护在 `deploy/local/versions.env`，以后升级后重新运行 `install` 或 `up` 即可。详细命令见 [macOS 本地运行脚本](deploy/local/README.md)。
+首次 `up` 会通过 Homebrew 安装 PostgreSQL，并把其余版本化二进制下载到 `.runtime/`；所有项目数据和日志保存在 `.local/`。它也会启动 `apps/web`，统一页面位于 `http://localhost:3001/`。MinIO API 使用 `9000`，控制台使用 `9002`。中间件版本统一维护在 `deploy/local/versions.env`，以后升级后重新运行 `install` 或 `up` 即可。详细命令见 [macOS 本地运行脚本](deploy/local/README.md)。
 
 只安装、不启动服务：
 

@@ -2,9 +2,10 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 
-type Workspace = "content" | "discover" | "feedback";
-type DiscoverMode = "search" | "feed";
+type Workspace = "discover" | "audience" | "studio";
+type DiscoverMode = "feed" | "search";
 type HealthState = "checking" | "online" | "offline";
+type EventType = "EXPOSURE" | "PLAY_START" | "LIKE" | "NOT_INTERESTED";
 
 type ContentProfile = {
   version: number;
@@ -41,6 +42,7 @@ type ContentItem = {
   publishedAt: string;
   sources?: string[];
   reason?: string;
+  placeholder?: boolean;
 };
 
 type SearchResponse = {
@@ -62,7 +64,7 @@ type FeedResponse = {
 
 type InteractionEvent = {
   eventId: string;
-  eventType: "EXPOSURE" | "PLAY_START" | "LIKE" | "NOT_INTERESTED";
+  eventType: EventType;
   requestId: string;
   contentId: string;
   position: number;
@@ -74,19 +76,61 @@ const sampleContent = {
   title: "杭州周末露营路线",
   description: "从市区出发的一日露营与日落路线，适合新手和亲子家庭。",
   tags: "露营, 杭州, 周末, 亲子",
-  mediaUri:
-    "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
+  mediaUri: "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
 };
 
-const navItems: Array<{
-  key: Workspace;
-  number: string;
-  title: string;
-  subtitle: string;
-}> = [
-  { key: "content", number: "01", title: "内容中枢", subtitle: "登记 · 画像 · 发布" },
-  { key: "discover", number: "02", title: "发现引擎", subtitle: "搜索 · Feed · 相似" },
-  { key: "feedback", number: "03", title: "反馈回路", subtitle: "曝光 · 互动 · 回流" },
+const placeholderItems: ContentItem[] = [
+  {
+    contentId: "preview_first_video",
+    creatorId: "你的创作者账号",
+    mediaUri: "",
+    title: "第一条视频会在这里开始播放",
+    description: "内容发布后，推荐 Feed 会把真实视频、作者信息和推荐理由装进这张卡片。",
+    summary: "当前保留完整的视频消费位，等待对象存储和媒体转码链路接入。",
+    tags: ["视频占位", "推荐流", "待发布"],
+    profileVersion: 0,
+    score: 0,
+    publishedAt: "",
+    sources: ["FEED_SHELL"],
+    reason: "产品结构已就绪 · 暂无已发布视频",
+    placeholder: true,
+  },
+  {
+    contentId: "preview_search_to_feed",
+    creatorId: "SeekFlux",
+    mediaUri: "",
+    title: "搜索之后，继续刷相似内容",
+    description: "搜索命中的内容可以直接成为 Item-Item 召回种子，继续生成相似 Feed。",
+    summary: "C 端把搜索、推荐和相似内容串成一条连续消费路径。",
+    tags: ["主动搜索", "相似召回", "连续发现"],
+    profileVersion: 0,
+    score: 0,
+    publishedAt: "",
+    sources: ["SEARCH", "SIMILAR"],
+    reason: "交互占位 · 接口已经接入",
+    placeholder: true,
+  },
+  {
+    contentId: "preview_feedback_loop",
+    creatorId: "SeekFlux",
+    mediaUri: "",
+    title: "每一次喜欢，都会成为下一次信号",
+    description: "曝光、播放、喜欢和不感兴趣会先进入本地事件队列，等待 Interaction API 接棒。",
+    summary: "反馈结构已保留，后续可以无缝接入实时兴趣与排序。",
+    tags: ["行为反馈", "实时兴趣", "架构占位"],
+    profileVersion: 0,
+    score: 0,
+    publishedAt: "",
+    sources: ["LOCAL_SIGNAL"],
+    reason: "行为链路占位 · 数据不会伪报成功",
+    placeholder: true,
+  },
+];
+
+const navItems: Array<{ key: Workspace; number: string; title: string; subtitle: string; role: string }> = [
+  { key: "discover", number: "01", title: "发现", subtitle: "搜索 · 推荐 · 相似", role: "C 端应用" },
+  { key: "audience", number: "02", title: "用户画像", subtitle: "冷启动 · 行为 · 回流", role: "B 端控制台" },
+  { key: "studio", number: "03", title: "内容工作台", subtitle: "上传 · 画像 · 发布", role: "B 端控制台" },
 ];
 
 const statusIndex: Record<ContentResponse["status"], number> = {
@@ -97,16 +141,11 @@ const statusIndex: Record<ContentResponse["status"], number> = {
 };
 
 function splitTags(value: string): string[] {
-  return value
-    .split(/[,，]/)
-    .map((tag) => tag.trim())
-    .filter(Boolean);
+  return value.split(/[,，]/).map((tag) => tag.trim()).filter(Boolean);
 }
 
 function createEventId(): string {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
-    return `evt_${crypto.randomUUID()}`;
-  }
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return `evt_${crypto.randomUUID()}`;
   return `evt_${Date.now()}_${Math.random().toString(16).slice(2)}`;
 }
 
@@ -118,55 +157,43 @@ async function api<T>(url: string, options?: RequestInit): Promise<T> {
       ...options?.headers,
     },
   });
-  const payload = (await response.json().catch(() => ({}))) as {
-    message?: string;
-  } & T;
-  if (!response.ok) {
-    throw new Error(payload.message || `${response.status} ${response.statusText}`);
-  }
+  const payload = (await response.json().catch(() => ({}))) as { message?: string } & T;
+  if (!response.ok) throw new Error(payload.message || `${response.status} ${response.statusText}`);
   return payload;
 }
 
 function shortId(value: string): string {
-  if (value.length <= 18) return value;
-  return `${value.slice(0, 8)}…${value.slice(-6)}`;
+  return value.length <= 20 ? value : `${value.slice(0, 9)}…${value.slice(-6)}`;
 }
 
 function formatEventTime(value: string): string {
-  return new Intl.DateTimeFormat("zh-CN", {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  }).format(new Date(value));
+  return new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date(value));
 }
 
 export function SeekFluxApp() {
-  const [workspace, setWorkspace] = useState<Workspace>("content");
-  const [discoverMode, setDiscoverMode] = useState<DiscoverMode>("search");
+  const [workspace, setWorkspace] = useState<Workspace>("discover");
+  const [discoverMode, setDiscoverMode] = useState<DiscoverMode>("feed");
   const [busy, setBusy] = useState<string | null>(null);
   const [toast, setToast] = useState<{ text: string; error?: boolean } | null>(null);
-  const [health, setHealth] = useState<Record<"content" | "online", HealthState>>({
-    content: "checking",
-    online: "checking",
-  });
+  const [health, setHealth] = useState<Record<"content" | "online", HealthState>>({ content: "checking", online: "checking" });
 
   const [creatorId, setCreatorId] = useState(sampleContent.creatorId);
   const [title, setTitle] = useState(sampleContent.title);
   const [description, setDescription] = useState(sampleContent.description);
   const [sourceTags, setSourceTags] = useState(sampleContent.tags);
   const [mediaUri, setMediaUri] = useState(sampleContent.mediaUri);
+  const [selectedFile, setSelectedFile] = useState("");
   const [contentId, setContentId] = useState("");
   const [content, setContent] = useState<ContentResponse | null>(null);
   const [contentMessage, setContentMessage] = useState("等待登记一条内容");
   const [profileVersion, setProfileVersion] = useState(2);
-  const [profileSummary, setProfileSummary] = useState(
-    "适合亲子家庭和露营新手的杭州周边周末路线，包含日落观景建议。",
-  );
+  const [profileSummary, setProfileSummary] = useState("适合亲子家庭和露营新手的杭州周边周末路线，包含日落观景建议。");
   const [profileTags, setProfileTags] = useState("亲子露营, 杭州周边, 新手路线");
   const [transcript, setTranscript] = useState("");
 
   const [userId, setUserId] = useState("demo-user");
   const [interests, setInterests] = useState("露营, 亲子");
+  const [profileSavedAt, setProfileSavedAt] = useState("");
   const [query, setQuery] = useState("杭州 周末 露营");
   const [searchPage, setSearchPage] = useState(0);
   const [searchData, setSearchData] = useState<SearchResponse | null>(null);
@@ -177,13 +204,9 @@ export function SeekFluxApp() {
 
   const [events, setEvents] = useState<InteractionEvent[]>([]);
   const [queueHydrated, setQueueHydrated] = useState(false);
-  const [syncMessage, setSyncMessage] = useState(
-    "当前先保存在浏览器；Interaction API 接通后可一键批量回传。",
-  );
+  const [syncMessage, setSyncMessage] = useState("Interaction API 尚未完成；行为先安全保存在当前浏览器。 ");
 
-  const showToast = useCallback((text: string, error = false) => {
-    setToast({ text, error });
-  }, []);
+  const showToast = useCallback((text: string, error = false) => setToast({ text, error }), []);
 
   useEffect(() => {
     if (!toast) return;
@@ -192,20 +215,24 @@ export function SeekFluxApp() {
   }, [toast]);
 
   useEffect(() => {
-    const raw = window.localStorage.getItem("seekflux.interactions");
-    if (raw) {
+    const rawEvents = window.localStorage.getItem("seekflux.interactions");
+    if (rawEvents) {
+      try { setEvents(JSON.parse(rawEvents) as InteractionEvent[]); } catch { window.localStorage.removeItem("seekflux.interactions"); }
+    }
+    const rawProfile = window.localStorage.getItem("seekflux.viewer-profile");
+    if (rawProfile) {
       try {
-        setEvents(JSON.parse(raw) as InteractionEvent[]);
-      } catch {
-        window.localStorage.removeItem("seekflux.interactions");
-      }
+        const saved = JSON.parse(rawProfile) as { userId?: string; interests?: string; savedAt?: string };
+        if (saved.userId) setUserId(saved.userId);
+        if (saved.interests) setInterests(saved.interests);
+        if (saved.savedAt) setProfileSavedAt(saved.savedAt);
+      } catch { window.localStorage.removeItem("seekflux.viewer-profile"); }
     }
     setQueueHydrated(true);
   }, []);
 
   useEffect(() => {
-    if (!queueHydrated) return;
-    window.localStorage.setItem("seekflux.interactions", JSON.stringify(events));
+    if (queueHydrated) window.localStorage.setItem("seekflux.interactions", JSON.stringify(events));
   }, [events, queueHydrated]);
 
   useEffect(() => {
@@ -220,9 +247,7 @@ export function SeekFluxApp() {
     }
     void check("content");
     void check("online");
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, []);
 
   const navigate = useCallback((target: Workspace) => {
@@ -248,13 +273,7 @@ export function SeekFluxApp() {
     try {
       const data = await api<ContentResponse>("/api/bridge/content/v1/contents", {
         method: "POST",
-        body: JSON.stringify({
-          creatorId,
-          mediaUri,
-          title,
-          description,
-          sourceTags: splitTags(sourceTags),
-        }),
+        body: JSON.stringify({ creatorId, mediaUri, title, description, sourceTags: splitTags(sourceTags) }),
       });
       applyContentResponse(data);
       setFeedSeed(data.contentId);
@@ -266,9 +285,7 @@ export function SeekFluxApp() {
       setContentMessage(message);
       setHealth((current) => ({ ...current, content: "offline" }));
       showToast(message, true);
-    } finally {
-      setBusy(null);
-    }
+    } finally { setBusy(null); }
   }
 
   async function loadContent(silent = false): Promise<ContentResponse | null> {
@@ -278,13 +295,9 @@ export function SeekFluxApp() {
     }
     if (!silent) setBusy("content-load");
     try {
-      const data = await api<ContentResponse>(
-        `/api/bridge/content/v1/contents/${encodeURIComponent(contentId.trim())}`,
-      );
+      const data = await api<ContentResponse>(`/api/bridge/content/v1/contents/${encodeURIComponent(contentId.trim())}`);
       applyContentResponse(data);
-      setContentMessage(
-        `${data.status} · 聚合版本 v${data.version}${data.profile ? ` · 画像 v${data.profile.version}` : ""}`,
-      );
+      setContentMessage(`${data.status} · 聚合版本 v${data.version}${data.profile ? ` · 画像 v${data.profile.version}` : ""}`);
       setHealth((current) => ({ ...current, content: "online" }));
       return data;
     } catch (error) {
@@ -292,9 +305,7 @@ export function SeekFluxApp() {
       setContentMessage(message);
       if (!silent) showToast(message, true);
       return null;
-    } finally {
-      if (!silent) setBusy(null);
-    }
+    } finally { if (!silent) setBusy(null); }
   }
 
   async function pollContent() {
@@ -305,174 +316,143 @@ export function SeekFluxApp() {
       if (!data) break;
       if (data.status === "PUBLISHED") {
         setBusy(null);
-        showToast("内容画像已发布，可以去搜索验证了");
+        showToast("内容画像已发布，可以去发现页验证了");
         return;
       }
       await new Promise((resolve) => window.setTimeout(resolve, 1000));
     }
     setBusy(null);
-    setContentMessage((current) =>
-      `${current} · 等待超时，请确认 Worker、Kafka 与 Elasticsearch 已启动`,
-    );
+    setContentMessage((current) => `${current} · 等待超时，请确认 Worker、Kafka 与 Elasticsearch 已启动`);
   }
 
   async function publishProfile(event: FormEvent) {
     event.preventDefault();
-    if (!contentId.trim()) {
-      showToast("请先登记或查询一条内容", true);
-      return;
-    }
+    if (!contentId.trim()) return showToast("请先登记或查询一条内容", true);
     setBusy("profile-publish");
     try {
-      await api<ContentResponse>(
-        `/api/bridge/content/v1/contents/${encodeURIComponent(contentId.trim())}/profile`,
-        {
-          method: "PUT",
-          body: JSON.stringify({
-            profileVersion,
-            summary: profileSummary,
-            tags: splitTags(profileTags),
-            transcript,
-          }),
-        },
-      );
-      const published = await api<ContentResponse>(
-        `/api/bridge/content/v1/contents/${encodeURIComponent(contentId.trim())}/publish`,
-        { method: "POST" },
-      );
+      await api<ContentResponse>(`/api/bridge/content/v1/contents/${encodeURIComponent(contentId.trim())}/profile`, {
+        method: "PUT",
+        body: JSON.stringify({ profileVersion, summary: profileSummary, tags: splitTags(profileTags), transcript }),
+      });
+      const published = await api<ContentResponse>(`/api/bridge/content/v1/contents/${encodeURIComponent(contentId.trim())}/publish`, { method: "POST" });
       applyContentResponse(published);
-      setContentMessage(
-        `PUBLISHED · 聚合版本 v${published.version} · 画像 v${published.profile?.version ?? profileVersion}`,
-      );
-      showToast("画像已完成校准并重新发布");
+      setContentMessage(`PUBLISHED · 聚合版本 v${published.version} · 画像 v${published.profile?.version ?? profileVersion}`);
+      showToast("画像已校准并重新发布");
     } catch (error) {
       showToast(error instanceof Error ? error.message : "画像发布失败", true);
-    } finally {
-      setBusy(null);
-    }
+    } finally { setBusy(null); }
   }
 
-  const appendExposureEvents = useCallback(
-    (items: ContentItem[], requestId: string, startPosition = 0) => {
-      const now = new Date().toISOString();
-      setEvents((current) => {
-        const next = items.map((item, index) => ({
-          eventId: createEventId(),
-          eventType: "EXPOSURE" as const,
-          requestId,
-          contentId: item.contentId,
-          position: startPosition + index + 1,
-          eventTime: now,
-        }));
-        return [...next, ...current].slice(0, 200);
-      });
-    },
-    [],
-  );
+  async function withdrawContent() {
+    if (!contentId.trim() || !window.confirm("确认撤回这条内容？它将不再参与搜索与推荐。")) return;
+    setBusy("content-withdraw");
+    try {
+      const data = await api<ContentResponse>(`/api/bridge/content/v1/contents/${encodeURIComponent(contentId.trim())}`, { method: "DELETE" });
+      applyContentResponse(data);
+      setContentMessage(`WITHDRAWN · 聚合版本 v${data.version}`);
+      showToast("内容已撤回");
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "撤回失败", true);
+    } finally { setBusy(null); }
+  }
 
-  const addInteraction = useCallback(
-    (
-      eventType: InteractionEvent["eventType"],
-      item: ContentItem,
-      position: number,
-      requestId: string,
-    ) => {
-      const nextEvent: InteractionEvent = {
-        eventId: createEventId(),
-        eventType,
-        requestId,
-        contentId: item.contentId,
-        position,
-        eventTime: new Date().toISOString(),
-      };
-      setEvents((current) => [nextEvent, ...current].slice(0, 200));
-      showToast(`${eventType} 已进入反馈队列`);
-    },
-    [showToast],
-  );
+  const appendExposureEvents = useCallback((items: ContentItem[], requestId: string, startPosition = 0) => {
+    const now = new Date().toISOString();
+    setEvents((current) => {
+      const next = items.map((item, index) => ({
+        eventId: createEventId(), eventType: "EXPOSURE" as const, requestId,
+        contentId: item.contentId, position: startPosition + index + 1, eventTime: now,
+      }));
+      return [...next, ...current].slice(0, 200);
+    });
+  }, []);
+
+  const addInteraction = useCallback((eventType: EventType, item: ContentItem, position: number, requestId: string) => {
+    const nextEvent: InteractionEvent = {
+      eventId: createEventId(), eventType, requestId, contentId: item.contentId,
+      position, eventTime: new Date().toISOString(),
+    };
+    setEvents((current) => [nextEvent, ...current].slice(0, 200));
+    showToast(item.placeholder ? "演示行为已保存到本地画像" : "行为已保存到反馈队列");
+  }, [showToast]);
 
   async function runSearch(targetPage = 0, targetQuery = query) {
     const cleanQuery = targetQuery.trim();
-    if (!cleanQuery) {
-      showToast("请输入搜索词", true);
-      return;
-    }
+    if (!cleanQuery) return showToast("请输入搜索词", true);
     setBusy("search");
     setDiscoverError("");
     try {
-      const params = new URLSearchParams({ q: cleanQuery, page: String(targetPage), size: "9" });
+      const params = new URLSearchParams({ q: cleanQuery, page: String(targetPage), size: "12" });
       const data = await api<SearchResponse>(`/api/bridge/online/v1/search?${params}`);
       setQuery(cleanQuery);
       setSearchPage(targetPage);
       setSearchData(data);
+      setDiscoverMode("search");
       setHealth((current) => ({ ...current, online: "online" }));
       appendExposureEvents(data.hits, `search_${createEventId()}`);
-      if (!data.hits.length) showToast("没有匹配结果，可以换一个更短的关键词");
+      if (!data.hits.length) showToast("没有匹配结果，已保留产品占位内容");
     } catch (error) {
       const message = error instanceof Error ? error.message : "搜索失败";
       setDiscoverError(message);
       setHealth((current) => ({ ...current, online: "offline" }));
       showToast(message, true);
-    } finally {
-      setBusy(null);
-    }
+    } finally { setBusy(null); }
   }
 
   async function runFeed(cursor?: string | null, append = false) {
     setBusy("feed");
     setDiscoverError("");
     try {
-      const params = new URLSearchParams({ page_size: "9" });
+      const params = new URLSearchParams({ page_size: "12" });
       if (interests.trim()) params.set("interests", interests.trim());
       if (feedSeed.trim()) params.set("seed_content_id", feedSeed.trim());
       if (cursor) params.set("cursor", cursor);
-      const data = await api<FeedResponse>(`/api/bridge/online/v1/feed?${params}`, {
-        headers: { "X-User-Id": userId || "anonymous" },
-      });
+      const data = await api<FeedResponse>(`/api/bridge/online/v1/feed?${params}`, { headers: { "X-User-Id": userId || "anonymous" } });
       const startPosition = append ? feedItems.length : 0;
       setFeedData(data);
-      setFeedItems((current) => (append ? [...current, ...data.items] : data.items));
+      setFeedItems((current) => append ? [...current, ...data.items] : data.items);
+      setDiscoverMode("feed");
       setHealth((current) => ({ ...current, online: "online" }));
       appendExposureEvents(data.items, data.requestId, startPosition);
+      if (!data.items.length) showToast("Feed 暂无真实内容，继续展示视频占位结构");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Feed 生成失败";
       setDiscoverError(message);
+      setHealth((current) => ({ ...current, online: "offline" }));
       showToast(message, true);
-    } finally {
-      setBusy(null);
-    }
+    } finally { setBusy(null); }
   }
 
   async function runSimilar(contentSeed: string) {
-    setDiscoverMode("feed");
+    if (contentSeed.startsWith("preview_")) return showToast("发布真实内容后即可调用相似召回");
     setFeedSeed(contentSeed);
     setBusy("feed");
     setDiscoverError("");
     try {
-      const params = new URLSearchParams({ page_size: "9" });
+      const params = new URLSearchParams({ page_size: "12" });
       if (interests.trim()) params.set("interests", interests.trim());
-      const data = await api<FeedResponse>(
-        `/api/bridge/online/v1/contents/${encodeURIComponent(contentSeed)}/similar?${params}`,
-        { headers: { "X-User-Id": userId || "anonymous" } },
-      );
+      const data = await api<FeedResponse>(`/api/bridge/online/v1/contents/${encodeURIComponent(contentSeed)}/similar?${params}`, { headers: { "X-User-Id": userId || "anonymous" } });
       setFeedData(data);
       setFeedItems(data.items);
+      setDiscoverMode("feed");
       appendExposureEvents(data.items, data.requestId);
-      showToast("已切换为相似内容召回");
+      showToast("已切换为相似内容 Feed");
     } catch (error) {
       const message = error instanceof Error ? error.message : "相似内容召回失败";
       setDiscoverError(message);
       showToast(message, true);
-    } finally {
-      setBusy(null);
-    }
+    } finally { setBusy(null); }
+  }
+
+  function saveViewerProfile() {
+    const savedAt = new Date().toISOString();
+    window.localStorage.setItem("seekflux.viewer-profile", JSON.stringify({ userId, interests, savedAt }));
+    setProfileSavedAt(savedAt);
+    showToast("冷启动画像已保存到当前设备");
   }
 
   async function syncInteractions() {
-    if (!events.length) {
-      showToast("反馈队列还是空的");
-      return;
-    }
+    if (!events.length) return showToast("反馈队列还是空的");
     setBusy("sync");
     setSyncMessage("正在尝试提交 Interaction API…");
     try {
@@ -487,16 +467,14 @@ export function SeekFluxApp() {
       showToast(`${count} 个反馈事件已回传`);
     } catch (error) {
       const message = error instanceof Error ? error.message : "回传失败";
-      setSyncMessage(`后端暂未接通：${message}。事件仍安全保留在本地。`);
+      setSyncMessage(`后端尚未接通：${message}。事件仍保留在本地。`);
       showToast("Interaction API 尚未可用，队列已保留", true);
-    } finally {
-      setBusy(null);
-    }
+    } finally { setBusy(null); }
   }
 
   const displayedItems = discoverMode === "search" ? searchData?.hits ?? [] : feedItems;
-  const activeRequestId =
-    discoverMode === "feed" ? feedData?.requestId ?? "feed_pending" : "search_frontend";
+  const consumerItems = displayedItems.length ? displayedItems : placeholderItems;
+  const activeRequestId = discoverMode === "feed" ? feedData?.requestId ?? "feed_preview" : "search_frontend";
   const currentStage = content ? statusIndex[content.status] : 0;
   const eventCounts = useMemo(() => {
     const exposures = events.filter((event) => event.eventType === "EXPOSURE").length;
@@ -504,146 +482,76 @@ export function SeekFluxApp() {
   }, [events]);
 
   return (
-    <div className="app-shell">
+    <div className={`app-shell workspace-${workspace}`}>
       {busy && <div className="loading-bar" aria-label="处理中" />}
       <aside className="sidebar">
-        <div className="brand-lockup">
-          <div className="brand-mark" aria-hidden="true">S</div>
-          <div>
-            <div className="brand-name">SeekFlux</div>
-            <div className="brand-subtitle">Discovery infrastructure</div>
-          </div>
-        </div>
-
-        <nav className="side-nav" aria-label="工作台导航">
+        <button className="brand-lockup" onClick={() => navigate("discover")} aria-label="回到发现页">
+          <span className="brand-mark" aria-hidden="true">S</span>
+          <span><strong className="brand-name">SeekFlux</strong><small className="brand-subtitle">Search to discovery</small></span>
+        </button>
+        <nav className="side-nav" aria-label="产品导航">
           {navItems.map((item) => (
-            <button
-              key={item.key}
-              className={`side-nav-button ${workspace === item.key ? "active" : ""}`}
-              onClick={() => navigate(item.key)}
-            >
+            <button key={item.key} className={`side-nav-button ${workspace === item.key ? "active" : ""}`} onClick={() => navigate(item.key)}>
               <span className="nav-number">{item.number}</span>
-              <span className="nav-copy">
-                <strong>{item.title}</strong>
-                <small>{item.subtitle}</small>
-              </span>
-              {item.key === "feedback" && events.length > 0 && (
-                <span className="nav-count">{Math.min(events.length, 99)}</span>
-              )}
+              <span className="nav-copy"><strong>{item.title}</strong><small>{item.subtitle}</small></span>
+              <span className="nav-role">{item.role}</span>
             </button>
           ))}
         </nav>
-
         <div className="side-status">
-          <div className="side-status-title"><span className="pulse-dot" /> MVP 闭环进度</div>
-          <div className="side-progress"><span /></div>
-          <p>内容与发现链路已接通，反馈链路采用可回传的本地事件队列。</p>
+          <div className="side-status-title"><span className="pulse-dot" /> 当前实现边界</div>
+          <p>搜索、推荐和内容画像已接真实接口；媒体上传与实时行为回流保留清晰占位。</p>
         </div>
-        <div className="side-version">ARCH BASELINE / V2.0</div>
+        <div className="side-version">PRODUCT SHELL / STEP 3</div>
       </aside>
 
       <div className="mobile-header">
-        <div className="brand-lockup">
-          <div className="brand-mark" aria-hidden="true">S</div>
-          <div className="brand-name">SeekFlux</div>
-        </div>
+        <button className="mobile-brand" onClick={() => navigate("discover")}><span className="brand-mark">S</span><strong>SeekFlux</strong></button>
         <div className="mobile-tabs">
-          {navItems.map((item) => (
-            <button
-              key={item.key}
-              className={workspace === item.key ? "active" : ""}
-              onClick={() => navigate(item.key)}
-            >
-              {item.title.replace("引擎", "").replace("中枢", "")}
-            </button>
-          ))}
+          {navItems.map((item) => <button key={item.key} className={workspace === item.key ? "active" : ""} onClick={() => navigate(item.key)}>{item.title}</button>)}
         </div>
       </div>
 
       <main className="main-stage">
         <header className="topbar">
-          <div className="topbar-path">SeekFlux / <strong>{navItems.find((item) => item.key === workspace)?.title}</strong></div>
-          <div className="service-cluster" aria-label="后端服务状态">
-            <ServicePill name="Content API" state={health.content} />
-            <ServicePill name="Online API" state={health.online} />
-          </div>
+          <div><span className="surface-badge">{workspace === "discover" ? "C 端" : "B 端"}</span><span className="topbar-path">SeekFlux / <strong>{navItems.find((item) => item.key === workspace)?.title}</strong></span></div>
+          <div className="service-cluster" aria-label="后端服务状态"><ServicePill name="Content" state={health.content} /><ServicePill name="Online" state={health.online} /></div>
         </header>
-
-        {workspace === "content" && (
-          <ContentWorkspace
-            creatorId={creatorId}
-            setCreatorId={setCreatorId}
-            title={title}
-            setTitle={setTitle}
-            description={description}
-            setDescription={setDescription}
-            sourceTags={sourceTags}
-            setSourceTags={setSourceTags}
-            mediaUri={mediaUri}
-            setMediaUri={setMediaUri}
-            submitContent={submitContent}
-            contentId={contentId}
-            setContentId={setContentId}
-            content={content}
-            contentMessage={contentMessage}
-            currentStage={currentStage}
-            loadContent={loadContent}
-            pollContent={pollContent}
-            profileVersion={profileVersion}
-            setProfileVersion={setProfileVersion}
-            profileSummary={profileSummary}
-            setProfileSummary={setProfileSummary}
-            profileTags={profileTags}
-            setProfileTags={setProfileTags}
-            transcript={transcript}
-            setTranscript={setTranscript}
-            publishProfile={publishProfile}
-            busy={busy}
-            goDiscover={() => navigate("discover")}
-          />
-        )}
 
         {workspace === "discover" && (
           <DiscoverWorkspace
-            mode={discoverMode}
-            setMode={setDiscoverMode}
-            userId={userId}
-            setUserId={setUserId}
-            interests={interests}
-            setInterests={setInterests}
-            query={query}
-            setQuery={setQuery}
-            runSearch={runSearch}
-            searchPage={searchPage}
-            searchData={searchData}
-            feedSeed={feedSeed}
-            setFeedSeed={setFeedSeed}
-            runFeed={runFeed}
-            runSimilar={runSimilar}
-            feedData={feedData}
-            items={displayedItems}
-            error={discoverError}
-            busy={busy}
-            requestId={activeRequestId}
-            addInteraction={addInteraction}
+            mode={discoverMode} setMode={setDiscoverMode} userId={userId} interests={interests}
+            query={query} setQuery={setQuery} runSearch={runSearch} searchPage={searchPage} searchData={searchData}
+            runFeed={runFeed} runSimilar={runSimilar} feedData={feedData} items={consumerItems}
+            usingPlaceholders={!displayedItems.length} error={discoverError} busy={busy}
+            requestId={activeRequestId} addInteraction={addInteraction} goProfile={() => navigate("audience")}
           />
         )}
 
-        {workspace === "feedback" && (
-          <FeedbackWorkspace
-            events={events}
-            eventCounts={eventCounts}
-            syncMessage={syncMessage}
-            syncInteractions={syncInteractions}
-            clearEvents={() => {
-              setEvents([]);
-              setSyncMessage("本地反馈队列已清空。");
-            }}
-            busy={busy}
+        {workspace === "audience" && (
+          <AudienceWorkspace
+            userId={userId} setUserId={setUserId} interests={interests} setInterests={setInterests}
+            profileSavedAt={profileSavedAt} saveViewerProfile={saveViewerProfile} events={events}
+            eventCounts={eventCounts} syncMessage={syncMessage} syncInteractions={syncInteractions}
+            clearEvents={() => { setEvents([]); setSyncMessage("本地反馈队列已清空。"); }}
+            busy={busy} goDiscover={() => navigate("discover")}
+          />
+        )}
+
+        {workspace === "studio" && (
+          <StudioWorkspace
+            creatorId={creatorId} setCreatorId={setCreatorId} title={title} setTitle={setTitle}
+            description={description} setDescription={setDescription} sourceTags={sourceTags} setSourceTags={setSourceTags}
+            mediaUri={mediaUri} setMediaUri={setMediaUri} selectedFile={selectedFile} setSelectedFile={setSelectedFile}
+            submitContent={submitContent} contentId={contentId} setContentId={setContentId} content={content}
+            contentMessage={contentMessage} currentStage={currentStage} loadContent={loadContent} pollContent={pollContent}
+            profileVersion={profileVersion} setProfileVersion={setProfileVersion} profileSummary={profileSummary}
+            setProfileSummary={setProfileSummary} profileTags={profileTags} setProfileTags={setProfileTags}
+            transcript={transcript} setTranscript={setTranscript} publishProfile={publishProfile}
+            withdrawContent={withdrawContent} busy={busy} goDiscover={() => navigate("discover")}
           />
         )}
       </main>
-
       {toast && <div className={`toast ${toast.error ? "error" : ""}`} role="status">{toast.text}</div>}
     </div>
   );
@@ -651,356 +559,262 @@ export function SeekFluxApp() {
 
 function ServicePill({ name, state }: { name: string; state: HealthState }) {
   const label = state === "checking" ? "检测中" : state === "online" ? "已连接" : "未连接";
-  return <div className={`service-pill ${state}`}><i />{name} · {label}</div>;
+  return <div className={`service-pill ${state}`} title={`${name} API ${label}`}><i />{name} · {label}</div>;
 }
 
-type ContentWorkspaceProps = {
-  creatorId: string;
-  setCreatorId: (value: string) => void;
-  title: string;
-  setTitle: (value: string) => void;
-  description: string;
-  setDescription: (value: string) => void;
-  sourceTags: string;
-  setSourceTags: (value: string) => void;
-  mediaUri: string;
-  setMediaUri: (value: string) => void;
-  submitContent: (event: FormEvent) => void;
-  contentId: string;
-  setContentId: (value: string) => void;
-  content: ContentResponse | null;
-  contentMessage: string;
-  currentStage: number;
-  loadContent: () => Promise<ContentResponse | null>;
-  pollContent: () => Promise<void>;
-  profileVersion: number;
-  setProfileVersion: (value: number) => void;
-  profileSummary: string;
-  setProfileSummary: (value: string) => void;
-  profileTags: string;
-  setProfileTags: (value: string) => void;
-  transcript: string;
-  setTranscript: (value: string) => void;
-  publishProfile: (event: FormEvent) => void;
-  busy: string | null;
-  goDiscover: () => void;
+type DiscoverProps = {
+  mode: DiscoverMode; setMode: (mode: DiscoverMode) => void; userId: string; interests: string;
+  query: string; setQuery: (value: string) => void; runSearch: (page?: number, query?: string) => Promise<void>;
+  searchPage: number; searchData: SearchResponse | null; runFeed: (cursor?: string | null, append?: boolean) => Promise<void>;
+  runSimilar: (contentId: string) => Promise<void>; feedData: FeedResponse | null; items: ContentItem[];
+  usingPlaceholders: boolean; error: string; busy: string | null; requestId: string;
+  addInteraction: (type: EventType, item: ContentItem, position: number, requestId: string) => void;
+  goProfile: () => void;
 };
 
-function ContentWorkspace(props: ContentWorkspaceProps) {
-  const pipeline = [
-    ["内容登记", "PostgreSQL + Outbox"],
-    ["任务投递", "Kafka · 异步处理"],
-    ["画像生成", "基础摘要与标签"],
-    ["质量门禁", "版本与状态校验"],
-    ["索引发布", "Elasticsearch"],
-  ];
+function DiscoverWorkspace(props: DiscoverProps) {
+  const resultMeta = props.mode === "search" && props.searchData
+    ? `${props.searchData.total} 条结果 · ${props.searchData.tookMillis} ms`
+    : props.feedData ? `${props.feedData.items.length} 条推荐` : "产品预览";
+
+  function scrollToCard(index: number) {
+    document.getElementById(`seekflux-card-${index}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+
   return (
     <>
-      <section className="section-hero">
-        <div>
-          <div className="eyebrow">01 / Content intelligence</div>
-          <h1>先让系统<br />知道内容<em>是什么。</em></h1>
-        </div>
-        <div className="hero-aside">
-          <p>登记短视频元数据，观察它经过 Outbox、Kafka 与 Worker 生成画像并进入索引。这里对应当前已经跑通的第一条纵向切片。</p>
-          <div className="micro-chips">
-            <span className="micro-chip">POST /v1/contents</span>
-            <span className="micro-chip">async profile</span>
-            <span className="micro-chip">idempotent publish</span>
-          </div>
+      <section className="consumer-intro">
+        <div><div className="eyebrow">Discover / Consumer app</div><h1>搜到答案，<br />也发现<em>下一条。</em></h1></div>
+        <div className="consumer-intro-copy">
+          <p>这是面向普通用户的内容消费入口：主动搜索、个性化推荐和相似内容在同一条连续路径里完成。</p>
+          <button className="text-link" onClick={props.goProfile}>调整我的兴趣画像 <Icon name="arrow" /></button>
         </div>
       </section>
 
-      <section className="workspace-grid">
-        <article className="panel">
-          <div className="panel-header">
-            <div><div className="panel-kicker">New content</div><h2>登记一条短视频</h2></div>
-            <div className="panel-note">真实调用 Content API<br />提交后异步处理</div>
+      <section className="consumer-toolbar" aria-label="发现工具栏">
+        <div className="mode-switcher" role="tablist">
+          <button className={props.mode === "feed" ? "active" : ""} onClick={() => props.setMode("feed")}><Icon name="play" /> 推荐</button>
+          <button className={props.mode === "search" ? "active" : ""} onClick={() => props.setMode("search")}><Icon name="search" /> 搜索</button>
+        </div>
+        <form className="consumer-search" onSubmit={(event) => { event.preventDefault(); void props.runSearch(0); }}>
+          <Icon name="search" />
+          <input value={props.query} onChange={(event) => props.setQuery(event.target.value)} placeholder="搜索视频、主题或一个问题" aria-label="搜索内容" />
+          <button disabled={props.busy === "search"}>搜索</button>
+        </form>
+        <button className="icon-button refresh-button" title="根据当前画像刷新推荐" onClick={() => void props.runFeed()} disabled={props.busy === "feed"}><Icon name="refresh" /></button>
+      </section>
+
+      <div className="quick-topics" aria-label="热门搜索">
+        {["杭州 周末 露营", "新手 手冲 咖啡", "上海 亲子 博物馆", "川西 自驾 摄影"].map((topic) => (
+          <button key={topic} onClick={() => { props.setQuery(topic); void props.runSearch(0, topic); }}># {topic}</button>
+        ))}
+      </div>
+
+      {props.error && <div className="connection-note"><Icon name="info" /><span>{props.error}。当前继续展示产品占位，后端恢复后可直接刷新。</span></div>}
+      {props.feedData?.degraded && props.mode === "feed" && <div className="connection-note warning"><Icon name="info" /><span>部分召回源已降级：{props.feedData.unavailableSources.join("、")}，其余结果仍可消费。</span></div>}
+
+      <section className="discover-layout">
+        <div className="feed-phone" aria-label="纵向视频 Feed">
+          <div className="feed-topline"><span>{props.mode === "feed" ? "为你推荐" : `“${props.query}”`}</span><small>{props.userId} · {resultMeta}</small></div>
+          <div className="feed-scroller">
+            {props.items.map((item, index) => (
+              <MediaSlide key={`${item.contentId}-${index}`} item={item} index={index} requestId={props.requestId} addInteraction={props.addInteraction} runSimilar={props.runSimilar} />
+            ))}
+            {props.mode === "feed" && props.feedData?.nextCursor && (
+              <div className="feed-more"><button className="button accent" onClick={() => void props.runFeed(props.feedData?.nextCursor, true)} disabled={props.busy === "feed"}>继续加载 <Icon name="down" /></button></div>
+            )}
           </div>
+        </div>
+
+        <aside className="result-drawer">
+          <div className="drawer-head"><div><span className="panel-kicker">Queue</span><h2>{props.mode === "search" ? "搜索结果" : "接下来"}</h2></div><span className="result-count">{props.usingPlaceholders ? "占位" : props.items.length}</span></div>
+          <div className="viewer-profile-mini"><span className="avatar">{props.userId.slice(0, 1).toUpperCase() || "U"}</span><div><strong>{props.userId || "anonymous"}</strong><small>{props.interests || "暂无冷启动兴趣"}</small></div></div>
+          <div className="result-list">
+            {props.items.map((item, index) => (
+              <button className="result-row" key={`${item.contentId}-row`} onClick={() => scrollToCard(index)}>
+                <span className={`result-thumb palette-${index % 5}`}>{String(index + 1).padStart(2, "0")}</span>
+                <span><strong>{item.title}</strong><small>{item.creatorId} · {item.tags.slice(0, 2).join(" / ")}</small></span>
+                <Icon name="arrow" />
+              </button>
+            ))}
+          </div>
+          {props.mode === "search" && props.searchData && props.searchData.total > props.searchData.size && (
+            <div className="drawer-pagination">
+              <button title="上一页" disabled={props.searchPage === 0 || props.busy === "search"} onClick={() => void props.runSearch(props.searchPage - 1)}><Icon name="left" /></button>
+              <span>{props.searchPage + 1}</span>
+              <button title="下一页" disabled={(props.searchPage + 1) * props.searchData.size >= props.searchData.total || props.busy === "search"} onClick={() => void props.runSearch(props.searchPage + 1)}><Icon name="arrow" /></button>
+            </div>
+          )}
+        </aside>
+      </section>
+    </>
+  );
+}
+
+function MediaSlide({ item, index, requestId, addInteraction, runSimilar }: {
+  item: ContentItem; index: number; requestId: string;
+  addInteraction: DiscoverProps["addInteraction"]; runSimilar: (contentId: string) => Promise<void>;
+}) {
+  const [mediaError, setMediaError] = useState(false);
+  const canPlay = Boolean(item.mediaUri) && !item.placeholder && !mediaError;
+  return (
+    <article className="feed-slide" id={`seekflux-card-${index}`}>
+      <div className={`video-stage palette-${index % 5}`}>
+        {canPlay ? (
+          <video src={item.mediaUri} controls playsInline preload="metadata" onError={() => setMediaError(true)} onPlay={() => addInteraction("PLAY_START", item, index + 1, requestId)} />
+        ) : (
+          <div className="video-placeholder">
+            <span className="placeholder-orbit" aria-hidden="true" />
+            <span className="play-mark"><Icon name="play" /></span>
+            <strong>{item.placeholder ? "VIDEO SLOT" : "MEDIA PREVIEW"}</strong>
+            <small>{item.placeholder ? "发布视频后在这里播放" : "媒体暂不可预览"}</small>
+          </div>
+        )}
+        <div className="video-context">
+          <div className="creator-line"><span>@{item.creatorId}</span>{item.placeholder && <small>结构占位</small>}</div>
+          <h2>{item.title}</h2>
+          <p>{item.summary || item.description}</p>
+          <div className="video-tags">{item.tags.slice(0, 4).map((tag) => <span key={tag}>#{tag}</span>)}</div>
+          {item.reason && <div className="recommend-reason"><Icon name="spark" /> {item.reason}</div>}
+        </div>
+        <div className="action-rail" aria-label="内容操作">
+          <button title="喜欢" onClick={() => addInteraction("LIKE", item, index + 1, requestId)}><Icon name="heart" /><span>喜欢</span></button>
+          <button title="查看相似内容" onClick={() => void runSimilar(item.contentId)}><Icon name="layers" /><span>相似</span></button>
+          <button title="不感兴趣" onClick={() => addInteraction("NOT_INTERESTED", item, index + 1, requestId)}><Icon name="hide" /><span>减少</span></button>
+        </div>
+        <div className="slide-index">{String(index + 1).padStart(2, "0")}</div>
+      </div>
+    </article>
+  );
+}
+
+type AudienceProps = {
+  userId: string; setUserId: (value: string) => void; interests: string; setInterests: (value: string) => void;
+  profileSavedAt: string; saveViewerProfile: () => void; events: InteractionEvent[];
+  eventCounts: { exposures: number; actions: number }; syncMessage: string; syncInteractions: () => Promise<void>;
+  clearEvents: () => void; busy: string | null; goDiscover: () => void;
+};
+
+function AudienceWorkspace(props: AudienceProps) {
+  const interestList = splitTags(props.interests);
+  const quickInterests = ["露营", "亲子", "咖啡", "摄影", "旅行", "科技"];
+  function toggleInterest(value: string) {
+    const next = interestList.includes(value) ? interestList.filter((item) => item !== value) : [...interestList, value];
+    props.setInterests(next.join(", "));
+  }
+  return (
+    <>
+      <section className="admin-hero">
+        <div><div className="eyebrow">Audience / Operator console</div><h1>理解用户，<br />但不假装<em>已经实时。</em></h1></div>
+        <div className="admin-hero-copy"><p>这里管理冷启动兴趣和浏览器行为队列。真实用户画像服务、实时特征存储尚未实现，因此持久化边界会被明确标注。</p><button className="button secondary" onClick={props.goDiscover}>返回 C 端体验 <Icon name="arrow" /></button></div>
+      </section>
+
+      <section className="audience-grid">
+        <article className="panel profile-console">
+          <div className="panel-header"><div><div className="panel-kicker">Cold-start profile</div><h2>用户冷启动画像</h2></div><span className="status-tag beta">设备本地</span></div>
+          <div className="panel-body">
+            <div className="profile-identity"><span className="avatar large">{props.userId.slice(0, 1).toUpperCase() || "U"}</span><div><strong>{props.userId || "anonymous"}</strong><small>显式兴趣会作为 Feed 多路召回上下文</small></div></div>
+            <label><span className="field-label">用户 ID <span>X-User-Id</span></span><input className="input" value={props.userId} onChange={(event) => props.setUserId(event.target.value)} placeholder="demo-user" /></label>
+            <label><span className="field-label">显式兴趣 <span>逗号分隔</span></span><input className="input" value={props.interests} onChange={(event) => props.setInterests(event.target.value)} placeholder="露营, 亲子" /></label>
+            <div className="interest-picker">{quickInterests.map((item) => <button key={item} className={interestList.includes(item) ? "selected" : ""} onClick={() => toggleInterest(item)}>{interestList.includes(item) ? "✓ " : "+ "}{item}</button>)}</div>
+            <div className="form-actions"><button className="button accent" onClick={props.saveViewerProfile}>保存冷启动画像</button><span className="save-note">{props.profileSavedAt ? `上次保存 ${formatEventTime(props.profileSavedAt)}` : "尚未保存"}</span></div>
+            <div className="boundary-note"><Icon name="info" /><span>当前写入 localStorage，不会伪装成服务端用户画像；接入 Profile / Feature API 后可替换此适配层。</span></div>
+          </div>
+        </article>
+
+        <article className="signal-card">
+          <div className="signal-head"><div><div className="panel-kicker">Behavior signal</div><h2>行为信号概览</h2></div><Icon name="pulse" /></div>
+          <div className="signal-stats"><div><strong>{props.eventCounts.exposures}</strong><span>曝光</span></div><div><strong>{props.eventCounts.actions}</strong><span>主动行为</span></div><div><strong>{new Set(props.events.map((event) => event.contentId)).size}</strong><span>内容数</span></div></div>
+          <div className="signal-map"><span>曝光</span><i /><span>互动</span><i /><span className="planned">实时兴趣</span><i /><span className="planned">再排序</span></div>
+          <p>前两段已经由前端记录；后两段等待 Interaction API、Kafka / Flink 与在线特征存储。</p>
+        </article>
+
+        <article className="panel queue-console">
+          <div className="panel-header"><div><div className="panel-kicker">Interaction buffer</div><h2>行为事件队列</h2></div><span className="status-tag planned">接口占位</span></div>
+          <div className="queue-list">
+            {props.events.length ? props.events.slice(0, 40).map((event) => (
+              <div className="queue-item" key={event.eventId}><span className="event-type">{event.eventType}</span><span className="event-content">{shortId(event.contentId)}</span><span className="event-position">#{event.position}</span><span className="event-time">{formatEventTime(event.eventTime)}</span></div>
+            )) : <EmptyState symbol="0" title="还没有行为信号" text="去 C 端发现页刷几条内容，曝光、喜欢与负反馈会进入这里。" />}
+          </div>
+          <div className="queue-footer"><div className="result-banner">{props.syncMessage}</div><div className="form-actions"><button className="button accent" disabled={!props.events.length || props.busy === "sync"} onClick={() => void props.syncInteractions()}>尝试批量回传</button><button className="button ghost" disabled={!props.events.length} onClick={props.clearEvents}>清空本地队列</button></div></div>
+        </article>
+      </section>
+    </>
+  );
+}
+
+type StudioProps = {
+  creatorId: string; setCreatorId: (value: string) => void; title: string; setTitle: (value: string) => void;
+  description: string; setDescription: (value: string) => void; sourceTags: string; setSourceTags: (value: string) => void;
+  mediaUri: string; setMediaUri: (value: string) => void; selectedFile: string; setSelectedFile: (value: string) => void;
+  submitContent: (event: FormEvent) => void; contentId: string; setContentId: (value: string) => void;
+  content: ContentResponse | null; contentMessage: string; currentStage: number; loadContent: () => Promise<ContentResponse | null>;
+  pollContent: () => Promise<void>; profileVersion: number; setProfileVersion: (value: number) => void;
+  profileSummary: string; setProfileSummary: (value: string) => void; profileTags: string; setProfileTags: (value: string) => void;
+  transcript: string; setTranscript: (value: string) => void; publishProfile: (event: FormEvent) => void;
+  withdrawContent: () => Promise<void>; busy: string | null; goDiscover: () => void;
+};
+
+function StudioWorkspace(props: StudioProps) {
+  const pipeline = [["内容登记", "PostgreSQL + Outbox"], ["任务投递", "Kafka"], ["画像生成", "Worker"], ["质量门禁", "Version check"], ["索引发布", "Elasticsearch"]];
+  return (
+    <>
+      <section className="admin-hero">
+        <div><div className="eyebrow">Content / Creator console</div><h1>把一条视频，<br />变成<em>可发现内容。</em></h1></div>
+        <div className="admin-hero-copy"><p>这是创作者与内部运营使用的 B 端工作台：登记媒体、观察异步画像、人工校准，再发布到搜索与推荐索引。</p><button className="button secondary" onClick={props.goDiscover}>查看 C 端呈现 <Icon name="arrow" /></button></div>
+      </section>
+
+      <section className="studio-grid">
+        <article className="panel upload-console">
+          <div className="panel-header"><div><div className="panel-kicker">New content</div><h2>上传与登记</h2></div><span className="status-tag">Content API 已接通</span></div>
           <form className="panel-body" onSubmit={props.submitContent}>
+            <label className="upload-dropzone">
+              <input type="file" accept="video/*" onChange={(event) => props.setSelectedFile(event.target.files?.[0]?.name ?? "")} />
+              <span className="upload-icon"><Icon name="upload" /></span>
+              <strong>{props.selectedFile || "选择一个视频文件"}</strong>
+              <small>{props.selectedFile ? "已建立本地选择占位；请继续填写可访问的媒体 URI" : "拖放体验位已保留 · 对象存储上传接口待接入"}</small>
+            </label>
             <div className="field-grid">
-              <label className="wide">
-                <span className="field-label">内容标题 <span>必填</span></span>
-                <input className="input" value={props.title} onChange={(event) => props.setTitle(event.target.value)} required maxLength={200} />
-              </label>
-              <label className="wide">
-                <span className="field-label">内容描述 <span>用于基础画像</span></span>
-                <textarea className="textarea" value={props.description} onChange={(event) => props.setDescription(event.target.value)} maxLength={4000} />
-              </label>
-              <label>
-                <span className="field-label">创建者</span>
-                <input className="input" value={props.creatorId} onChange={(event) => props.setCreatorId(event.target.value)} required maxLength={128} />
-              </label>
-              <label>
-                <span className="field-label">来源标签 <span>逗号分隔</span></span>
-                <input className="input" value={props.sourceTags} onChange={(event) => props.setSourceTags(event.target.value)} />
-              </label>
-              <label className="wide">
-                <span className="field-label">媒体地址 <span>S3 / HTTPS</span></span>
-                <input className="input" value={props.mediaUri} onChange={(event) => props.setMediaUri(event.target.value)} required />
-              </label>
+              <label className="wide"><span className="field-label">媒体地址 <span>当前 API 必填</span></span><input className="input" value={props.mediaUri} onChange={(event) => props.setMediaUri(event.target.value)} required placeholder="S3 / HTTPS URI" /></label>
+              <label className="wide"><span className="field-label">内容标题 <span>必填</span></span><input className="input" value={props.title} onChange={(event) => props.setTitle(event.target.value)} required maxLength={200} /></label>
+              <label className="wide"><span className="field-label">内容描述 <span>用于基础画像</span></span><textarea className="textarea" value={props.description} onChange={(event) => props.setDescription(event.target.value)} maxLength={4000} /></label>
+              <label><span className="field-label">创建者</span><input className="input" value={props.creatorId} onChange={(event) => props.setCreatorId(event.target.value)} required maxLength={128} /></label>
+              <label><span className="field-label">来源标签 <span>逗号分隔</span></span><input className="input" value={props.sourceTags} onChange={(event) => props.setSourceTags(event.target.value)} /></label>
             </div>
-            <div className="form-actions">
-              <button className="button accent" disabled={props.busy === "content-submit"}>登记并开始处理 <span aria-hidden="true">→</span></button>
-              <button
-                type="button"
-                className="button secondary"
-                onClick={() => {
-                  props.setTitle(sampleContent.title);
-                  props.setDescription(sampleContent.description);
-                  props.setCreatorId(sampleContent.creatorId);
-                  props.setSourceTags(sampleContent.tags);
-                  props.setMediaUri(sampleContent.mediaUri);
-                }}
-              >载入示例</button>
-            </div>
+            <div className="form-actions"><button className="button accent" disabled={props.busy === "content-submit"}>登记并开始处理 <Icon name="arrow" /></button><button type="button" className="button secondary" onClick={() => { props.setTitle(sampleContent.title); props.setDescription(sampleContent.description); props.setCreatorId(sampleContent.creatorId); props.setSourceTags(sampleContent.tags); props.setMediaUri(sampleContent.mediaUri); }}>载入示例</button></div>
           </form>
         </article>
 
-        <article className="panel pipeline-panel">
-          <div className="panel-header">
-            <div><div className="panel-kicker">Processing trace</div><h2>内容处理轨迹</h2></div>
-            <div className="panel-note">SUBMITTED<br />→ PUBLISHED</div>
-          </div>
-          <div className="content-id-box">
-            <label htmlFor="content-id">Content ID</label>
-            <input id="content-id" className="content-id-input" value={props.contentId} onChange={(event) => props.setContentId(event.target.value)} placeholder="登记后自动填入，也可粘贴已有 ID" />
-          </div>
+        <article className="pipeline-console">
+          <div className="pipeline-head"><div><div className="panel-kicker">Processing trace</div><h2>内容处理轨迹</h2></div><span className={`content-state ${props.content?.status.toLowerCase() ?? "idle"}`}>{props.content?.status ?? "IDLE"}</span></div>
+          <div className="content-id-box"><label htmlFor="content-id">Content ID</label><input id="content-id" value={props.contentId} onChange={(event) => props.setContentId(event.target.value)} placeholder="登记后自动填入，也可粘贴已有 ID" /></div>
           <div className="pipeline">
             {pipeline.map(([name, detail], index) => {
               const state = index < props.currentStage ? "done" : index === props.currentStage && props.content ? "current" : "";
-              return (
-                <div className={`pipeline-step ${state}`} key={name}>
-                  <span className="pipeline-node">{state === "done" ? "✓" : index + 1}</span>
-                  <span className="pipeline-copy"><strong>{name}</strong><small>{detail}</small></span>
-                  <span className="pipeline-state">{state === "done" ? "done" : state === "current" ? "active" : "waiting"}</span>
-                </div>
-              );
+              return <div className={`pipeline-step ${state}`} key={name}><span className="pipeline-node">{state === "done" ? "✓" : index + 1}</span><span className="pipeline-copy"><strong>{name}</strong><small>{detail}</small></span><span className="pipeline-state">{state === "done" ? "done" : state === "current" ? "active" : "waiting"}</span></div>;
             })}
           </div>
-          <div className="pipeline-actions">
-            <button className="button secondary" onClick={() => void props.loadContent()} disabled={!props.contentId || props.busy === "content-load"}>查询状态</button>
-            <button className="button mint" onClick={() => void props.pollContent()} disabled={!props.contentId || props.busy === "content-poll"}>等待发布</button>
-          </div>
-          <div className={`result-banner ${props.content?.status === "PUBLISHED" ? "success" : props.contentMessage.includes("无法") || props.contentMessage.includes("失败") ? "error" : ""}`} style={{ margin: "0 24px 24px" }}>
-            {props.contentMessage}
-            {props.content?.status === "PUBLISHED" && (
-              <button className="button compact mint" style={{ marginLeft: 10 }} onClick={props.goDiscover}>去搜索验证 →</button>
-            )}
-          </div>
+          <div className="pipeline-actions"><button className="button secondary" onClick={() => void props.loadContent()} disabled={!props.contentId || props.busy === "content-load"}>查询状态</button><button className="button mint" onClick={() => void props.pollContent()} disabled={!props.contentId || props.busy === "content-poll"}>等待发布</button></div>
+          <div className={`result-banner dark ${props.content?.status === "PUBLISHED" ? "success" : ""}`}>{props.contentMessage}</div>
         </article>
 
         <article className="panel profile-editor">
-          <div className="panel-header">
-            <div><div className="panel-kicker">Human in the loop</div><h2>人工校准画像</h2></div>
-            <span className="status-tag">阶段一 · 已接通</span>
-          </div>
+          <div className="panel-header"><div><div className="panel-kicker">Human in the loop</div><h2>内容画像校准</h2></div><span className="status-tag">版本化发布已接通</span></div>
           <div className="profile-shell">
-            <div className="profile-intro">
-              <h3 className="panel-title">模型能力接入前，<br />仍可验证版本化发布。</h3>
-              <p>ASR、OCR 与视觉理解将在后续接入；当前可以手工补全摘要、标签与转写，走相同的画像完成和发布契约。</p>
-              <span className="micro-chip">PUT /profile → POST /publish</span>
-            </div>
+            <div className="profile-intro"><div className="profile-preview palette-1"><Icon name="spark" /><span>PROFILE</span></div><h3>先校准，再进入搜索和推荐。</h3><p>ASR、OCR 与视觉理解接入前，可以手工填写摘要、标签与转写，复用同一份画像完成和发布契约。</p><code>PUT /profile → POST /publish</code></div>
             <form onSubmit={props.publishProfile}>
               <div className="field-grid">
-                <label>
-                  <span className="field-label">画像版本</span>
-                  <input className="input" type="number" min={1} value={props.profileVersion} onChange={(event) => props.setProfileVersion(Number(event.target.value))} />
-                </label>
-                <label>
-                  <span className="field-label">画像标签 <span>逗号分隔</span></span>
-                  <input className="input" value={props.profileTags} onChange={(event) => props.setProfileTags(event.target.value)} />
-                </label>
-                <label className="wide">
-                  <span className="field-label">画像摘要</span>
-                  <textarea className="textarea" value={props.profileSummary} onChange={(event) => props.setProfileSummary(event.target.value)} required />
-                </label>
-                <label className="wide">
-                  <span className="field-label">ASR 转写 <span>当前可选 / 后续自动生成</span></span>
-                  <textarea className="textarea" value={props.transcript} onChange={(event) => props.setTranscript(event.target.value)} placeholder="粘贴语音转写文本，用于检索召回…" />
-                </label>
+                <label><span className="field-label">画像版本</span><input className="input" type="number" min={1} value={props.profileVersion} onChange={(event) => props.setProfileVersion(Number(event.target.value))} /></label>
+                <label><span className="field-label">画像标签 <span>逗号分隔</span></span><input className="input" value={props.profileTags} onChange={(event) => props.setProfileTags(event.target.value)} /></label>
+                <label className="wide"><span className="field-label">画像摘要</span><textarea className="textarea" value={props.profileSummary} onChange={(event) => props.setProfileSummary(event.target.value)} required /></label>
+                <label className="wide"><span className="field-label">ASR 转写 <span>当前可选</span></span><textarea className="textarea" value={props.transcript} onChange={(event) => props.setTranscript(event.target.value)} placeholder="粘贴语音转写文本，用于检索召回…" /></label>
               </div>
-              <div className="form-actions">
-                <button className="button" disabled={!props.contentId || props.busy === "profile-publish"}>保存并重新发布</button>
-              </div>
+              <div className="form-actions"><button className="button" disabled={!props.contentId || props.busy === "profile-publish"}>保存并发布</button><button type="button" className="button danger-ghost" disabled={!props.contentId || props.busy === "content-withdraw"} onClick={() => void props.withdrawContent()}>撤回内容</button></div>
             </form>
           </div>
         </article>
       </section>
     </>
-  );
-}
-
-type DiscoverWorkspaceProps = {
-  mode: DiscoverMode;
-  setMode: (mode: DiscoverMode) => void;
-  userId: string;
-  setUserId: (value: string) => void;
-  interests: string;
-  setInterests: (value: string) => void;
-  query: string;
-  setQuery: (value: string) => void;
-  runSearch: (page?: number, query?: string) => Promise<void>;
-  searchPage: number;
-  searchData: SearchResponse | null;
-  feedSeed: string;
-  setFeedSeed: (value: string) => void;
-  runFeed: (cursor?: string | null, append?: boolean) => Promise<void>;
-  runSimilar: (contentId: string) => Promise<void>;
-  feedData: FeedResponse | null;
-  items: ContentItem[];
-  error: string;
-  busy: string | null;
-  requestId: string;
-  addInteraction: (type: InteractionEvent["eventType"], item: ContentItem, position: number, requestId: string) => void;
-};
-
-function DiscoverWorkspace(props: DiscoverWorkspaceProps) {
-  const resultMeta = props.mode === "search"
-    ? props.searchData
-      ? `“${props.searchData.query}” · ${props.searchData.total} 条 · ${props.searchData.tookMillis} ms`
-      : "等待第一次检索"
-    : props.feedData
-      ? `${props.feedData.requestId} · ${props.items.length} 条`
-      : "等待生成 Feed";
-
-  return (
-    <>
-      <section className="section-hero">
-        <div>
-          <div className="eyebrow">02 / Search & recommendation</div>
-          <h1>把相关内容，<br />送到<em>正确的人。</em></h1>
-        </div>
-        <div className="hero-aside">
-          <p>关键词搜索与推荐共享同一份已发布画像。搜索强调 Query 相关性，Feed 组合热门、显式兴趣与相似内容三路召回。</p>
-          <div className="micro-chips"><span className="micro-chip">BM25 baseline</span><span className="micro-chip">RRF fusion</span><span className="micro-chip">signed cursor</span></div>
-        </div>
-      </section>
-
-      <div className="discover-toolbar">
-        <div className="switcher" role="tablist" aria-label="发现模式">
-          <button className={props.mode === "search" ? "active" : ""} onClick={() => props.setMode("search")}>主动搜索</button>
-          <button className={props.mode === "feed" ? "active" : ""} onClick={() => props.setMode("feed")}>推荐 Feed</button>
-        </div>
-        <div className="identity-fields">
-          <input className="identity-input" value={props.userId} onChange={(event) => props.setUserId(event.target.value)} aria-label="用户 ID" placeholder="用户 ID" />
-          <span className="status-tag">{props.mode === "search" ? "阶段二 · 已接通" : "阶段三 · 推荐 Feed 已接通"}</span>
-        </div>
-      </div>
-
-      <section className="search-block">
-        {props.mode === "search" ? (
-          <>
-            <div className="search-block-header"><h2>搜索已发布的内容画像</h2><p>当前使用 Elasticsearch 关键词基线；语义向量、复杂 Query 理解与个性化排序保留在后续阶段。</p></div>
-            <form className="search-form" onSubmit={(event) => { event.preventDefault(); void props.runSearch(0); }}>
-              <input className="search-input" value={props.query} onChange={(event) => props.setQuery(event.target.value)} placeholder="试试：上海亲子博物馆 / 新手手冲咖啡" aria-label="搜索内容" />
-              <button className="search-submit" disabled={props.busy === "search"}>开始检索 →</button>
-            </form>
-            <div className="query-suggestions">
-              {['杭州 周末 露营', '新手 手冲 咖啡', '上海 亲子 博物馆', '川西 自驾 摄影'].map((suggestion) => (
-                <button key={suggestion} onClick={() => { props.setQuery(suggestion); void props.runSearch(0, suggestion); }}>{suggestion}</button>
-              ))}
-            </div>
-          </>
-        ) : (
-          <>
-            <div className="search-block-header"><h2>生成可解释推荐 Feed</h2><p>显式兴趣解决新用户冷启动；内容 ID 作为最近行为种子，触发 Item-Item 相似召回。</p></div>
-            <div className="feed-config">
-              <label>
-                <span className="field-label" style={{ color: "#c3c7c0" }}>显式兴趣 <span>逗号分隔</span></span>
-                <input className="search-input" value={props.interests} onChange={(event) => props.setInterests(event.target.value)} placeholder="露营, 亲子" />
-              </label>
-              <label>
-                <span className="field-label" style={{ color: "#c3c7c0" }}>最近内容 ID <span>可选</span></span>
-                <input className="search-input" value={props.feedSeed} onChange={(event) => props.setFeedSeed(event.target.value)} placeholder="触发相似召回" />
-              </label>
-              <button className="button accent full wide" onClick={() => void props.runFeed()} disabled={props.busy === "feed"}>热门 + 兴趣 + 相似，多路召回 →</button>
-            </div>
-            <div className="feed-health"><i /> 单路召回超时会返回可观察的降级结果，不阻断整个 Feed</div>
-          </>
-        )}
-      </section>
-
-      {props.feedData?.degraded && props.mode === "feed" && (
-        <div className="degraded-note">部分召回源已降级：{props.feedData.unavailableSources.join("、")}。页面仍展示已返回的候选。</div>
-      )}
-
-      <div className="results-header">
-        <h3>{props.mode === "search" ? "搜索结果" : "为你推荐"}</h3>
-        <div className="results-meta">{resultMeta}</div>
-      </div>
-
-      <div className="result-grid">
-        {props.error && !props.items.length ? (
-          <EmptyState symbol="!" title="发现服务暂时不可用" text={`${props.error}。请先启动 online-server 与 Elasticsearch，页面会继续通过真实接口工作。`} />
-        ) : props.items.length ? (
-          props.items.map((item, index) => (
-            <MediaCard
-              key={`${item.contentId}-${index}`}
-              item={item}
-              index={index}
-              requestId={props.requestId}
-              addInteraction={props.addInteraction}
-              runSimilar={props.runSimilar}
-            />
-          ))
-        ) : (
-          <EmptyState
-            symbol="⌕"
-            title={props.mode === "search" ? "从一个问题开始" : "还没有生成 Feed"}
-            text={props.mode === "search" ? "输入关键词或自然语言问题，验证内容登记 → 画像发布 → Elasticsearch 召回的完整链路。" : "填入兴趣标签生成冷启动 Feed；如果已有内容 ID，还可以观察相似召回。"}
-          />
-        )}
-      </div>
-
-      {props.mode === "search" && props.searchData && props.searchData.total > 0 && (
-        <div className="pagination">
-          <button className="button secondary compact" disabled={props.searchPage === 0 || props.busy === "search"} onClick={() => void props.runSearch(props.searchPage - 1)}>← 上一页</button>
-          <span className="micro-chip">PAGE {props.searchPage + 1}</span>
-          <button className="button secondary compact" disabled={(props.searchPage + 1) * props.searchData.size >= props.searchData.total || props.busy === "search"} onClick={() => void props.runSearch(props.searchPage + 1)}>下一页 →</button>
-        </div>
-      )}
-      {props.mode === "feed" && props.feedData?.nextCursor && (
-        <div className="pagination"><button className="button secondary" disabled={props.busy === "feed"} onClick={() => void props.runFeed(props.feedData?.nextCursor, true)}>使用 Cursor 加载更多 ↓</button></div>
-      )}
-    </>
-  );
-}
-
-function MediaCard({
-  item,
-  index,
-  requestId,
-  addInteraction,
-  runSimilar,
-}: {
-  item: ContentItem;
-  index: number;
-  requestId: string;
-  addInteraction: DiscoverWorkspaceProps["addInteraction"];
-  runSimilar: (contentId: string) => Promise<void>;
-}) {
-  const titleWord = item.tags?.[0] || item.title.slice(0, 5);
-  return (
-    <article className="media-card">
-      <div className={`media-cover cover-${index % 6}`}>
-        {item.sources?.length ? <div className="source-row">{item.sources.slice(0, 2).map((source) => <span className="source-mini" key={source}>{source}</span>)}</div> : null}
-        <div className="score-badge">SCORE {Number(item.score).toFixed(3)}</div>
-        <div className="cover-word">{titleWord}</div>
-      </div>
-      <div className="media-card-body">
-        <h4>{item.title}</h4>
-        <p className="card-summary">{item.summary || item.description}</p>
-        <div className="tag-row">{item.tags.slice(0, 4).map((tag) => <span className="tag" key={tag}>#{tag}</span>)}</div>
-        {item.reason && <div className="reason-line">{item.reason}</div>}
-        <div className="card-actions">
-          <button className="action-chip" onClick={() => { addInteraction("PLAY_START", item, index + 1, requestId); window.open(item.mediaUri, "_blank", "noopener,noreferrer"); }}>播放 ↗</button>
-          <button className="action-chip like" onClick={() => addInteraction("LIKE", item, index + 1, requestId)}>喜欢 +</button>
-          <button className="action-chip" onClick={() => void runSimilar(item.contentId)}>看相似</button>
-          <button className="action-chip" aria-label="不感兴趣" onClick={() => addInteraction("NOT_INTERESTED", item, index + 1, requestId)}>隐藏</button>
-        </div>
-      </div>
-    </article>
   );
 }
 
@@ -1008,79 +822,23 @@ function EmptyState({ symbol, title, text }: { symbol: string; title: string; te
   return <div className="empty-state"><div className="empty-symbol">{symbol}</div><strong>{title}</strong><p>{text}</p></div>;
 }
 
-function FeedbackWorkspace({
-  events,
-  eventCounts,
-  syncMessage,
-  syncInteractions,
-  clearEvents,
-  busy,
-}: {
-  events: InteractionEvent[];
-  eventCounts: { exposures: number; actions: number };
-  syncMessage: string;
-  syncInteractions: () => Promise<void>;
-  clearEvents: () => void;
-  busy: string | null;
-}) {
-  return (
-    <>
-      <section className="section-hero">
-        <div>
-          <div className="eyebrow">03 / Realtime feedback</div>
-          <h1>每一次选择，<br />都成为<em>下一次信号。</em></h1>
-        </div>
-        <div className="hero-aside">
-          <p>页面已经能生成与曝光关联的行为事件。Interaction、实时特征和短期兴趣后端尚未完成时，事件会保存在本地而不会丢失或伪报成功。</p>
-          <div className="micro-chips"><span className="micro-chip">event_id</span><span className="micro-chip">request_id</span><span className="micro-chip">position aware</span></div>
-        </div>
-      </section>
+type IconName = "arrow" | "left" | "down" | "play" | "search" | "refresh" | "info" | "heart" | "layers" | "hide" | "spark" | "pulse" | "upload";
 
-      <section className="feedback-overview">
-        <article className="panel loop-card">
-          <div className="eyebrow" style={{ color: "var(--mint)" }}>Minimum viable loop</div>
-          <h2>前端闭环已经成形，<br /><em>实时回流等待接棒。</em></h2>
-          <p>从内容发布到曝光和互动，所有关键上下文已经保留。后续只需让 Interaction API 接收队列，并由 Kafka / Flink 更新短期兴趣。</p>
-          <div className="loop-rail">
-            {[['内容', 'done'], ['索引', 'done'], ['召回', 'done'], ['行为', 'current'], ['特征', 'planned']].map(([name, state]) => (
-              <div className={`loop-node ${state}`} key={name}><span className="loop-dot" /><strong>{name}</strong><small>{state}</small></div>
-            ))}
-          </div>
-        </article>
-
-        <article className="panel queue-card">
-          <div className="panel-header">
-            <div><div className="panel-kicker">Local event buffer</div><h2>行为事件队列</h2></div>
-            <span className="status-tag planned">接口占位</span>
-          </div>
-          <div className="panel-body">
-            <div className="queue-summary">
-              <div className="queue-stat"><strong>{eventCounts.exposures}</strong><span>曝光事件</span></div>
-              <div className="queue-stat"><strong>{eventCounts.actions}</strong><span>主动行为</span></div>
-            </div>
-            <div className="queue-list">
-              {events.length ? events.slice(0, 30).map((event) => (
-                <div className="queue-item" key={event.eventId}>
-                  <span className="event-type">{event.eventType}</span>
-                  <span className="event-content">{shortId(event.contentId)}</span>
-                  <span className="event-time">{formatEventTime(event.eventTime)}</span>
-                </div>
-              )) : <EmptyState symbol="0" title="队列为空" text="去发现引擎检索或生成 Feed，曝光与互动会自动出现在这里。" />}
-            </div>
-            <div className="result-banner">{syncMessage}</div>
-            <div className="form-actions">
-              <button className="button accent" disabled={!events.length || busy === "sync"} onClick={() => void syncInteractions()}>尝试批量回传 →</button>
-              <button className="button ghost" disabled={!events.length} onClick={clearEvents}>清空本地队列</button>
-            </div>
-          </div>
-        </article>
-
-        <div className="roadmap-grid">
-          <article className="panel roadmap-card"><span className="roadmap-number">NEXT / 01</span><h3>Interaction API</h3><p>幂等接收曝光、播放、点赞和负反馈，并校验 requestId、位置与事件时间。</p><div className="roadmap-foot"><span>POST /interactions:batch</span><span>待实现</span></div></article>
-          <article className="panel roadmap-card"><span className="roadmap-number">NEXT / 02</span><h3>实时兴趣</h3><p>由 Kafka + Flink 去重和窗口聚合，将会话与短期兴趣写入在线特征存储。</p><div className="roadmap-foot"><span>Feature + Redis</span><span>待实现</span></div></article>
-          <article className="panel roadmap-card"><span className="roadmap-number">NEXT / 03</span><h3>可验证再排序</h3><p>同一用户再次生成 Feed 时，展示兴趣变化、召回来源与最终位置的 Ranking Trace。</p><div className="roadmap-foot"><span>Experiment + Trace</span><span>规划中</span></div></article>
-        </div>
-      </section>
-    </>
-  );
+function Icon({ name }: { name: IconName }) {
+  const paths: Record<IconName, React.ReactNode> = {
+    arrow: <><path d="M5 12h14" /><path d="m13 6 6 6-6 6" /></>,
+    left: <><path d="M19 12H5" /><path d="m11 18-6-6 6-6" /></>,
+    down: <><path d="M12 5v14" /><path d="m18 13-6 6-6-6" /></>,
+    play: <path d="m8 5 11 7-11 7Z" />,
+    search: <><circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" /></>,
+    refresh: <><path d="M20 6v5h-5" /><path d="M4 18v-5h5" /><path d="M6.1 9a7 7 0 0 1 11.5-2.6L20 11" /><path d="m4 13 2.4 4.6A7 7 0 0 0 18 15" /></>,
+    info: <><circle cx="12" cy="12" r="9" /><path d="M12 11v5" /><path d="M12 8h.01" /></>,
+    heart: <path d="M20.8 5.8a5.5 5.5 0 0 0-7.8 0L12 6.8l-1-1A5.5 5.5 0 0 0 3.2 13L12 21l8.8-8a5.5 5.5 0 0 0 0-7.2Z" />,
+    layers: <><path d="m12 2 9 5-9 5-9-5 9-5Z" /><path d="m3 12 9 5 9-5" /><path d="m3 17 9 5 9-5" /></>,
+    hide: <><path d="M3 3l18 18" /><path d="M10.7 10.7a2 2 0 0 0 2.6 2.6" /><path d="M9.9 4.2A10.5 10.5 0 0 1 12 4c7 0 10 8 10 8a16 16 0 0 1-2.1 3.3" /><path d="M6.2 6.2C3.5 8 2 12 2 12s3 8 10 8a10 10 0 0 0 4.1-.9" /></>,
+    spark: <><path d="m12 3 1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5L12 3Z" /><path d="m19 15 .8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8L19 15Z" /></>,
+    pulse: <path d="M3 12h4l2-7 4 14 2-7h6" />,
+    upload: <><path d="M12 16V3" /><path d="m7 8 5-5 5 5" /><path d="M5 13v7h14v-7" /></>,
+  };
+  return <svg className="icon" viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{paths[name]}</svg>;
 }

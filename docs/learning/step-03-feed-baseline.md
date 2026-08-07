@@ -11,7 +11,7 @@ Step 2 让已发布内容能够被主动搜索，但项目还没有无 Query 的
 - 规则排序加入兴趣匹配和时间衰减，再限制同作者数量并避免相同主题连续出现；
 - 每个召回源有独立超时，单路故障时返回剩余结果和明确的降级状态；
 - Feed 和相似内容接口使用绑定请求上下文、带有效期且经过 HMAC 签名的不透明 Cursor；
-- `feed.html` 可以直接配置兴趣、最近内容种子、加载下一页并查看每条推荐的来源和原因。
+- `apps/web` 的 C 端“发现”可以直接刷新推荐、加载下一页并查看每条推荐的来源和原因；显式兴趣在 B 端“用户画像”中配置。
 
 这里没有把“新鲜内容”冒充真实热门：互动事件尚未接入，因此还没有播放、完播和互动热度。Step 4～5 建立反馈闭环后，`TRENDING` Retriever 会替换为时间窗口热度，显式兴趣也会与短期兴趣合并。
 
@@ -89,7 +89,7 @@ Cursor 包含版本、下一页偏移、过期时间和请求指纹，并使用 
 | RRF、兴趣/新鲜度、去重和多样性 | `RuleRankingService.java` |
 | 三路 Elasticsearch 查询 | `ElasticsearchSearchAdapter.java` |
 | HTTP Adapter | `RecommendationController.java` |
-| 可操作页面 | `apps/online-server/src/main/resources/static/feed.html` |
+| C 端推荐与相似内容页面 | `apps/web/app/SeekFluxApp.tsx` |
 | API 契约 | `contracts/openapi/seekflux-v1.yaml` |
 
 ## 7. 启动与验证
@@ -105,7 +105,7 @@ mvn -f apps/worker-runner/pom.xml spring-boot:run
 mvn -f apps/online-server/pom.xml spring-boot:run
 ```
 
-在画像管理页导入演示数据并等待发布，然后打开 `http://localhost:8080/feed.html`。也可以调用：
+在 `http://localhost:3001/` 的“内容工作台”登记内容并等待发布，然后回到“发现”刷新推荐。也可以调用：
 
 ```bash
 curl --get http://localhost:8080/v1/feed \

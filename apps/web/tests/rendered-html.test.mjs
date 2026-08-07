@@ -12,15 +12,16 @@ async function render() {
   );
 }
 
-test("renders the SeekFlux closed-loop workbench", async () => {
+test("renders the SeekFlux consumer app and operator consoles", async () => {
   const response = await render();
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
   const html = await response.text();
   assert.match(html, /SeekFlux/);
-  assert.match(html, /搜索推荐闭环工作台/);
-  assert.match(html, /内容中枢/);
-  assert.match(html, /发现引擎/);
-  assert.match(html, /反馈回路/);
+  assert.match(html, /从搜索走向发现/);
+  assert.match(html, /C 端应用/);
+  assert.match(html, /用户画像/);
+  assert.match(html, /内容工作台/);
+  assert.match(html, /第一条视频会在这里开始播放/);
   assert.doesNotMatch(html, /codex-preview|Building your site|react-loading-skeleton/i);
 });

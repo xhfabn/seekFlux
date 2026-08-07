@@ -91,6 +91,7 @@ load_local_env() {
   MINIO_ROOT_PASSWORD="${MINIO_ROOT_PASSWORD:-seekflux_local_secret}"
   ONLINE_SERVER_PORT="${ONLINE_SERVER_PORT:-8080}"
   CONTENT_SERVER_PORT="${CONTENT_SERVER_PORT:-8081}"
+  WEB_SERVER_PORT="${WEB_SERVER_PORT:-3001}"
 }
 
 configure_java() {
@@ -634,6 +635,46 @@ apps_up() {
   start_java_app "Content Server" content-server "http://127.0.0.1:${CONTENT_SERVER_PORT}/actuator/health"
   start_java_app "Worker Runner" worker-runner
   start_java_app "Online Server" online-server "http://127.0.0.1:${ONLINE_SERVER_PORT}/actuator/health"
+  start_web_app
+}
+
+start_web_app() {
+  local pidfile="${LOCAL_DIR}/apps/run/web.pid"
+  local log_file="${LOCAL_DIR}/apps/logs/web.log"
+  if curl --noproxy '*' -fsS "http://localhost:${WEB_SERVER_PORT}/" >/dev/null 2>&1; then
+    log "Web 已在运行"
+    return
+  fi
+  require_command npm
+  if [[ ! -x "${ROOT_DIR}/apps/web/node_modules/.bin/vinext" ]]; then
+    log "安装 Web 依赖"
+    (cd "${ROOT_DIR}/apps/web" && npm ci)
+  fi
+
+  local app_pid
+  if [[ "${OS_NAME}" == "Darwin" ]]; then
+    local label
+    label="$(launchd_label web)"
+    app_pid="$(launchd_pid "${label}" || true)"
+    if [[ "${app_pid}" =~ ^[0-9]+$ ]] && kill -0 "${app_pid}" 2>/dev/null; then
+      log "Web 已在运行 (PID ${app_pid})"
+      return
+    fi
+    launchctl remove "${label}" >/dev/null 2>&1 || true
+    launchctl submit -l "${label}" -o "${log_file}" -e "${log_file}" -- \
+      "${ROOT_DIR}/deploy/local/run-web-app.sh" "${WEB_SERVER_PORT}"
+    for _ in {1..20}; do
+      app_pid="$(launchd_pid "${label}" || true)"
+      [[ "${app_pid}" =~ ^[0-9]+$ ]] && break
+      sleep 0.25
+    done
+    [[ "${app_pid}" =~ ^[0-9]+$ ]] || fail "Web 未能注册到 launchd"
+  else
+    nohup "${ROOT_DIR}/deploy/local/run-web-app.sh" "${WEB_SERVER_PORT}" >"${log_file}" 2>&1 </dev/null &
+    app_pid="$!"
+  fi
+  printf '%s\n' "${app_pid}" >"${pidfile}"
+  wait_http "Web" "http://localhost:${WEB_SERVER_PORT}/" 120
 }
 
 stop_pidfile() {
@@ -657,7 +698,7 @@ stop_pidfile() {
 apps_down() {
   if [[ "${OS_NAME}" == "Darwin" ]]; then
     local app label
-    for app in online-server worker-runner content-server; do
+    for app in web online-server worker-runner content-server; do
       label="$(launchd_label "${app}")"
       if launchctl print "gui/$(id -u)/${label}" >/dev/null 2>&1; then
         launchctl remove "${label}" >/dev/null 2>&1 || true
@@ -671,6 +712,7 @@ apps_down() {
   stop_pidfile "Online Server" "${LOCAL_DIR}/apps/run/online-server.pid"
   stop_pidfile "Worker Runner" "${LOCAL_DIR}/apps/run/worker-runner.pid"
   stop_pidfile "Content Server" "${LOCAL_DIR}/apps/run/content-server.pid"
+  stop_pidfile "Web" "${LOCAL_DIR}/apps/run/web.pid"
 }
 
 infra_down() {
@@ -698,6 +740,15 @@ service_status() {
   fi
 }
 
+web_status() {
+  if curl --noproxy '*' -fsS "http://localhost:${WEB_SERVER_PORT}/" >/dev/null 2>&1; then
+    log "Web: UP :${WEB_SERVER_PORT}"
+  else
+    log "Web: DOWN :${WEB_SERVER_PORT}"
+    return 1
+  fi
+}
+
 status_all() {
   prepare_directories
   load_local_env
@@ -709,6 +760,7 @@ status_all() {
   service_status MinIO "${MINIO_API_PORT}" || failed=1
   service_status "Content Server" "${CONTENT_SERVER_PORT}" || failed=1
   service_status "Online Server" "${ONLINE_SERVER_PORT}" || failed=1
+  web_status || failed=1
   local worker_pidfile="${LOCAL_DIR}/apps/run/worker-runner.pid"
   local worker_pid=""
   if [[ "${OS_NAME}" == "Darwin" ]]; then
@@ -750,6 +802,7 @@ show_logs() {
     content) files=("${LOCAL_DIR}/apps/logs/content-server.log") ;;
     worker) files=("${LOCAL_DIR}/apps/logs/worker-runner.log") ;;
     online) files=("${LOCAL_DIR}/apps/logs/online-server.log") ;;
+    web) files=("${LOCAL_DIR}/apps/logs/web.log") ;;
     postgres) files=("${LOCAL_DIR}/postgres/logs/postgres.log") ;;
     redis) files=("${LOCAL_DIR}/redis/logs/redis.log") ;;
     kafka) files=("${LOCAL_DIR}/kafka/logs/server.log") ;;
@@ -769,9 +822,7 @@ show_logs() {
 open_pages() {
   [[ "${OS_NAME}" == "Darwin" ]] || fail "open 命令目前只支持 macOS"
   load_local_env
-  open "http://127.0.0.1:${CONTENT_SERVER_PORT}/admin.html"
-  open "http://127.0.0.1:${ONLINE_SERVER_PORT}/"
-  open "http://127.0.0.1:${ONLINE_SERVER_PORT}/feed.html"
+  open "http://localhost:${WEB_SERVER_PORT}/"
 }
 
 usage() {
@@ -785,12 +836,12 @@ SeekFlux macOS 本地开发环境
   install           安装/升级中间件，不启动服务
   infra-up          安装并启动 PostgreSQL、Redis、Kafka、ES、MinIO
   build             构建三个 Java 应用
-  apps-up           构建并启动 Content、Worker、Online
-  up                 安装并启动中间件与三个 Java 应用
+  apps-up           构建并启动 Content、Worker、Online 与 Web
+  up                 安装并启动中间件、三个 Java 应用与 Web
   status             查看全部中间件与应用状态
-  logs [name]        查看日志；name: content|worker|online|postgres|redis|kafka|elasticsearch|minio
-  open               在 macOS 浏览器打开内容管理、搜索、推荐页面
-  apps-down          停止三个 Java 应用
+  logs [name]        查看日志；name: content|worker|online|web|postgres|redis|kafka|elasticsearch|minio
+  open               在 macOS 浏览器打开唯一 Web 前端
+  apps-down          停止三个 Java 应用与 Web
   infra-down         停止项目管理的中间件进程
   down               停止应用和中间件
   restart            重启完整本地环境

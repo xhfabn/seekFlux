@@ -7,7 +7,7 @@
 ```bash
 ./seekflux.sh doctor   # 首次先检查环境
 ./seekflux.sh install  # 只安装中间件
-./seekflux.sh up       # 安装并启动中间件与三个 Java 应用
+./seekflux.sh up       # 安装并启动中间件、三个 Java 应用与 Web
 ./seekflux.sh status
 ./seekflux.sh logs online
 ./seekflux.sh open
@@ -15,7 +15,7 @@
 ```
 
 `up` 会依次启动 PostgreSQL、Redis、Kafka、Elasticsearch、MinIO、Content Server、
-Worker Runner 和 Online Server。脚本是幂等的，已安装或已运行的组件不会重复处理。
+Worker Runner、Online Server 和 `apps/web`。`open` 只打开 `http://localhost:3001/` 这一个前端入口。脚本是幂等的，已安装或已运行的组件不会重复处理。
 
 国外源较慢且本机已有代理时，可在根目录 `.env` 中设置：
 
