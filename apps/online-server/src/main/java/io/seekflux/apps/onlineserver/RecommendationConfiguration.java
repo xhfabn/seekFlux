@@ -8,6 +8,7 @@ import io.seekflux.recommendation.port.in.RecommendationUseCase;
 import io.seekflux.recommendation.port.out.RecommendationRetriever;
 import io.seekflux.userinterest.application.ExplicitInterestService;
 import io.seekflux.userinterest.port.in.UserInterestUseCase;
+import io.seekflux.userinterest.port.out.UserInterestRepository;
 import java.time.Clock;
 import java.time.Duration;
 import org.springframework.beans.factory.annotation.Value;
@@ -23,8 +24,10 @@ class RecommendationConfiguration {
     }
 
     @Bean
-    UserInterestUseCase userInterestUseCase(Clock recommendationClock) {
-        return new ExplicitInterestService(recommendationClock);
+    UserInterestUseCase userInterestUseCase(
+            Clock recommendationClock,
+            UserInterestRepository userInterestRepository) {
+        return new ExplicitInterestService(recommendationClock, userInterestRepository);
     }
 
     @Bean

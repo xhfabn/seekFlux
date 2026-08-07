@@ -18,6 +18,7 @@ import java.time.Clock;
 import java.time.Duration;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.function.Supplier;
@@ -56,43 +57,51 @@ public final class RecommendationApplicationService implements RecommendationUse
     @Override
     public Mono<RecommendationPage> feed(FeedRequest request) {
         Objects.requireNonNull(request, "feed request must not be null");
-        InterestProfile profile = userInterest.resolve(request.userId(), request.explicitInterests());
-        String fingerprint = fingerprint("feed", request.userId(), profile.topics(), request.seedContentId());
-        int offset = cursorCodec.decode(request.cursor(), fingerprint, clock.instant());
+        return userInterest.resolve(request.userId(), request.explicitInterests()).flatMap(profile -> {
+            String fingerprint = fingerprint("feed", request.userId(), profile.topics(), request.seedContentId());
+            int offset = cursorCodec.decode(request.cursor(), fingerprint, clock.instant());
+            if (profile.topics().isEmpty()) {
+                return Mono.just(page(List.of(), profile, fingerprint, offset, request.pageSize()));
+            }
 
-        Mono<SourceResult> trending = retrieve("TRENDING", () -> retriever.trending(CANDIDATE_LIMIT));
-        Mono<SourceResult> interests = profile.topics().isEmpty()
-                ? Mono.just(SourceResult.empty("INTEREST"))
-                : retrieve("INTEREST", () -> retriever.byInterests(profile.topics(), CANDIDATE_LIMIT));
-        Mono<SourceResult> similar = request.seedContentId() == null
-                ? Mono.just(SourceResult.empty("SIMILAR"))
-                : retrieve("SIMILAR", () -> retriever.similarTo(request.seedContentId(), CANDIDATE_LIMIT));
+            Mono<SourceResult> trending = retrieve("TRENDING", () -> retriever.trending(CANDIDATE_LIMIT));
+            Mono<SourceResult> interests = retrieve(
+                    "INTEREST", () -> retriever.byInterests(profile.topics(), CANDIDATE_LIMIT));
+            Mono<SourceResult> similar = request.seedContentId() == null
+                    ? Mono.just(SourceResult.empty("SIMILAR"))
+                    : retrieve("SIMILAR", () -> retriever.similarTo(request.seedContentId(), CANDIDATE_LIMIT));
 
-        return Mono.zip(trending, interests, similar)
-                .map(results -> page(
-                        List.of(results.getT1(), results.getT2(), results.getT3()),
-                        profile,
-                        fingerprint,
-                        offset,
-                        request.pageSize()));
+            return Mono.zip(trending, interests, similar)
+                    .map(results -> page(
+                            List.of(results.getT1(), results.getT2(), results.getT3()),
+                            profile,
+                            fingerprint,
+                            offset,
+                            request.pageSize()));
+        });
     }
 
     @Override
     public Mono<RecommendationPage> similar(SimilarContentRequest request) {
         Objects.requireNonNull(request, "similar content request must not be null");
-        InterestProfile profile = userInterest.resolve(request.userId(), request.explicitInterests());
-        String fingerprint = fingerprint("similar", request.userId(), profile.topics(), request.contentId());
-        int offset = cursorCodec.decode(request.cursor(), fingerprint, clock.instant());
+        return userInterest.resolve(request.userId(), request.explicitInterests()).flatMap(profile -> {
+            String fingerprint = fingerprint("similar", request.userId(), profile.topics(), request.contentId());
+            int offset = cursorCodec.decode(request.cursor(), fingerprint, clock.instant());
+            if (profile.topics().isEmpty()) {
+                return Mono.just(page(List.of(), profile, fingerprint, offset, request.pageSize()));
+            }
 
-        Mono<SourceResult> similar = retrieve("SIMILAR", () -> retriever.similarTo(request.contentId(), CANDIDATE_LIMIT));
-        Mono<SourceResult> fallback = retrieve("TRENDING", () -> retriever.trending(CANDIDATE_LIMIT));
-        return Mono.zip(similar, fallback).map(results -> {
-            SourceResult primary = results.getT1();
-            SourceResult trending = results.getT2();
-            List<SourceResult> selected = primary.candidates().isEmpty()
-                    ? List.of(primary, trending)
-                    : List.of(primary);
-            return page(selected, profile, fingerprint, offset, request.pageSize());
+            Mono<SourceResult> similar = retrieve(
+                    "SIMILAR", () -> retriever.similarTo(request.contentId(), CANDIDATE_LIMIT));
+            Mono<SourceResult> fallback = retrieve("TRENDING", () -> retriever.trending(CANDIDATE_LIMIT));
+            return Mono.zip(similar, fallback).map(results -> {
+                SourceResult primary = results.getT1();
+                SourceResult trending = results.getT2();
+                List<SourceResult> selected = primary.candidates().isEmpty()
+                        ? List.of(primary, trending)
+                        : List.of(primary);
+                return page(selected, profile, fingerprint, offset, request.pageSize());
+            });
         });
     }
 
@@ -111,6 +120,7 @@ public final class RecommendationApplicationService implements RecommendationUse
             int pageSize) {
         List<RankingCandidate> candidates = sources.stream()
                 .flatMap(source -> source.candidates().stream())
+                .filter(candidate -> matchesProfile(candidate, profile))
                 .toList();
         List<RankedCandidate> ranked = ranking.rank(
                 candidates,
@@ -133,6 +143,16 @@ public final class RecommendationApplicationService implements RecommendationUse
                 nextCursor,
                 !unavailable.isEmpty(),
                 unavailable);
+    }
+
+    private static boolean matchesProfile(RankingCandidate candidate, InterestProfile profile) {
+        if (profile.topics().isEmpty()) {
+            return false;
+        }
+        var normalizedTags = candidate.tags().stream()
+                .map(tag -> tag.trim().toLowerCase(Locale.ROOT))
+                .collect(java.util.stream.Collectors.toSet());
+        return profile.topics().stream().anyMatch(normalizedTags::contains);
     }
 
     private static RecommendationItemView toView(RankedCandidate item) {

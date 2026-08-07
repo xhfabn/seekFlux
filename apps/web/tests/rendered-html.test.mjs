@@ -23,8 +23,9 @@ test("renders the SeekFlux consumer app and operator consoles", async () => {
   assert.match(html, /搜索你感兴趣的内容/);
   assert.match(html, /用户画像/);
   assert.match(html, /内容工作台/);
-  assert.match(html, /杭州周末｜3 个新手也能轻松抵达的露营地/);
   assert.match(html, /精选推荐/);
+  assert.match(html, /当前画像暂无匹配内容/);
+  assert.doesNotMatch(html, /preview_/);
   assert.doesNotMatch(html, /codex-preview|Building your site|react-loading-skeleton/i);
 });
 
@@ -33,5 +34,5 @@ test("keeps operator workspaces task-oriented", async () => {
   assert.match(source, /设置身份与兴趣/);
   assert.match(source, /登记新内容/);
   assert.match(source, /校准并发布画像/);
-  assert.doesNotMatch(source, /理解用户，|把一条视频，|PRODUCT SHELL/);
+  assert.doesNotMatch(source, /理解用户，|把一条视频，|PRODUCT SHELL|preview_/);
 });

@@ -6,6 +6,41 @@ info:
 servers:
   - url: http://localhost:8080
 paths:
+  /v1/users/{userId}/interest-profile:
+    get:
+      operationId: getUserInterestProfile
+      summary: Get the persisted explicit-interest profile used by recommendation
+      tags: [UserInterest]
+      parameters:
+        - $ref: "#/components/parameters/UserIdPath"
+      responses:
+        "200":
+          description: Current persisted user interest profile, or an empty profile when none was saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserInterestProfile"
+    put:
+      operationId: saveUserInterestProfile
+      summary: Persist the explicit-interest profile used by subsequent feed requests
+      tags: [UserInterest]
+      parameters:
+        - $ref: "#/components/parameters/UserIdPath"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateUserInterestProfileRequest"
+      responses:
+        "200":
+          description: Persisted user interest profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserInterestProfile"
+        "400":
+          $ref: "#/components/responses/BadRequest"
   /v1/search:
     get:
       operationId: searchByQueryParameter
@@ -53,7 +88,7 @@ paths:
   /v1/feed:
     get:
       operationId: getFeed
-      summary: Get a fused and diversified recommendation feed
+      summary: Get a feed strictly eligible for the persisted user-interest profile
       tags: [Recommendation]
       parameters:
         - $ref: "#/components/parameters/UserIdHeader"
@@ -216,6 +251,11 @@ components:
       required: false
       description: Local baseline identity. A gateway-authenticated identity replaces this header in production.
       schema: {type: string, maxLength: 128, default: anonymous}
+    UserIdPath:
+      name: userId
+      in: path
+      required: true
+      schema: {type: string, minLength: 1, maxLength: 128}
     RecommendationCursor:
       name: cursor
       in: query
@@ -231,9 +271,27 @@ components:
       name: interests
       in: query
       required: false
-      description: Comma-separated explicit interests for the pre-interaction baseline.
+      description: Optional request-scoped override. When omitted, the persisted user profile is used.
       schema: {type: string, maxLength: 1300}
   schemas:
+    UpdateUserInterestProfileRequest:
+      type: object
+      required: [topics]
+      properties:
+        topics:
+          type: array
+          maxItems: 20
+          items: {type: string, minLength: 1, maxLength: 64}
+    UserInterestProfile:
+      type: object
+      required: [userId, topics, updatedAt]
+      properties:
+        userId: {type: string}
+        topics:
+          type: array
+          maxItems: 20
+          items: {type: string}
+        updatedAt: {type: string, format: date-time}
     SearchRequest:
       type: object
       required: [query]

@@ -42,7 +42,6 @@ type ContentItem = {
   publishedAt: string;
   sources?: string[];
   reason?: string;
-  placeholder?: boolean;
 };
 
 type SearchResponse = {
@@ -62,6 +61,12 @@ type FeedResponse = {
   unavailableSources: string[];
 };
 
+type UserInterestResponse = {
+  userId: string;
+  topics: string[];
+  updatedAt: string;
+};
+
 type InteractionEvent = {
   eventId: string;
   eventType: EventType;
@@ -78,144 +83,6 @@ const sampleContent = {
   tags: "露营, 杭州, 周末, 亲子",
   mediaUri: "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
 };
-
-const placeholderItems: ContentItem[] = [
-  {
-    contentId: "preview_first_video",
-    creatorId: "周末去野",
-    mediaUri: "",
-    title: "杭州周末｜3 个新手也能轻松抵达的露营地",
-    description: "不赶路、不负重，整理了三条适合第一次露营的杭州周边路线。",
-    summary: "不赶路、不负重，整理了三条适合第一次露营的杭州周边路线。",
-    tags: ["露营", "杭州", "周末"],
-    profileVersion: 0,
-    score: 0,
-    publishedAt: "",
-    sources: ["TRENDING"],
-    reason: "你最近关注了露营",
-    placeholder: true,
-  },
-  {
-    contentId: "preview_search_to_feed",
-    creatorId: "咖啡先森",
-    mediaUri: "",
-    title: "手冲咖啡总是发酸？先调整这三个变量",
-    description: "水温、研磨度和注水节奏，一次讲清新手最常见的问题。",
-    summary: "水温、研磨度和注水节奏，一次讲清新手最常见的问题。",
-    tags: ["咖啡", "手冲", "教程"],
-    profileVersion: 0,
-    score: 0,
-    publishedAt: "",
-    sources: ["INTEREST"],
-    reason: "来自你的咖啡兴趣",
-    placeholder: true,
-  },
-  {
-    contentId: "preview_feedback_loop",
-    creatorId: "带娃看世界",
-    mediaUri: "",
-    title: "上海亲子博物馆一日路线，雨天也能玩",
-    description: "从上午十点到下午四点，适合 4—10 岁孩子的轻松路线。",
-    summary: "从上午十点到下午四点，适合 4—10 岁孩子的轻松路线。",
-    tags: ["亲子", "上海", "博物馆"],
-    profileVersion: 0,
-    score: 0,
-    publishedAt: "",
-    sources: ["INTEREST"],
-    reason: "亲子主题热度上升",
-    placeholder: true,
-  },
-  {
-    contentId: "preview_west_sichuan",
-    creatorId: "阿野在路上",
-    mediaUri: "",
-    title: "川西自驾摄影｜这 5 个机位不要错过",
-    description: "雪山、湖泊和公路，三天两夜路线与拍摄时间一次整理。",
-    summary: "雪山、湖泊和公路，三天两夜路线与拍摄时间一次整理。",
-    tags: ["旅行", "摄影", "川西"],
-    profileVersion: 0,
-    score: 0,
-    publishedAt: "",
-    sources: ["TRENDING"],
-    reason: "旅行频道热门",
-    placeholder: true,
-  },
-  {
-    contentId: "preview_dinner",
-    creatorId: "今天吃点好",
-    mediaUri: "",
-    title: "下班后 20 分钟，一人食也可以很认真",
-    description: "一口锅完成番茄炖饭，少洗碗也不将就。",
-    summary: "一口锅完成番茄炖饭，少洗碗也不将就。",
-    tags: ["美食", "一人食", "晚餐"],
-    profileVersion: 0,
-    score: 0,
-    publishedAt: "",
-    sources: ["TRENDING"],
-    reason: "今晚大家都在看",
-    placeholder: true,
-  },
-  {
-    contentId: "preview_photo",
-    creatorId: "手机摄影课",
-    mediaUri: "",
-    title: "手机拍日落，记住这两个曝光设置",
-    description: "不用滤镜也能保留天空层次，新手一分钟就能学会。",
-    summary: "不用滤镜也能保留天空层次，新手一分钟就能学会。",
-    tags: ["摄影", "手机", "日落"],
-    profileVersion: 0,
-    score: 0,
-    publishedAt: "",
-    sources: ["SIMILAR"],
-    reason: "与你收藏的内容相似",
-    placeholder: true,
-  },
-  {
-    contentId: "preview_citywalk",
-    creatorId: "城市散步指南",
-    mediaUri: "",
-    title: "周末 Citywalk：从老街走到江边日落",
-    description: "全程六公里，沿途有咖啡馆、旧书店和最好看的江景。",
-    summary: "全程六公里，沿途有咖啡馆、旧书店和最好看的江景。",
-    tags: ["Citywalk", "城市", "周末"],
-    profileVersion: 0,
-    score: 0,
-    publishedAt: "",
-    sources: ["INTEREST"],
-    reason: "适合你的周末计划",
-    placeholder: true,
-  },
-  {
-    contentId: "preview_tech",
-    creatorId: "数码观察员",
-    mediaUri: "",
-    title: "AI 办公到底能省多少时间？实测一整天",
-    description: "从会议纪要到周报整理，看看哪些环节真的有用。",
-    summary: "从会议纪要到周报整理，看看哪些环节真的有用。",
-    tags: ["科技", "AI", "效率"],
-    profileVersion: 0,
-    score: 0,
-    publishedAt: "",
-    sources: ["TRENDING"],
-    reason: "科技频道热门",
-    placeholder: true,
-  },
-  {
-    contentId: "preview_home",
-    creatorId: "好好住研究所",
-    mediaUri: "",
-    title: "小户型收纳：真正好用的是留白",
-    description: "减少看得见的杂物，让 40 平米也能住得松弛。",
-    summary: "减少看得见的杂物，让 40 平米也能住得松弛。",
-    tags: ["家居", "收纳", "生活"],
-    profileVersion: 0,
-    score: 0,
-    publishedAt: "",
-    sources: ["SIMILAR"],
-    reason: "生活方式相似内容",
-    placeholder: true,
-  },
-];
 
 const navItems: Array<{ key: Workspace; number: string; title: string; subtitle: string; role: string }> = [
   { key: "discover", number: "01", title: "发现", subtitle: "搜索 · 推荐 · 相似", role: "C 端应用" },
@@ -282,8 +149,10 @@ export function SeekFluxApp() {
   const [transcript, setTranscript] = useState("");
 
   const [userId, setUserId] = useState("demo-user");
+  const [savedUserId, setSavedUserId] = useState("demo-user");
   const [interests, setInterests] = useState("露营, 亲子");
   const [profileSavedAt, setProfileSavedAt] = useState("");
+  const [profileHydrated, setProfileHydrated] = useState(false);
   const [query, setQuery] = useState("杭州 周末 露营");
   const [searchPage, setSearchPage] = useState(0);
   const [searchData, setSearchData] = useState<SearchResponse | null>(null);
@@ -313,13 +182,18 @@ export function SeekFluxApp() {
     if (rawProfile) {
       try {
         const saved = JSON.parse(rawProfile) as { userId?: string; interests?: string; savedAt?: string };
-        if (saved.userId) setUserId(saved.userId);
+        if (saved.userId) { setUserId(saved.userId); setSavedUserId(saved.userId); }
         if (saved.interests) setInterests(saved.interests);
         if (saved.savedAt) setProfileSavedAt(saved.savedAt);
       } catch { window.localStorage.removeItem("seekflux.viewer-profile"); }
     }
     setQueueHydrated(true);
+    setProfileHydrated(true);
   }, []);
+
+  useEffect(() => {
+    if (profileHydrated) void runFeed();
+  }, [profileHydrated]);
 
   useEffect(() => {
     if (queueHydrated) window.localStorage.setItem("seekflux.interactions", JSON.stringify(events));
@@ -463,7 +337,7 @@ export function SeekFluxApp() {
       position, eventTime: new Date().toISOString(),
     };
     setEvents((current) => [nextEvent, ...current].slice(0, 200));
-    showToast(item.placeholder ? "演示行为已保存到本地画像" : "行为已保存到反馈队列");
+    showToast("行为已保存到反馈队列");
   }, [showToast]);
 
   async function runSearch(targetPage = 0, targetQuery = query) {
@@ -480,7 +354,7 @@ export function SeekFluxApp() {
       setDiscoverMode("search");
       setHealth((current) => ({ ...current, online: "online" }));
       appendExposureEvents(data.hits, `search_${createEventId()}`);
-      if (!data.hits.length) showToast("没有匹配结果，已保留产品占位内容");
+      if (!data.hits.length) showToast("没有匹配结果");
     } catch (error) {
       const message = error instanceof Error ? error.message : "搜索失败";
       setDiscoverError(message);
@@ -489,22 +363,21 @@ export function SeekFluxApp() {
     } finally { setBusy(null); }
   }
 
-  async function runFeed(cursor?: string | null, append = false) {
+  async function runFeed(cursor?: string | null, append = false, targetUserId = savedUserId, targetSeed = feedSeed) {
     setBusy("feed");
     setDiscoverError("");
     try {
       const params = new URLSearchParams({ page_size: "12" });
-      if (interests.trim()) params.set("interests", interests.trim());
-      if (feedSeed.trim()) params.set("seed_content_id", feedSeed.trim());
+      if (targetSeed.trim()) params.set("seed_content_id", targetSeed.trim());
       if (cursor) params.set("cursor", cursor);
-      const data = await api<FeedResponse>(`/api/bridge/online/v1/feed?${params}`, { headers: { "X-User-Id": userId || "anonymous" } });
+      const data = await api<FeedResponse>(`/api/bridge/online/v1/feed?${params}`, { headers: { "X-User-Id": targetUserId || "anonymous" } });
       const startPosition = append ? feedItems.length : 0;
       setFeedData(data);
       setFeedItems((current) => append ? [...current, ...data.items] : data.items);
       setDiscoverMode("feed");
       setHealth((current) => ({ ...current, online: "online" }));
       appendExposureEvents(data.items, data.requestId, startPosition);
-      if (!data.items.length) showToast("Feed 暂无真实内容，继续展示视频占位结构");
+      if (!data.items.length) showToast("当前画像暂无匹配内容");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Feed 生成失败";
       setDiscoverError(message);
@@ -514,14 +387,12 @@ export function SeekFluxApp() {
   }
 
   async function runSimilar(contentSeed: string) {
-    if (contentSeed.startsWith("preview_")) return showToast("发布真实内容后即可调用相似召回");
     setFeedSeed(contentSeed);
     setBusy("feed");
     setDiscoverError("");
     try {
       const params = new URLSearchParams({ page_size: "12" });
-      if (interests.trim()) params.set("interests", interests.trim());
-      const data = await api<FeedResponse>(`/api/bridge/online/v1/contents/${encodeURIComponent(contentSeed)}/similar?${params}`, { headers: { "X-User-Id": userId || "anonymous" } });
+      const data = await api<FeedResponse>(`/api/bridge/online/v1/contents/${encodeURIComponent(contentSeed)}/similar?${params}`, { headers: { "X-User-Id": savedUserId || "anonymous" } });
       setFeedData(data);
       setFeedItems(data.items);
       setDiscoverMode("feed");
@@ -534,11 +405,29 @@ export function SeekFluxApp() {
     } finally { setBusy(null); }
   }
 
-  function saveViewerProfile() {
-    const savedAt = new Date().toISOString();
-    window.localStorage.setItem("seekflux.viewer-profile", JSON.stringify({ userId, interests, savedAt }));
-    setProfileSavedAt(savedAt);
-    showToast("冷启动画像已保存到当前设备");
+  async function saveViewerProfile() {
+    const cleanUserId = userId.trim();
+    if (!cleanUserId) return showToast("请先填写用户 ID", true);
+    setBusy("profile-save");
+    try {
+      const profile = await api<UserInterestResponse>(
+        `/api/bridge/online/v1/users/${encodeURIComponent(cleanUserId)}/interest-profile`,
+        { method: "PUT", body: JSON.stringify({ topics: splitTags(interests) }) },
+      );
+      const normalizedInterests = profile.topics.join(", ");
+      setUserId(profile.userId);
+      setSavedUserId(profile.userId);
+      setInterests(normalizedInterests);
+      setProfileSavedAt(profile.updatedAt);
+      setFeedSeed("");
+      window.localStorage.setItem("seekflux.viewer-profile", JSON.stringify({
+        userId: profile.userId, interests: normalizedInterests, savedAt: profile.updatedAt,
+      }));
+      await runFeed(null, false, profile.userId, "");
+      showToast("画像已保存，推荐内容已刷新");
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : "画像保存失败", true);
+    } finally { setBusy(null); }
   }
 
   async function syncInteractions() {
@@ -563,8 +452,8 @@ export function SeekFluxApp() {
   }
 
   const displayedItems = discoverMode === "search" ? searchData?.hits ?? [] : feedItems;
-  const consumerItems = displayedItems.length ? displayedItems : placeholderItems;
-  const activeRequestId = discoverMode === "feed" ? feedData?.requestId ?? "feed_preview" : "search_frontend";
+  const consumerItems = displayedItems;
+  const activeRequestId = discoverMode === "feed" ? feedData?.requestId ?? "feed_pending" : "search_frontend";
   const currentStage = content ? statusIndex[content.status] : 0;
   const eventCounts = useMemo(() => {
     const exposures = events.filter((event) => event.eventType === "EXPOSURE").length;
@@ -626,10 +515,10 @@ export function SeekFluxApp() {
 
         {workspace === "discover" && (
           <DiscoverWorkspace
-            mode={discoverMode} setMode={setDiscoverMode} userId={userId} interests={interests}
+            mode={discoverMode} setMode={setDiscoverMode} userId={savedUserId}
             query={query} setQuery={setQuery} runSearch={runSearch} searchPage={searchPage} searchData={searchData}
             runFeed={runFeed} runSimilar={runSimilar} feedData={feedData} items={consumerItems}
-            usingPlaceholders={!displayedItems.length} error={discoverError} busy={busy}
+            error={discoverError} busy={busy}
             requestId={activeRequestId} addInteraction={addInteraction} goProfile={() => navigate("audience")}
           />
         )}
@@ -700,11 +589,11 @@ function ServicePill({ name, state }: { name: string; state: HealthState }) {
 }
 
 type DiscoverProps = {
-  mode: DiscoverMode; setMode: (mode: DiscoverMode) => void; userId: string; interests: string;
+  mode: DiscoverMode; setMode: (mode: DiscoverMode) => void; userId: string;
   query: string; setQuery: (value: string) => void; runSearch: (page?: number, query?: string) => Promise<void>;
   searchPage: number; searchData: SearchResponse | null; runFeed: (cursor?: string | null, append?: boolean) => Promise<void>;
   runSimilar: (contentId: string) => Promise<void>; feedData: FeedResponse | null; items: ContentItem[];
-  usingPlaceholders: boolean; error: string; busy: string | null; requestId: string;
+  error: string; busy: string | null; requestId: string;
   addInteraction: (type: EventType, item: ContentItem, position: number, requestId: string) => void;
   goProfile: () => void;
 };
@@ -759,6 +648,14 @@ function DiscoverWorkspace(props: DiscoverProps) {
           <ConsumerContentCard key={`${item.contentId}-${index}`} item={item} index={index} requestId={props.requestId} addInteraction={props.addInteraction} runSimilar={props.runSimilar} />
         ))}
       </section>
+      {!props.items.length && !props.busy && (
+        <div className="consumer-empty">
+          <Icon name="search" />
+          <strong>{props.mode === "feed" ? "当前画像暂无匹配内容" : "没有找到相关内容"}</strong>
+          <p>{props.mode === "feed" ? "调整用户画像，或先在内容工作台发布带有对应标签的内容。" : "换一个关键词再试试。"}</p>
+          {props.mode === "feed" && <button onClick={props.goProfile}>调整用户画像 <Icon name="arrow" /></button>}
+        </div>
+      )}
 
       <div className="consumer-pagination">
         {props.mode === "search" && props.searchData && props.searchData.total > props.searchData.size && (
@@ -779,7 +676,7 @@ function ConsumerContentCard({ item, index, requestId, addInteraction, runSimila
   addInteraction: DiscoverProps["addInteraction"]; runSimilar: (contentId: string) => Promise<void>;
 }) {
   const [mediaError, setMediaError] = useState(false);
-  const canPlay = Boolean(item.mediaUri) && !item.placeholder && !mediaError;
+  const canPlay = Boolean(item.mediaUri) && !mediaError;
   const durations = ["08:21", "05:48", "10:06", "06:32", "04:19", "07:45", "09:12", "03:56", "11:08"];
   const likes = ["2.7万", "1.2万", "8,462", "3.1万", "9,830", "1.8万", "6,521", "2.2万", "7,104"];
   const posterWords = ["去野", "手冲", "亲子", "川西", "晚餐", "日落", "散步", "AI", "好好住"];
@@ -815,7 +712,7 @@ function ConsumerContentCard({ item, index, requestId, addInteraction, runSimila
 
 type AudienceProps = {
   userId: string; setUserId: (value: string) => void; interests: string; setInterests: (value: string) => void;
-  profileSavedAt: string; saveViewerProfile: () => void; events: InteractionEvent[];
+  profileSavedAt: string; saveViewerProfile: () => Promise<void>; events: InteractionEvent[];
   eventCounts: { exposures: number; actions: number }; syncMessage: string; syncInteractions: () => Promise<void>;
   clearEvents: () => void; busy: string | null; goDiscover: () => void;
 };
@@ -850,8 +747,8 @@ function AudienceWorkspace(props: AudienceProps) {
             <label><span className="field-label">用户 ID <span>X-User-Id</span></span><input className="input" value={props.userId} onChange={(event) => props.setUserId(event.target.value)} placeholder="demo-user" /></label>
             <label><span className="field-label">显式兴趣 <span>逗号分隔</span></span><input className="input" value={props.interests} onChange={(event) => props.setInterests(event.target.value)} placeholder="露营, 亲子" /></label>
             <div className="interest-picker">{quickInterests.map((item) => <button key={item} className={interestList.includes(item) ? "selected" : ""} onClick={() => toggleInterest(item)}>{interestList.includes(item) ? "✓ " : "+ "}{item}</button>)}</div>
-            <div className="form-actions"><button className="button accent" onClick={props.saveViewerProfile}>保存画像</button><span className="save-note">{props.profileSavedAt ? `保存于 ${formatEventTime(props.profileSavedAt)}` : "尚未保存"}</span></div>
-            <div className="boundary-note"><Icon name="info" /><span>画像暂存在当前设备。</span></div>
+            <div className="form-actions"><button className="button accent" disabled={props.busy === "profile-save"} onClick={() => void props.saveViewerProfile()}>保存画像并刷新推荐</button><span className="save-note">{props.profileSavedAt ? `保存于 ${formatEventTime(props.profileSavedAt)}` : "尚未保存"}</span></div>
+            <div className="boundary-note"><Icon name="info" /><span>画像保存到推荐服务，发现页只返回标签匹配内容。</span></div>
           </div>
         </article>
 
@@ -921,7 +818,7 @@ function StudioWorkspace(props: StudioProps) {
               <label className="wide"><span className="field-label">内容标题 <span>必填</span></span><input className="input" value={props.title} onChange={(event) => props.setTitle(event.target.value)} required maxLength={200} /></label>
               <label className="wide"><span className="field-label">内容描述 <span>用于基础画像</span></span><textarea className="textarea" value={props.description} onChange={(event) => props.setDescription(event.target.value)} maxLength={4000} /></label>
               <label><span className="field-label">创建者</span><input className="input" value={props.creatorId} onChange={(event) => props.setCreatorId(event.target.value)} required maxLength={128} /></label>
-              <label><span className="field-label">来源标签 <span>逗号分隔</span></span><input className="input" value={props.sourceTags} onChange={(event) => props.setSourceTags(event.target.value)} /></label>
+              <label><span className="field-label">来源标签 <span>初始推荐匹配</span></span><input className="input" value={props.sourceTags} onChange={(event) => props.setSourceTags(event.target.value)} /></label>
             </div>
             <div className="form-actions"><button className="button accent" disabled={props.busy === "content-submit"}>登记并开始处理 <Icon name="arrow" /></button><button type="button" className="button secondary" onClick={() => { props.setTitle(sampleContent.title); props.setDescription(sampleContent.description); props.setCreatorId(sampleContent.creatorId); props.setSourceTags(sampleContent.tags); props.setMediaUri(sampleContent.mediaUri); }}>载入示例</button></div>
           </form>
@@ -952,7 +849,7 @@ function StudioWorkspace(props: StudioProps) {
             <form onSubmit={props.publishProfile}>
               <div className="field-grid">
                 <label><span className="field-label">画像版本</span><input className="input" type="number" min={1} value={props.profileVersion} onChange={(event) => props.setProfileVersion(Number(event.target.value))} /></label>
-                <label><span className="field-label">画像标签 <span>逗号分隔</span></span><input className="input" value={props.profileTags} onChange={(event) => props.setProfileTags(event.target.value)} /></label>
+                <label><span className="field-label">画像标签 <span>决定推荐人群</span></span><input className="input" value={props.profileTags} onChange={(event) => props.setProfileTags(event.target.value)} /></label>
                 <label className="wide"><span className="field-label">画像摘要</span><textarea className="textarea" value={props.profileSummary} onChange={(event) => props.setProfileSummary(event.target.value)} required /></label>
                 <label className="wide"><span className="field-label">ASR 转写 <span>当前可选</span></span><textarea className="textarea" value={props.transcript} onChange={(event) => props.setTranscript(event.target.value)} placeholder="粘贴语音转写文本，用于检索召回…" /></label>
               </div>

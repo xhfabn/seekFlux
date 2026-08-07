@@ -841,6 +841,7 @@ SeekFlux macOS 本地开发环境
   infra-up          安装并启动 PostgreSQL、Redis、Kafka、ES、MinIO
   build             构建三个 Java 应用
   apps-up           构建并启动 Content、Worker、Online 与 Web
+  seed-demo         通过内容发布链路创建六类画像示例视频
   up                 安装并启动中间件、三个 Java 应用与 Web
   status             查看全部中间件与应用状态
   logs [name]        查看日志；name: content|worker|online|web|postgres|redis|kafka|elasticsearch|minio
@@ -864,6 +865,7 @@ case "${1:-up}" in
   infra-up) infra_up ;;
   build) build_apps ;;
   apps-up) apps_up ;;
+  seed-demo) bash "${ROOT_DIR}/deploy/local/seed-demo-content.sh" "${CONTENT_SERVER_PORT}" "${ONLINE_SERVER_PORT}" ;;
   up|start) infra_up; apps_up; status_all ;;
   status) status_all ;;
   logs) show_logs "${2:-all}" ;;

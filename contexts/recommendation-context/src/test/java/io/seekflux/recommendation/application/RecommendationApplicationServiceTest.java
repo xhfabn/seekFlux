@@ -12,6 +12,8 @@ import io.seekflux.ranking.domain.RetrievalSource;
 import io.seekflux.recommendation.port.in.FeedRequest;
 import io.seekflux.recommendation.port.out.RecommendationRetriever;
 import io.seekflux.userinterest.application.ExplicitInterestService;
+import io.seekflux.userinterest.domain.InterestProfile;
+import io.seekflux.userinterest.port.out.UserInterestRepository;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -27,7 +29,7 @@ class RecommendationApplicationServiceTest {
     private static final Clock CLOCK = Clock.fixed(NOW, ZoneOffset.UTC);
 
     @Test
-    void combinesTrendingInterestAndSimilarCandidatesAndReturnsCursor() {
+    void returnsOnlyCandidatesWhoseTagsMatchTheUserProfile() {
         RecommendationRetriever retriever = new StubRetriever(false);
         var service = service(retriever);
 
@@ -37,6 +39,7 @@ class RecommendationApplicationServiceTest {
                     assertNotNull(page.nextCursor());
                     assertTrue(page.items().getFirst().sources().contains("INTEREST"));
                     assertTrue(page.items().getFirst().sources().contains("TRENDING"));
+                    assertTrue(page.items().stream().allMatch(item -> item.tags().contains("露营")));
                 })
                 .verifyComplete();
     }
@@ -50,6 +53,29 @@ class RecommendationApplicationServiceTest {
                     assertTrue(page.degraded());
                     assertTrue(page.unavailableSources().contains("INTEREST"));
                     assertFalse(page.items().isEmpty());
+                })
+                .verifyComplete();
+    }
+
+    @Test
+    void loadsThePersistedProfileWhenTheFeedRequestHasNoInterestOverride() {
+        UserInterestRepository repository = new UserInterestRepository() {
+            @Override
+            public Mono<InterestProfile> findByUserId(String userId) {
+                return Mono.just(new InterestProfile(userId, List.of("咖啡"), NOW));
+            }
+
+            @Override
+            public Mono<Void> save(InterestProfile profile) {
+                return Mono.empty();
+            }
+        };
+        var service = service(new StubRetriever(false), repository);
+
+        StepVerifier.create(service.feed(new FeedRequest("user-1", List.of(), null, null, 10)))
+                .assertNext(page -> {
+                    assertFalse(page.items().isEmpty());
+                    assertTrue(page.items().stream().allMatch(item -> item.tags().contains("咖啡")));
                 })
                 .verifyComplete();
     }
@@ -87,9 +113,15 @@ class RecommendationApplicationServiceTest {
     }
 
     private static RecommendationApplicationService service(RecommendationRetriever retriever) {
+        return service(retriever, new EmptyInterestRepository());
+    }
+
+    private static RecommendationApplicationService service(
+            RecommendationRetriever retriever,
+            UserInterestRepository repository) {
         return new RecommendationApplicationService(
                 retriever,
-                new ExplicitInterestService(CLOCK),
+                new ExplicitInterestService(CLOCK, repository),
                 new RuleRankingService(),
                 new SignedRecommendationCursorCodec("test-secret-at-least-16-characters"),
                 CLOCK,
@@ -125,7 +157,19 @@ class RecommendationApplicationServiceTest {
 
         @Override
         public Mono<List<RankingCandidate>> similarTo(String contentId, int limit) {
-            return Mono.just(List.of(candidate("similar", RetrievalSource.SIMILAR, 1, List.of("户外"))));
+            return Mono.just(List.of(candidate("similar", RetrievalSource.SIMILAR, 1, List.of("露营"))));
+        }
+    }
+
+    private static final class EmptyInterestRepository implements UserInterestRepository {
+        @Override
+        public Mono<InterestProfile> findByUserId(String userId) {
+            return Mono.empty();
+        }
+
+        @Override
+        public Mono<Void> save(InterestProfile profile) {
+            return Mono.empty();
         }
     }
 }

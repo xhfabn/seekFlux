@@ -623,6 +623,12 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .consumer-result-heading strong { color: white; font-size: 14px; }
 .consumer-result-heading span { color: #707581; font: 9px var(--font-geist-mono), monospace; }
 .consumer-card-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 28px 18px; }
+.consumer-empty { min-height: 320px; display: grid; place-content: center; justify-items: center; padding: 40px 20px; border: 1px dashed #30333d; border-radius: 18px; color: #8f939e; text-align: center; }
+.consumer-empty > .icon { width: 30px; height: 30px; margin-bottom: 13px; }
+.consumer-empty strong { color: #e4e6ec; font-size: 15px; }
+.consumer-empty p { max-width: 420px; margin: 8px 0 16px; font-size: 10px; line-height: 1.6; }
+.consumer-empty button { display: inline-flex; align-items: center; gap: 7px; padding: 9px 13px; border: 1px solid #3b3e48; border-radius: 9px; background: #20232c; color: white; font-size: 10px; font-weight: 760; cursor: pointer; }
+.consumer-empty button .icon { width: 14px; }
 .consumer-content-card { min-width: 0; color: white; }
 .consumer-card-cover {
   position: relative;
