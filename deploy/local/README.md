@@ -1,6 +1,6 @@
 # SeekFlux macOS 本地运行脚本
 
-根目录的 `seekflux.sh` 是阶段 1～3 的统一入口。它会把可下载的中间件安装在项目
+根目录的 `seekflux.sh` 是当前已实现服务的统一入口。它会把可下载的中间件安装在项目
 `.runtime/`，把数据、日志和 PID 保存在 `.local/`；PostgreSQL 二进制通过 Homebrew
 安装，数据目录仍属于本项目。
 
@@ -16,6 +16,8 @@
 
 `up` 会依次启动 PostgreSQL、Redis、Kafka、Elasticsearch、MinIO、Content Server、
 Worker Runner、Online Server 和 `apps/web`。`open` 只打开 `http://localhost:3001/` 这一个前端入口。脚本是幂等的，已安装或已运行的组件不会重复处理。
+
+当前脚本不会启动 Agent Server，因为该进程要到开发 Step 5 才创建。Step 4 的 Direct Search 评测仍复用现有 Online Server；未来加入 `agent-server` 时，需要同步更新 `stack.sh` 的启动、健康检查、日志、状态和停止逻辑，不能只把新进程写进架构文档。
 
 国外源较慢且本机已有代理时，可在根目录 `.env` 中设置：
 

@@ -2143,59 +2143,61 @@ adapter/out/
 
 ## 25. 架构决策、风险与验收
 
-### 25.1 关键 ADR
+### 25.1 关键架构决策主题
 
-#### ADR-001：搜索与推荐共享平台
+以下使用 `D-01`～`D-11` 表示本文中的决策主题；正式、可独立演进的编号 ADR 以 `docs/adr/` 为准，避免与仓库中现有 `ADR-001`、`ADR-002` 的实际标题混淆。
+
+#### D-01：搜索与推荐共享平台
 
 - 决策：共享内容、特征、召回、排序、模型和实验设施；Search 与 Recommendation 保持独立用例和目标。
 - 原因：减少重复建设，同时防止推荐目标破坏搜索相关性。
 
-#### ADR-002：多模态画像离线生产
+#### D-02：多模态画像离线生产
 
 - 决策：ASR、OCR、视觉理解和内容 Embedding 通过异步管道生成，不进入在线请求路径。
 - 原因：控制延迟、成本和失败隔离，并支持产物复用。
 
-#### ADR-003：多路召回与多阶段排序
+#### D-03：多路召回与多阶段排序
 
 - 决策：大候选集先经便宜融合/粗排，昂贵精排只处理有限 TopK，最后策略重排。
 - 原因：在效果和延迟之间建立可测量边界。
 
-#### ADR-004：实时与离线特征双存储
+#### D-04：实时与离线特征双存储
 
 - 决策：在线特征进入低延迟 Store，离线特征进入可回放存储，由 Feature Registry 统一定义。
 - 原因：同时满足在线延迟和训练时间点正确性。
 
-#### ADR-005：事件至少一次、消费者幂等
+#### D-05：事件至少一次、消费者幂等
 
 - 决策：不追求跨 Kafka、Redis、搜索索引和对象存储的分布式恰好一次。
 - 原因：确定性 ID、Checkpoint、Outbox 和幂等写入更可控。
 
-#### ADR-006：按需 DDD + 六边形架构
+#### D-06：按需 DDD + 六边形架构
 
 - 决策：仅对 `AgentOrchestration` 中有状态、存在一致性规则的搜索目标与多轮约束按需使用聚合、值对象和领域策略；在线应用与 Runtime 使用六边形边界隔离外部依赖。Agent Runtime 是平台模块而非限界上下文。Agent Server 与 Direct Search Service 分进程装配，但不把每个 Tool/Context 拆成微服务。
 - 原因：避免为使用 DDD 而制造领域对象，同时保持业务规则、Runtime 复用性以及 LLM 长延迟/成本风险与确定性搜索兜底容量之间的边界。
 
-#### ADR-007：首期使用可解释模型基线
+#### D-07：首期使用可解释模型基线
 
 - 决策：首期使用 BM25、基础 ANN、RRF/规则排序和可替换的预训练 Embedding；LightGBM、双塔和多任务模型后置。
 - 原因：先建立可解释 Direct Search 基线，才能量化 Agent 的独立增益并控制项目范围。
 
-#### ADR-008：普通 Search/Feed 不使用 SSE
+#### D-08：普通 Search/Feed 不使用 SSE
 
 - 决策：Direct Search/Feed 使用低延迟 HTTP + Cursor；普通 Agent Search 首期返回结构化 JSON。SSE 只用于后续明确的深度搜索或长任务模式，并停留在输入 Adapter。
 - 原因：搜索列表和缺参追问不需要逐 Token 输出，避免流式协议侵入 Domain/Runtime SPI。
 
-#### ADR-009：Agent 是可选编排层
+#### D-09：Agent 是可选编排层
 
 - 决策：Query Mode Router 只将复杂 Query 送入 Agent；Agent Tool 与回退路径复用 Search Use Case，Search Service 不依赖 Agent Server。
 - 原因：保留低延迟基线、稳定结果语义和独立回退能力，避免 Agent 成为搜索单点。
 
-#### ADR-010：局部 Session 事件模型
+#### D-10：局部 Session 事件模型
 
 - 决策：仅 Agent Session 使用 PostgreSQL 追加事件 + 快照，Redis 只保存热投影、租约和取消信号；全系统不采用 Event Sourcing。
 - 原因：多轮约束、插话和恢复需要因果序列，但内容、索引和搜索请求没有承担全面事件溯源复杂度的必要。
 
-#### ADR-011：有界 Agent 与结构化轨迹
+#### D-11：有界 Agent 与结构化轨迹
 
 - 决策：限制模型 Turn、Tool 数、Token、成本和 Deadline；记录结构化计划/Tool/Trace ID，不保存自由文本思维链。结果来源由 Retrieval/Ranking Trace 决定。
 - 原因：控制在线不确定性、隐私和成本，同时让 Agent 收益可评测、故障可定位。

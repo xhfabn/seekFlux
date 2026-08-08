@@ -1,9 +1,12 @@
-# Phase 0：工程基线
+# Step 0：工程基线
+
+> 本文按序记录最初建立仓库骨架时的历史切片。它对应开发 Step 0，不是 [`SeekFlux.md`](../../SeekFlux.md) 中的 Agent Phase 0。当前项目已经完成到 Step 3，真实下一步见[学习路线首页](README.md)。
 
 ## 本阶段状态
 
 - 状态：已完成
-- 范围：工程骨架，不包含可运行的业务 API
+- 范围：当时的工程骨架，不包含可运行的业务 API
+- Agent 映射：Agent 前置工程能力，不代表 Agent 已实现
 - 对应决策：[`ADR-001`](../adr/ADR-001-modular-monolith.md)
 
 ## 完成了什么
@@ -13,13 +16,13 @@
 - 根 `pom.xml` 管理 Java 21、Spring Boot、Flink、JUnit 和 Maven 插件版本；
 - `contexts/` 建立九个业务限界上下文，并预留六边形分层；
 - `platform/` 建立检索、持久化、消息、模型服务和可观测 Adapter 模块；
-- `apps/` 区分在线服务、内容控制面、异步 Worker 和 Python 训练入口；
+- `apps/` 区分在线服务、内容控制面、异步 Worker 和可选的 Python 训练入口；
 - `pipelines/realtime-features` 建立 Flink 实时任务模块；
 - `contracts/` 放置 OpenAPI、事件 Envelope 和特征契约的初始版本；
 - `deploy/` 提供本地中间件和 Compose 配置；
 - `.tool-versions` 固定 JDK、Maven 和 Python 基线。
 
-当前目录中的 `.gitkeep` 只代表边界已经预留，不代表对应功能已经实现。README 中列出的 Search、Feed 等是计划装配职责，不是当前可调用能力。
+这里列出的是 Step 0 完成时的状态，不应用来判断今天的功能进度。当前已有 Search、Feed、画像和内容链路；尚未创建规划中的第十个 `AgentOrchestration` Context、`apps/agent-server` 和 `platform/agent-runtime`。目录中的 `.gitkeep` 或空模块只代表边界预留，不代表能力已经实现。
 
 ## 架构上学什么
 
@@ -29,7 +32,7 @@
 
 ### 2. 逻辑边界与部署边界不同
 
-九个 Context 是逻辑业务边界，但首期不会部署成九个微服务。多个 Context 可以被 `online-server` 装配到同一进程，同时仍禁止共享可变实体和越界访问数据库。
+当前九个 Context 是逻辑业务边界，但首期不会部署成九个微服务。多个 Context 可以被 `online-server` 装配到同一进程，同时仍禁止共享可变实体和越界访问数据库。未来的 `AgentOrchestration` 是第十个业务 Context；Agent Runtime 属于 Platform，不应被误列为第十一个 Context。
 
 ### 3. 六边形架构控制依赖方向
 
@@ -41,7 +44,7 @@
 
 ### 5. 为什么 Java 与 Python 共存
 
-低延迟在线服务、Worker 和 Flink Job 使用 Java；训练、评测和算法生态使用 Python。模型和特征版本是两侧的协作边界，不能通过复制临时代码保持一致。
+低延迟在线服务、Worker、未来 Agent Runtime 和 Flink Job 使用 Java；训练及部分算法实验可以使用 Python。Direct Search 与 Agent Eval 的格式属于版本化评测契约，不因使用哪种语言而改变。Python 是后置训练/实验工具，不是开始 Agent 的前置条件。
 
 ## 关键文件入口
 
@@ -73,6 +76,8 @@ uv run --project apps/training-runner python --version
 3. 为“内容画像已发布”设计一个事件 Payload，并说明 Envelope 中哪些字段用于幂等、追踪和版本兼容。
 4. 假设 Elasticsearch 不可用，指出降级策略属于 Search/Recommendation 规则还是 retrieval Adapter，并说明理由。
 
-## 下一步
+## 当时的下一步与当前路线
 
-实现 Step 1“内容登记与画像发布”纵向切片。完成时需要新增 `step-01-content-pipeline.md`，并记录真实代码入口、状态机、数据库迁移、事件契约、测试和可复现实验。
+Step 0 完成后，当时的下一步是 Step 1“内容登记与画像发布”，该切片现在已经完成。项目随后也已完成 Step 2 关键词搜索和 Step 3 Feed 基线。
+
+当前不要从本文最后一段推断下一任务；应以[学习路线首页](README.md)为准，进入 Step 4“Agent-ready Direct Search”。

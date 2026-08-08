@@ -123,7 +123,13 @@ curl http://localhost:9200/seekflux-content-v1/_count
 - 当前搜索只有页码分页，小数据够用；深分页应改成 `search_after` Cursor。
 - 当前媒体只展示链接，上传、转码、封面和播放器属于后续内容平台能力。
 
-## 9. 练习
+## 9. 与 Agent 主线的关系
+
+Step 2 提供了未来 Search Tool 的确定性 Direct Search 雏形。它的价值是：输入、字段权重、结果和失败都能在没有大模型与 Agent Loop 的情况下独立验证，未来 Agent 失败时也可以回退到这条路径。
+
+但本切片还不能称为“Agent-ready”：目前缺少版本化 Query—相关性数据集、统一离线评测 Runner、语义向量召回、跨通道融合与单路降级、完整 Search Trace、查询约束和内容安全过滤。这些是当前 Step 4 要补齐的内容；Agent Runtime 要到 Step 5 才创建。
+
+## 10. 练习
 
 1. 修改画像标签并重新发布，比较搜索得分和结果顺序。
 2. 撤回一条内容，确认 Elasticsearch 文档被删除且搜索不再返回。
@@ -131,4 +137,4 @@ curl http://localhost:9200/seekflux-content-v1/_count
 4. 给标题、标签、摘要设计一组固定 Query—结果评测集，比较不同字段权重。
 5. 将通配符补召回替换为中文分词 Mapping，并用索引别名完成 v1 到 v2 的无停机切换。
 
-下一步可以进入 Feed 基线：复用已发布内容读模型，增加热门、相似和简单兴趣召回。
+从历史实现顺序看，本切片之后完成了 [Step 3 Feed 基线](step-03-feed-baseline.md)。当前真实下一步不是继续扩展推荐，而是 Step 4“Agent-ready Direct Search”，具体范围和完成门槛见[学习路线首页](README.md)。

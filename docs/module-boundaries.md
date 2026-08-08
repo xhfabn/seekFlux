@@ -12,6 +12,8 @@ domain -> JDK only
 
 `contexts` 之间不得共享数据库 Entity 或直接访问对方存储。跨上下文协作使用输入 Port、版本化 DTO 或领域事件。
 
+当前仓库有九个业务 Context。规划中的 `AgentOrchestration` 是第十个业务 Context；`platform/agent-runtime` 是横向执行基础设施，不是业务 Context。两者均从 Step 5 开始实现，不能因本文定义了边界就视为已经存在。
+
 ## Context 内部目录
 
 ```text
@@ -25,6 +27,28 @@ adapter/out/  PostgreSQL、Redis、Kafka、Elasticsearch、S3、模型服务
 
 `domain` 不允许依赖 Spring、Reactor、Kafka、Redis、Elasticsearch、Flink 或模型 SDK。输入 Port、输出 Port 和应用服务使用普通 Java 返回值；异步并发只允许在明确的编排点通过命名且有界的执行器引入，不成为跨层接口类型。
 
+## Agent 专用依赖规则
+
+```text
+apps/agent-server
+  -> contexts/agent-orchestration-context port/in
+  -> platform/agent-runtime input port
+
+contexts/agent-orchestration-context
+  -> 自身 domain + port/out
+  -> Search Use Case（跨 Context 的稳定输入 Port）
+
+platform/agent-runtime
+  -> LLM / Session / RuntimeEvent / Clock 等输出 Port
+  -/> AgentOrchestration domain、Search domain、模型 SDK、Redis、Kafka、Elasticsearch
+
+Search Tool Adapter
+  -> Search Use Case
+  -/> Elasticsearch / Redis / Ranking Adapter
+```
+
+AgentOrchestration 决定搜索目标、约束修正、追问和业务回退；Runtime 只执行有限步循环、Deadline、取消、Tool 调度与运行事件。Direct Search 不反向依赖 Agent 模块，Agent 失败时必须能回退到同一个 Search Use Case。
+
 ## 物理部署基线
 
 | 进程 | 首期装配内容 |
@@ -32,8 +56,9 @@ adapter/out/  PostgreSQL、Redis、Kafka、Elasticsearch、S3、模型服务
 | online-server | Search、Recommendation、Interaction、UserInterest、Ranking、Experiment、Moderation |
 | content-server | Content、Moderation、Feature/Model 控制面 |
 | worker-runner | 内容理解、索引发布、特征写入、Outbox 消费 |
-| realtime-features | Flink 行为清洗、会话化、窗口聚合、短期兴趣 |
-| training-runner | 样本生成、基线训练、离线评测、模型注册 |
+| agent-server（Step 5 规划） | Agent API、AgentOrchestration、Agent Runtime 与 Tool 装配；独立限流和故障隔离 |
+| realtime-features（Step 9 可选） | Flink 行为清洗、会话化、窗口聚合、短期兴趣 |
+| training-runner（Step 10 可选） | 样本生成、基线训练、离线评测、模型注册 |
 
 ## 拆分触发条件
 

@@ -1,12 +1,14 @@
 # SeekFlux
 
-SeekFlux 是面向短视频内容平台的多模态搜索与推荐中台。当前已完成 **Phase 0 工程基线**、**Step 1 内容登记与画像发布**、**Step 2 关键词搜索**和 **Step 3 Feed 基线**：内容可以通过 HTTP 登记，经 PostgreSQL/Outbox/Kafka/Worker 异步生成画像、写入 Elasticsearch，再由搜索 API 或热门／兴趣／相似内容多路召回进入可解释的规则排序。
+SeekFlux 是面向短视频内容平台的多模态搜索、推荐与 Search Agent 系统。当前代码已经跑通内容登记、PostgreSQL/Outbox/Kafka/Worker 画像生产、Elasticsearch 索引、关键词搜索，以及热门／兴趣／相似内容多路召回与可解释规则排序。
 
-架构依据见 [SeekFlux.md](SeekFlux.md)，模块依赖规则见 [docs/module-boundaries.md](docs/module-boundaries.md)。如果希望按实现顺序学习项目，请从 [docs/learning/README.md](docs/learning/README.md) 开始；其中包含工程架构图、模块职责、开发路线和当前阶段日志。
+> 当前开发 Step、Agent Phase、下一步及完成门槛只在[学习路线](docs/learning/README.md)维护，避免多个 README 重复记录后产生冲突。Agent 目标架构不等于已经实现。
+
+架构依据见 [SeekFlux.md](SeekFlux.md)，模块依赖规则见 [docs/module-boundaries.md](docs/module-boundaries.md)。如果希望按实现顺序学习项目，请从 [docs/learning/README.md](docs/learning/README.md) 开始；其中包含唯一的开发路线、当前状态、按序阶段日志和验收门槛。
 
 ## 学习型开发文档
 
-本项目采用“功能实现与学习文档同步交付”的方式推进。每完成一个可运行的纵向切片，都要在 `docs/learning/` 新增或更新对应文档，说明该部分解决的问题、架构位置、核心流程、关键代码、设计取舍、验证命令和练习，并更新学习日志状态。影响长期架构的决定同时写入 `docs/adr/`；影响 API、事件或特征的变更同时更新 `contracts/`。没有通过测试或验收的计划项不得在学习日志中标记为完成。
+本项目采用“功能实现与学习文档同步交付”的方式推进。每轮产生实际交付结果后，都要按根目录 [`AGENTS.md`](AGENTS.md) 检查并更新学习文档：`docs/learning/README.md` 是唯一进度与路线入口，每个 `step-NN-*.md` 按实现顺序记录一个纵向切片；只有真正开始新 Step 时才创建新文件。影响长期架构的决定同时写入 `docs/adr/`，影响 API、事件或特征的变更同时更新 `contracts/`。不得重复创建架构总览、阶段总结或同一 Step 的多份文档，也不得把未通过测试或验收的计划标记为完成。
 
 ## 当前工程边界
 
@@ -15,16 +17,20 @@ SeekFlux 是面向短视频内容平台的多模态搜索与推荐中台。当�
 - `apps/web`：唯一前端工程，承载 C 端发现应用与 B 端画像／内容工作台；
 - `apps/worker-runner`：内容理解、索引、特征写入 Worker 的进程装配；
 - `apps/training-runner`：Python 样本、训练、评测和注册环境；
-- `contexts/`：九个 DDD 限界上下文，均预留六边形分层；
+- `contexts/`：当前九个业务限界上下文；规划中的 `AgentOrchestration` 将作为第十个 Context；
 - `platform/`：检索、持久化、消息、模型服务、可观测 Adapter；
 - `pipelines/realtime-features`：Flink 实时行为和特征计算；
 - `contracts/`：API、事件和特征契约；
 - `deploy/`：本地 Compose、后续 Helm、Dashboard 和告警；
 - `evals/`：评测数据与版本化结果。
 
+Agent 目标模块均为规划项：`apps/agent-server` 负责独立进程入口，`contexts/agent-orchestration-context` 负责搜索目标、多轮约束与 Tool Policy，`platform/agent-runtime` 负责有限步执行、Deadline、取消和运行事件。Search Tool 只能调用 Search Use Case，不能直接访问 Elasticsearch、Redis 或数据库。
+
 首期保持模块化单体，`online-server` 装配 Search/Recommendation 等 Context。只有出现独立扩缩容、发布或故障隔离需求后，才将模块拆成服务。
 
 在线与内容接口统一采用 Spring MVC 普通返回值，PostgreSQL 使用 JDBC/HikariCP，Redis 与 Elasticsearch Adapter 使用同步客户端。Kafka Worker 保持事件驱动；推荐的多路召回仅在独立有界线程池内并行，不向 Controller 或领域 Port 暴露 `Mono`/`Flux`。
+
+未来 Agent 的模型调用和 Tool fan-out 也只允许在 Agent 边界内使用明确、有界、可观测的并发；普通 Search/Feed API 继续返回同步 JSON，Direct Search 不依赖 Agent 并始终作为确定性回退。
 
 ## 当前可操作页面
 
@@ -101,8 +107,9 @@ mvn validate
 
 - 当前画像 Worker 只根据提交元数据生成可重复的基础画像，尚未接入 ASR、OCR、视觉理解或模型服务；
 - 当前搜索是可解释的关键词基线，尚未实现专业中文分词、语义向量召回和 Cursor 深分页；
-- Feed 当前使用新鲜度作为无行为数据时的热门代理，兴趣来自显式输入；真实热度、最近行为兴趣和 Item-Item 协同需要 Step 4～5 的反馈闭环；
+- Feed 当前使用新鲜度作为无行为数据时的热门代理，兴趣来自显式输入；真实热度、最近行为兴趣和 Item-Item 协同后移到可选 Step 8～10；
 - 尚未实现互动、实时特征和模型排序业务；
+- 尚未创建 Agent Server、AgentOrchestration Context、Agent Runtime、Search Tool Adapter、Agent Session 和 Agent Eval；
 - 没有把九个 Context 拆成九个进程。
 
-下一阶段优先实现曝光/行为闭环，再依次推进实时特征和模型排序。已完成切片见 [学习路线](docs/learning/README.md)。
+后续工作的唯一顺序、状态和验收门槛见[学习路线](docs/learning/README.md)，根 README 不再维护路线副本。

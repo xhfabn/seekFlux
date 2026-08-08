@@ -167,7 +167,13 @@ curl http://localhost:8081/v1/contents/{contentId}
 
 本次实现已经在本地 PostgreSQL/Kafka 上完成真实验收：Flyway 应用 V1；内容成功登记；Worker 生成画像并发布；三条生命周期 Outbox 记录均进入 `PUBLISHED`；查询接口返回 HTTP 200 和 `PUBLISHED` 状态。
 
-## 9. 可以继续做的练习
+## 9. 与 Agent 主线的关系
+
+这条内容管线是 Agent Phase 0 的数据前置：它保证 Search Tool 将来检索到的是经过发布状态约束、能够撤回并可以重建索引的内容证据，但它本身不是 Agent。
+
+未来 Agent 不得直接查询 Content 表、Outbox 或 Elasticsearch。Search Tool 只能调用 Search Use Case，由 Search Context 负责检索、过滤、Trace 和降级；内容发布与撤回仍沿现有事件链更新搜索读模型。这样即使 Agent Runtime 停止，Direct Search 和内容管线也能独立运行。
+
+## 10. 可以继续做的练习
 
 1. 修改相同画像版本但更换 summary，观察领域层拒绝冲突。
 2. 并发提交两次画像更新，观察乐观锁如何避免覆盖。
@@ -175,4 +181,4 @@ curl http://localhost:8081/v1/contents/{contentId}
 4. 为 Worker 增加独立的事件去重表，比较它与当前“业务状态幂等”的适用边界。
 5. 阅读 Step 2 的实现：消费 `content.profile.published.v1` 写入 Elasticsearch，并消费撤回事件删除文档。
 
-下一步进入 [Step 2：已发布画像的关键词检索](step-02-keyword-search.md)：让已发布画像真正可被搜索和展示。
+从历史实现顺序看，本切片之后进入了 [Step 2：已发布画像的关键词检索](step-02-keyword-search.md)，该切片已经完成。当前真实下一步请以[学习路线首页](README.md)为准：Step 4“Agent-ready Direct Search”。

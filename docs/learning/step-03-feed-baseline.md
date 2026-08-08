@@ -13,7 +13,7 @@ Step 2 让已发布内容能够被主动搜索，但项目还没有无 Query 的
 - Feed 和相似内容接口使用绑定请求上下文、带有效期且经过 HMAC 签名的不透明 Cursor；
 - `apps/web` 的 C 端“发现”可以直接刷新推荐、加载下一页并查看每条推荐的来源和原因；显式兴趣在 B 端“用户画像”中配置。
 
-这里没有把“新鲜内容”冒充真实热门：互动事件尚未接入，因此还没有播放、完播和互动热度。Step 4～5 建立反馈闭环后，`TRENDING` Retriever 会替换为时间窗口热度，显式兴趣也会与短期兴趣合并。
+这里没有把“新鲜内容”冒充真实热门：互动事件尚未接入，因此还没有播放、完播和互动热度。行为闭环现已后移到可选 Step 8～9；届时 `TRENDING` Retriever 才会替换为时间窗口热度，显式兴趣才会与短期兴趣合并。
 
 ## 2. 架构位置
 
@@ -125,7 +125,7 @@ curl --get http://localhost:8080/v1/contents/{contentId}/similar \
 
 自动化测试覆盖兴趣规范化、跨源去重、RRF 与兴趣提升、同作者限额、主题多样性、单路故障降级、Cursor 生成与请求绑定。
 
-## 8. 当前边界与下一步
+## 8. 当前边界及其与 Agent 主线的关系
 
 - 还没有曝光和互动事实，`requestId` 暂时只返回给客户端，没有进入事件表；
 - `TRENDING` 是发布时间代理，不代表真实人气；
@@ -134,7 +134,9 @@ curl --get http://localhost:8080/v1/contents/{contentId}/similar \
 - Cursor 在固定 Top 200 候选内分页，规模化深分页需要 Retriever 原生 Cursor；
 - 规则分是模型排序的可解释对照，不声称具有训练模型效果。
 
-下一步进入 Step 4：实现曝光、播放、观看时长、互动和负反馈的幂等批量上报，把 `requestId + contentId + position` 变成可回放的曝光事实。
+Feed 是已经完成并继续保留的历史切片，但不是 Agent 的前置条件，也不应被包装成 Agent Tool 的默认行为。未来只有当用户明确提出“按我的画像推荐”或复杂探索目标时，Agent 才可以通过稳定的 Recommendation Use Case 使用它；Runtime 不能直接访问召回源或画像存储。
+
+当前下一步回到搜索主线，进入 Step 4“Agent-ready Direct Search”。曝光、播放、观看时长、互动和负反馈的幂等批量上报后移到可选 Step 8；Flink 热度与短期兴趣后移到可选 Step 9。
 
 ## 9. 练习
 
@@ -142,4 +144,4 @@ curl --get http://localhost:8080/v1/contents/{contentId}/similar \
 2. 连续发布同一作者的三条内容，验证一页最多保留两条。
 3. 将 `RECOMMENDATION_SOURCE_TIMEOUT_MS` 调得很小，观察 `degraded` 和 `unavailableSources`。
 4. 获取第一页 Cursor，改变兴趣后复用它，确认服务拒绝跨上下文分页。
-5. 在 Step 4 后用 5 分钟有效播放与负反馈窗口替换新鲜度热门代理，并保留当前结果作为对照基线。
+5. 在 Step 8～9 完成后，用 5 分钟有效播放与负反馈窗口替换新鲜度热门代理，并保留当前结果作为对照基线。
