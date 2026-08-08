@@ -4,8 +4,7 @@
     <parent><groupId>io.seekflux</groupId><artifactId>seekflux</artifactId><version>0.1.0-SNAPSHOT</version></parent>
     <artifactId>platform</artifactId><packaging>pom</packaging>
     <modules>
-        <module>retrieval</module><module>persistence</module><module>messaging</module>
+        <module>agent-runtime</module><module>retrieval</module><module>persistence</module><module>messaging</module>
         <module>model-serving</module><module>observability</module>
     </modules>
 </project>
-

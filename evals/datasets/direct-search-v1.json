@@ -1,0 +1,63 @@
+{
+  "datasetVersion": "direct-search-v1",
+  "description": "Deterministic Direct Search fixtures and graded relevance labels for the Agent Phase 0 baseline.",
+  "requiredTags": ["seekflux-eval-v1"],
+  "documents": [
+    {
+      "key": "camping-family",
+      "creatorId": "seekflux-eval",
+      "mediaUri": "https://media.example/eval/camping-family.mp4",
+      "title": "杭州亲子露营新手路线",
+      "description": "周末从杭州出发，适合亲子家庭的新手露营清单与营地选择。",
+      "tags": ["露营", "杭州", "亲子", "周末", "seekflux-eval-v1"]
+    },
+    {
+      "key": "coffee-pour-over",
+      "creatorId": "seekflux-eval",
+      "mediaUri": "https://media.example/eval/coffee-pour-over.mp4",
+      "title": "手冲咖啡入门教程",
+      "description": "从研磨度、水温到注水节奏的手冲咖啡完整步骤。",
+      "tags": ["咖啡", "手冲", "教程", "生活", "seekflux-eval-v1"]
+    },
+    {
+      "key": "ai-office",
+      "creatorId": "seekflux-eval",
+      "mediaUri": "https://media.example/eval/ai-office.mp4",
+      "title": "AI 办公效率实践",
+      "description": "使用人工智能整理会议纪要、表格和日常工作任务。",
+      "tags": ["AI", "办公", "效率", "科技", "seekflux-eval-v1"]
+    },
+    {
+      "key": "travel-photography",
+      "creatorId": "seekflux-eval",
+      "mediaUri": "https://media.example/eval/travel-photography.mp4",
+      "title": "旅行摄影构图技巧",
+      "description": "城市旅行中的取景、光线和人像构图方法。",
+      "tags": ["旅行", "摄影", "构图", "城市", "seekflux-eval-v1"]
+    },
+    {
+      "key": "home-cooking",
+      "creatorId": "seekflux-eval",
+      "mediaUri": "https://media.example/eval/home-cooking.mp4",
+      "title": "新手家常菜做法",
+      "description": "三道简单家常菜的备菜、火候和调味方法。",
+      "tags": ["美食", "家常菜", "做饭", "教程", "seekflux-eval-v1"]
+    },
+    {
+      "key": "cat-care",
+      "creatorId": "seekflux-eval",
+      "mediaUri": "https://media.example/eval/cat-care.mp4",
+      "title": "猫咪日常护理指南",
+      "description": "猫咪梳毛、饮水、清洁和健康观察的基础知识。",
+      "tags": ["猫咪", "宠物", "护理", "知识", "seekflux-eval-v1"]
+    }
+  ],
+  "queries": [
+    {"id": "q-camping", "text": "杭州亲子露营", "relevance": {"camping-family": 3}},
+    {"id": "q-coffee", "text": "手冲咖啡教程", "relevance": {"coffee-pour-over": 3}},
+    {"id": "q-ai-office", "text": "AI 办公效率", "relevance": {"ai-office": 3}},
+    {"id": "q-photography", "text": "旅行摄影构图", "relevance": {"travel-photography": 3}},
+    {"id": "q-cooking", "text": "新手家常菜做法", "relevance": {"home-cooking": 3}},
+    {"id": "q-cat-care", "text": "猫咪护理知识", "relevance": {"cat-care": 3}}
+  ]
+}

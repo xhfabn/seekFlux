@@ -8,6 +8,7 @@ import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
+import java.util.List;
 import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -31,8 +32,9 @@ public class SearchController {
     public SearchResultPage search(
             @RequestParam("q") @NotBlank @Size(max = 500) String query,
             @RequestParam(value = "page", defaultValue = "0") @Min(0) int page,
-            @RequestParam(value = "size", defaultValue = "12") @Min(1) @Max(50) int size) {
-        return searchUseCase.search(new SearchQuery(query, page, size));
+            @RequestParam(value = "size", defaultValue = "12") @Min(1) @Max(50) int size,
+            @RequestParam(value = "required_tags", required = false) List<String> requiredTags) {
+        return searchUseCase.search(new SearchQuery(query, page, size, requiredTags));
     }
 
     @PostMapping
@@ -40,6 +42,7 @@ public class SearchController {
         return searchUseCase.search(new SearchQuery(
                 request.query(),
                 request.page() == null ? 0 : request.page(),
-                request.size() == null ? 12 : request.size()));
+                request.size() == null ? 12 : request.size(),
+                request.requiredTags()));
     }
 }

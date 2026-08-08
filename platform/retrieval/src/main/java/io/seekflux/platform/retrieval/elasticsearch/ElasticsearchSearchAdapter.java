@@ -7,11 +7,13 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.seekflux.ranking.domain.RankingCandidate;
 import io.seekflux.ranking.domain.RetrievalSource;
 import io.seekflux.recommendation.port.out.RecommendationRetriever;
-import io.seekflux.search.port.in.SearchHitView;
-import io.seekflux.search.port.in.SearchQuery;
-import io.seekflux.search.port.in.SearchResultPage;
+import io.seekflux.platform.retrieval.semantic.SemanticVectorEncoder;
+import io.seekflux.search.port.out.SearchCandidate;
 import io.seekflux.search.port.out.SearchDocument;
 import io.seekflux.search.port.out.SearchIndex;
+import io.seekflux.search.port.out.SearchRetrievalRequest;
+import io.seekflux.search.port.out.SearchRetrievalResult;
+import io.seekflux.search.port.out.SearchRetrievalSource;
 import io.seekflux.search.port.out.SearchRetriever;
 import java.time.Instant;
 import java.time.Duration;
@@ -36,12 +38,14 @@ public final class ElasticsearchSearchAdapter implements SearchIndex, SearchRetr
     private final RestClient client;
     private final ObjectMapper objectMapper;
     private final String indexName;
+    private final SemanticVectorEncoder semanticEncoder;
     private final Object indexMonitor = new Object();
     private volatile boolean indexReady;
 
     public ElasticsearchSearchAdapter(
             RestClient.Builder builder,
             ObjectMapper objectMapper,
+            SemanticVectorEncoder semanticEncoder,
             @Value("${spring.elasticsearch.uris:http://localhost:9200}") String elasticsearchUris,
             @Value("${seekflux.search.index:seekflux-content-v1}") String indexName,
             @Value("${seekflux.retrieval.connect-timeout-ms:1000}") long connectTimeoutMillis,
@@ -55,6 +59,7 @@ public final class ElasticsearchSearchAdapter implements SearchIndex, SearchRetr
         this.client = builder.baseUrl(baseUrl).requestFactory(requestFactory).build();
         this.objectMapper = objectMapper;
         this.indexName = indexName;
+        this.semanticEncoder = semanticEncoder;
     }
 
     @Override
@@ -73,6 +78,9 @@ public final class ElasticsearchSearchAdapter implements SearchIndex, SearchRetr
         body.put("searchable", String.join(" ", List.of(
                 document.title(), document.description(), document.summary(),
                 String.join(" ", document.tags()), document.transcript())));
+        body.set("semantic_vector", objectMapper.valueToTree(semanticEncoder.encode(String.join(" ", List.of(
+                document.title(), document.description(), document.summary(),
+                String.join(" ", document.tags()), document.transcript())))));
 
         ensureIndex();
         client.put()
@@ -100,16 +108,22 @@ public final class ElasticsearchSearchAdapter implements SearchIndex, SearchRetr
     }
 
     @Override
-    public SearchResultPage search(SearchQuery query) {
-        ObjectNode body = searchBody(query);
+    public SearchRetrievalResult retrieve(SearchRetrievalRequest request) {
+        ObjectNode body = request.source() == SearchRetrievalSource.KEYWORD
+                ? keywordSearchBody(request)
+                : semanticSearchBody(request);
         long startedAt = System.nanoTime();
         ensureIndex();
         JsonNode response = client.post()
                 .uri("/{index}/_search", indexName)
                 .contentType(MediaType.APPLICATION_JSON)
                 .body(body)
-                .exchange((request, result) -> responseBody(result));
-        return mapResults(query, response, (System.nanoTime() - startedAt) / 1_000_000);
+                .exchange((httpRequest, result) -> responseBody(result));
+        long measuredMillis = (System.nanoTime() - startedAt) / 1_000_000;
+        String retrieverVersion = request.source() == SearchRetrievalSource.KEYWORD
+                ? "elasticsearch-bm25-v2"
+                : "elasticsearch-knn-" + semanticEncoder.version();
+        return mapSearchResults(request.source(), response, measuredMillis, retrieverVersion);
     }
 
     @Override
@@ -180,6 +194,8 @@ public final class ElasticsearchSearchAdapter implements SearchIndex, SearchRetr
                 createIndex();
             } else if (status < 200 || status >= 300) {
                 throw new IllegalStateException("Elasticsearch index check failed with status " + status);
+            } else {
+                ensureSemanticMapping();
             }
             indexReady = true;
         }
@@ -198,6 +214,7 @@ public final class ElasticsearchSearchAdapter implements SearchIndex, SearchRetr
         text(properties, "transcript");
         properties.putObject("profile_version").put("type", "integer");
         properties.putObject("published_at").put("type", "date");
+        semanticVector(properties);
         ObjectNode searchable = properties.putObject("searchable");
         searchable.put("type", "text");
         searchable.putObject("fields").putObject("raw")
@@ -221,10 +238,30 @@ public final class ElasticsearchSearchAdapter implements SearchIndex, SearchRetr
                 });
     }
 
-    private ObjectNode searchBody(SearchQuery query) {
+    private void ensureSemanticMapping() {
+        JsonNode mapping = client.get().uri("/{index}/_mapping", indexName)
+                .exchange((request, response) -> responseBody(response));
+        JsonNode indexMapping = mapping.path(indexName);
+        if (indexMapping.isMissingNode() && mapping.elements().hasNext()) {
+            indexMapping = mapping.elements().next();
+        }
+        if (indexMapping.path("mappings").path("properties").has("semantic_vector")) {
+            return;
+        }
+        ObjectNode body = objectMapper.createObjectNode();
+        semanticVector(body.putObject("properties"));
+        client.put().uri("/{index}/_mapping", indexName)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .exchange((request, response) -> {
+                    requireSuccess(response);
+                    return null;
+                });
+    }
+
+    private ObjectNode keywordSearchBody(SearchRetrievalRequest request) {
         ObjectNode root = objectMapper.createObjectNode();
-        root.put("from", query.page() * query.size());
-        root.put("size", query.size());
+        root.put("size", request.limit());
         root.put("track_total_hits", true);
         ArrayNode source = root.putArray("_source");
         List.of("content_id", "creator_id", "media_uri", "title", "description", "summary",
@@ -233,24 +270,59 @@ public final class ElasticsearchSearchAdapter implements SearchIndex, SearchRetr
         ObjectNode bool = root.putObject("query").putObject("bool");
         ArrayNode should = bool.putArray("should");
         ObjectNode multiMatch = should.addObject().putObject("multi_match");
-        multiMatch.put("query", query.text());
+        multiMatch.put("query", request.query());
         multiMatch.put("type", "best_fields");
         multiMatch.put("fuzziness", "AUTO");
         ArrayNode fields = multiMatch.putArray("fields");
         List.of("title^5", "tags^4", "summary^3", "description^2", "transcript")
                 .forEach(fields::add);
 
-        for (String token : queryTokens(query.text())) {
+        for (String token : queryTokens(request.query())) {
             ObjectNode wildcard = should.addObject().putObject("wildcard").putObject("searchable.raw");
             wildcard.put("value", "*" + escapeWildcard(token) + "*");
             wildcard.put("case_insensitive", true);
             wildcard.put("boost", token.length() > 1 ? 2.0 : 0.2);
         }
         bool.put("minimum_should_match", 1);
+        appendRequiredTagFilters(bool, request.requiredTags());
         ArrayNode sort = root.putArray("sort");
         sort.addObject().put("_score", "desc");
         sort.addObject().put("published_at", "desc");
         return root;
+    }
+
+    private ObjectNode semanticSearchBody(SearchRetrievalRequest request) {
+        ObjectNode root = objectMapper.createObjectNode();
+        root.put("size", request.limit());
+        root.put("track_total_hits", true);
+        sourceFields(root);
+        ObjectNode knn = root.putObject("knn");
+        knn.put("field", "semantic_vector");
+        knn.set("query_vector", objectMapper.valueToTree(semanticEncoder.encode(request.query())));
+        knn.put("k", request.limit());
+        knn.put("num_candidates", Math.min(1000, Math.max(100, request.limit() * 4)));
+        appendKnnRequiredTagFilter(knn, request.requiredTags());
+        return root;
+    }
+
+    private void appendRequiredTagFilters(ObjectNode bool, List<String> requiredTags) {
+        if (requiredTags.isEmpty()) {
+            return;
+        }
+        ArrayNode filters = bool.putArray("filter");
+        requiredTags.forEach(tag -> filters.addObject().putObject("term").put("tags", tag));
+    }
+
+    private void appendKnnRequiredTagFilter(ObjectNode knn, List<String> requiredTags) {
+        if (requiredTags.isEmpty()) {
+            return;
+        }
+        if (requiredTags.size() == 1) {
+            knn.putObject("filter").putObject("term").put("tags", requiredTags.getFirst());
+            return;
+        }
+        ArrayNode filters = knn.putObject("filter").putObject("bool").putArray("filter");
+        requiredTags.forEach(tag -> filters.addObject().putObject("term").put("tags", tag));
     }
 
     private ObjectNode recommendationBody(int limit) {
@@ -345,15 +417,19 @@ public final class ElasticsearchSearchAdapter implements SearchIndex, SearchRetr
                 "tags", "profile_version", "published_at").forEach(source::add);
     }
 
-    private SearchResultPage mapResults(SearchQuery query, JsonNode response, long measuredMillis) {
+    private SearchRetrievalResult mapSearchResults(
+            SearchRetrievalSource retrievalSource,
+            JsonNode response,
+            long measuredMillis,
+            String retrieverVersion) {
         JsonNode hitsNode = response.path("hits");
         long total = hitsNode.path("total").path("value").asLong();
-        List<SearchHitView> hits = new ArrayList<>();
+        List<SearchCandidate> hits = new ArrayList<>();
         for (JsonNode hit : hitsNode.path("hits")) {
             JsonNode source = hit.path("_source");
             List<String> tags = new ArrayList<>();
             source.path("tags").forEach(tag -> tags.add(tag.asText()));
-            hits.add(new SearchHitView(
+            hits.add(new SearchCandidate(
                     source.path("content_id").asText(),
                     source.path("creator_id").asText(),
                     source.path("media_uri").asText(),
@@ -366,7 +442,13 @@ public final class ElasticsearchSearchAdapter implements SearchIndex, SearchRetr
                     Instant.parse(source.path("published_at").asText())));
         }
         long took = response.path("took").asLong(measuredMillis);
-        return new SearchResultPage(query.text(), total, query.page(), query.size(), took, hits);
+        return new SearchRetrievalResult(
+                retrievalSource,
+                indexName,
+                retrieverVersion,
+                took,
+                total,
+                hits);
     }
 
     private static Set<String> queryTokens(String text) {
@@ -400,6 +482,14 @@ public final class ElasticsearchSearchAdapter implements SearchIndex, SearchRetr
 
     private static void text(ObjectNode properties, String name) {
         properties.putObject(name).put("type", "text");
+    }
+
+    private void semanticVector(ObjectNode properties) {
+        ObjectNode vector = properties.putObject("semantic_vector");
+        vector.put("type", "dense_vector");
+        vector.put("dims", semanticEncoder.dimensions());
+        vector.put("index", true);
+        vector.put("similarity", "cosine");
     }
 
     private void requireSuccess(ClientHttpResponse response) throws IOException {

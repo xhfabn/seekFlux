@@ -13,6 +13,15 @@ spring:
 seekflux:
   search:
     index: ${CONTENT_SEARCH_INDEX:seekflux-content-v1}
+    policy-version: ${SEARCH_POLICY_VERSION:direct-hybrid-v1}
+    request-deadline-ms: ${SEARCH_REQUEST_DEADLINE_MS:1200}
+    blocked-tags: ${SEARCH_BLOCKED_TAGS:moderation:blocked,distribution:blocked,违规,下架}
+    retrieval-pool:
+      core-size: ${SEARCH_RETRIEVAL_CORE_SIZE:2}
+      max-size: ${SEARCH_RETRIEVAL_MAX_SIZE:4}
+      queue-capacity: ${SEARCH_RETRIEVAL_QUEUE_CAPACITY:50}
+    semantic:
+      dimensions: ${SEARCH_SEMANTIC_DIMENSIONS:64}
   retrieval:
     connect-timeout-ms: ${RETRIEVAL_CONNECT_TIMEOUT_MS:1000}
     read-timeout-ms: ${RETRIEVAL_READ_TIMEOUT_MS:1200}

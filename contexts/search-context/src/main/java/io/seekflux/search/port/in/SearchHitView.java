@@ -14,6 +14,7 @@ public record SearchHitView(
         List<String> tags,
         int profileVersion,
         double score,
+        List<String> sources,
         Instant publishedAt) {
 
     public SearchHitView {
@@ -22,5 +23,6 @@ public record SearchHitView(
         Objects.requireNonNull(title, "title must not be null");
         Objects.requireNonNull(summary, "summary must not be null");
         tags = tags == null ? List.of() : List.copyOf(tags);
+        sources = sources == null ? List.of() : List.copyOf(sources);
     }
 }

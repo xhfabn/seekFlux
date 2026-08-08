@@ -24,6 +24,8 @@ spring:
 seekflux:
   search:
     index: ${CONTENT_SEARCH_INDEX:seekflux-content-v1}
+    semantic:
+      dimensions: ${SEARCH_SEMANTIC_DIMENSIONS:64}
   retrieval:
     connect-timeout-ms: ${RETRIEVAL_CONNECT_TIMEOUT_MS:1000}
     read-timeout-ms: ${RETRIEVAL_READ_TIMEOUT_MS:2000}

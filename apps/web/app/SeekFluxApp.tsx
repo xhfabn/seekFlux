@@ -51,6 +51,15 @@ type SearchResponse = {
   size: number;
   tookMillis: number;
   hits: ContentItem[];
+  trace: {
+    requestId: string;
+    executionMode: "DIRECT_HYBRID" | "DIRECT_KEYWORD_FALLBACK" | "DIRECT_SEMANTIC_FALLBACK";
+    indexVersion: string;
+    policyVersion: string;
+    tookMillis: number;
+    degraded: boolean;
+    unavailableSources: string[];
+  };
 };
 
 type FeedResponse = {
@@ -637,6 +646,7 @@ function DiscoverWorkspace(props: DiscoverProps) {
 
       {props.error && <div className="consumer-service-note"><Icon name="info" /><span>暂时无法刷新内容，先看看这些推荐。</span></div>}
       {props.feedData?.degraded && props.mode === "feed" && <div className="consumer-service-note"><Icon name="info" /><span>部分内容源暂时不可用，已展示其余推荐。</span></div>}
+      {props.searchData?.trace.degraded && props.mode === "search" && <div className="consumer-service-note"><Icon name="info" /><span>部分搜索通道暂时不可用，已展示可用结果。</span></div>}
 
       <div className="consumer-result-heading">
         <strong>{props.mode === "search" ? `“${props.query}”` : "精选推荐"}</strong>

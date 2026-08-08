@@ -1,0 +1,267 @@
+{
+  "datasetVersion": "direct-search-v1",
+  "generatedAt": "2026-08-08T08:10:35.288997+00:00",
+  "k": 5,
+  "queryCount": 6,
+  "aggregate": {
+    "precision@5": 0.2,
+    "recall@5": 1.0,
+    "mrr@5": 1.0,
+    "ndcg@5": 1.0,
+    "zeroResult": 0.0
+  },
+  "queries": [
+    {
+      "queryId": "q-camping",
+      "query": "杭州亲子露营",
+      "rankedDocumentKeys": [
+        "camping-family",
+        "travel-photography",
+        "cat-care",
+        "ai-office",
+        "home-cooking"
+      ],
+      "metrics": {
+        "precision@5": 0.2,
+        "recall@5": 1.0,
+        "mrr@5": 1.0,
+        "ndcg@5": 1.0,
+        "zeroResult": 0.0
+      },
+      "trace": {
+        "executionMode": "DIRECT_HYBRID",
+        "indexVersion": "seekflux-content-v1",
+        "policyVersion": "direct-hybrid-v1",
+        "degraded": false,
+        "channels": [
+          {
+            "source": "KEYWORD",
+            "status": "SUCCESS",
+            "retrieverVersion": "elasticsearch-bm25-v2",
+            "tookMillis": 6,
+            "candidateCount": 1,
+            "errorCode": null
+          },
+          {
+            "source": "SEMANTIC",
+            "status": "SUCCESS",
+            "retrieverVersion": "elasticsearch-knn-hashing-char-ngram-v1",
+            "tookMillis": 2,
+            "candidateCount": 6,
+            "errorCode": null
+          }
+        ]
+      }
+    },
+    {
+      "queryId": "q-coffee",
+      "query": "手冲咖啡教程",
+      "rankedDocumentKeys": [
+        "coffee-pour-over",
+        "home-cooking",
+        "camping-family",
+        "cat-care",
+        "travel-photography"
+      ],
+      "metrics": {
+        "precision@5": 0.2,
+        "recall@5": 1.0,
+        "mrr@5": 1.0,
+        "ndcg@5": 1.0,
+        "zeroResult": 0.0
+      },
+      "trace": {
+        "executionMode": "DIRECT_HYBRID",
+        "indexVersion": "seekflux-content-v1",
+        "policyVersion": "direct-hybrid-v1",
+        "degraded": false,
+        "channels": [
+          {
+            "source": "KEYWORD",
+            "status": "SUCCESS",
+            "retrieverVersion": "elasticsearch-bm25-v2",
+            "tookMillis": 6,
+            "candidateCount": 3,
+            "errorCode": null
+          },
+          {
+            "source": "SEMANTIC",
+            "status": "SUCCESS",
+            "retrieverVersion": "elasticsearch-knn-hashing-char-ngram-v1",
+            "tookMillis": 3,
+            "candidateCount": 6,
+            "errorCode": null
+          }
+        ]
+      }
+    },
+    {
+      "queryId": "q-ai-office",
+      "query": "AI 办公效率",
+      "rankedDocumentKeys": [
+        "ai-office",
+        "camping-family",
+        "home-cooking",
+        "cat-care",
+        "coffee-pour-over"
+      ],
+      "metrics": {
+        "precision@5": 0.2,
+        "recall@5": 1.0,
+        "mrr@5": 1.0,
+        "ndcg@5": 1.0,
+        "zeroResult": 0.0
+      },
+      "trace": {
+        "executionMode": "DIRECT_HYBRID",
+        "indexVersion": "seekflux-content-v1",
+        "policyVersion": "direct-hybrid-v1",
+        "degraded": false,
+        "channels": [
+          {
+            "source": "KEYWORD",
+            "status": "SUCCESS",
+            "retrieverVersion": "elasticsearch-bm25-v2",
+            "tookMillis": 4,
+            "candidateCount": 1,
+            "errorCode": null
+          },
+          {
+            "source": "SEMANTIC",
+            "status": "SUCCESS",
+            "retrieverVersion": "elasticsearch-knn-hashing-char-ngram-v1",
+            "tookMillis": 2,
+            "candidateCount": 6,
+            "errorCode": null
+          }
+        ]
+      }
+    },
+    {
+      "queryId": "q-photography",
+      "query": "旅行摄影构图",
+      "rankedDocumentKeys": [
+        "travel-photography",
+        "ai-office",
+        "cat-care",
+        "coffee-pour-over",
+        "camping-family"
+      ],
+      "metrics": {
+        "precision@5": 0.2,
+        "recall@5": 1.0,
+        "mrr@5": 1.0,
+        "ndcg@5": 1.0,
+        "zeroResult": 0.0
+      },
+      "trace": {
+        "executionMode": "DIRECT_HYBRID",
+        "indexVersion": "seekflux-content-v1",
+        "policyVersion": "direct-hybrid-v1",
+        "degraded": false,
+        "channels": [
+          {
+            "source": "KEYWORD",
+            "status": "SUCCESS",
+            "retrieverVersion": "elasticsearch-bm25-v2",
+            "tookMillis": 5,
+            "candidateCount": 1,
+            "errorCode": null
+          },
+          {
+            "source": "SEMANTIC",
+            "status": "SUCCESS",
+            "retrieverVersion": "elasticsearch-knn-hashing-char-ngram-v1",
+            "tookMillis": 2,
+            "candidateCount": 6,
+            "errorCode": null
+          }
+        ]
+      }
+    },
+    {
+      "queryId": "q-cooking",
+      "query": "新手家常菜做法",
+      "rankedDocumentKeys": [
+        "home-cooking",
+        "camping-family",
+        "travel-photography",
+        "cat-care",
+        "ai-office"
+      ],
+      "metrics": {
+        "precision@5": 0.2,
+        "recall@5": 1.0,
+        "mrr@5": 1.0,
+        "ndcg@5": 1.0,
+        "zeroResult": 0.0
+      },
+      "trace": {
+        "executionMode": "DIRECT_HYBRID",
+        "indexVersion": "seekflux-content-v1",
+        "policyVersion": "direct-hybrid-v1",
+        "degraded": false,
+        "channels": [
+          {
+            "source": "KEYWORD",
+            "status": "SUCCESS",
+            "retrieverVersion": "elasticsearch-bm25-v2",
+            "tookMillis": 5,
+            "candidateCount": 6,
+            "errorCode": null
+          },
+          {
+            "source": "SEMANTIC",
+            "status": "SUCCESS",
+            "retrieverVersion": "elasticsearch-knn-hashing-char-ngram-v1",
+            "tookMillis": 1,
+            "candidateCount": 6,
+            "errorCode": null
+          }
+        ]
+      }
+    },
+    {
+      "queryId": "q-cat-care",
+      "query": "猫咪护理知识",
+      "rankedDocumentKeys": [
+        "cat-care",
+        "ai-office",
+        "home-cooking",
+        "coffee-pour-over",
+        "travel-photography"
+      ],
+      "metrics": {
+        "precision@5": 0.2,
+        "recall@5": 1.0,
+        "mrr@5": 1.0,
+        "ndcg@5": 1.0,
+        "zeroResult": 0.0
+      },
+      "trace": {
+        "executionMode": "DIRECT_HYBRID",
+        "indexVersion": "seekflux-content-v1",
+        "policyVersion": "direct-hybrid-v1",
+        "degraded": false,
+        "channels": [
+          {
+            "source": "KEYWORD",
+            "status": "SUCCESS",
+            "retrieverVersion": "elasticsearch-bm25-v2",
+            "tookMillis": 4,
+            "candidateCount": 2,
+            "errorCode": null
+          },
+          {
+            "source": "SEMANTIC",
+            "status": "SUCCESS",
+            "retrieverVersion": "elasticsearch-knn-hashing-char-ngram-v1",
+            "tookMillis": 1,
+            "candidateCount": 6,
+            "errorCode": null
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -80,4 +80,4 @@ uv run --project apps/training-runner python --version
 
 Step 0 完成后，当时的下一步是 Step 1“内容登记与画像发布”，该切片现在已经完成。项目随后也已完成 Step 2 关键词搜索和 Step 3 Feed 基线。
 
-当前不要从本文最后一段推断下一任务；应以[学习路线首页](README.md)为准，进入 Step 4“Agent-ready Direct Search”。
+当前不要从本文最后一段推断下一任务；真实阶段和下一步始终以[学习路线首页](README.md)为准。

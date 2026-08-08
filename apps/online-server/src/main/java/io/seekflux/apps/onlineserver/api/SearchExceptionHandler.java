@@ -1,5 +1,6 @@
 package io.seekflux.apps.onlineserver.api;
 
+import io.seekflux.search.port.in.SearchUnavailableException;
 import jakarta.servlet.http.HttpServletRequest;
 import java.time.Instant;
 import java.util.Map;
@@ -13,6 +14,15 @@ import org.springframework.web.method.annotation.HandlerMethodValidationExceptio
 
 @RestControllerAdvice
 public final class SearchExceptionHandler {
+
+    @ResponseStatus(HttpStatus.SERVICE_UNAVAILABLE)
+    @ExceptionHandler(SearchUnavailableException.class)
+    public Map<String, Object> searchUnavailable(SearchUnavailableException error) {
+        return Map.of(
+                "code", "SEARCH_UNAVAILABLE",
+                "message", error.getMessage(),
+                "timestamp", Instant.now().toString());
+    }
 
     @ResponseStatus(HttpStatus.BAD_REQUEST)
     @ExceptionHandler({

@@ -136,7 +136,7 @@ curl --get http://localhost:8080/v1/contents/{contentId}/similar \
 
 Feed 是已经完成并继续保留的历史切片，但不是 Agent 的前置条件，也不应被包装成 Agent Tool 的默认行为。未来只有当用户明确提出“按我的画像推荐”或复杂探索目标时，Agent 才可以通过稳定的 Recommendation Use Case 使用它；Runtime 不能直接访问召回源或画像存储。
 
-当前下一步回到搜索主线，进入 Step 4“Agent-ready Direct Search”。曝光、播放、观看时长、互动和负反馈的幂等批量上报后移到可选 Step 8；Flink 热度与短期兴趣后移到可选 Step 9。
+搜索主线随后已经完成 [Step 4“Agent-ready Direct Search”](step-04-agent-ready-direct-search.md)。曝光、播放、观看时长、互动和负反馈的幂等批量上报仍后置到可选 Step 8；当前真实下一步以[学习路线首页](README.md)为准。
 
 ## 9. 练习
 

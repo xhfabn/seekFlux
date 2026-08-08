@@ -181,4 +181,4 @@ curl http://localhost:8081/v1/contents/{contentId}
 4. 为 Worker 增加独立的事件去重表，比较它与当前“业务状态幂等”的适用边界。
 5. 阅读 Step 2 的实现：消费 `content.profile.published.v1` 写入 Elasticsearch，并消费撤回事件删除文档。
 
-从历史实现顺序看，本切片之后进入了 [Step 2：已发布画像的关键词检索](step-02-keyword-search.md)，该切片已经完成。当前真实下一步请以[学习路线首页](README.md)为准：Step 4“Agent-ready Direct Search”。
+从历史实现顺序看，本切片之后进入了 [Step 2：已发布画像的关键词检索](step-02-keyword-search.md)，该切片已经完成。当前真实下一步始终以[学习路线首页](README.md)为准。

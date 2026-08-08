@@ -24,7 +24,7 @@ public final class ContentSearchIndexWorker {
 
     @KafkaListener(
             topics = ContentApplicationService.CONTENT_PROFILE_PUBLISHED,
-            groupId = "seekflux-content-search-index-v1")
+            groupId = "seekflux-content-search-index-v2")
     public void indexPublished(String envelopeJson) throws Exception {
         JsonNode envelope = objectMapper.readTree(envelopeJson);
         JsonNode payload = envelope.path("payload");
@@ -46,7 +46,7 @@ public final class ContentSearchIndexWorker {
 
     @KafkaListener(
             topics = ContentApplicationService.CONTENT_DISTRIBUTION_CHANGED,
-            groupId = "seekflux-content-search-index-v1")
+            groupId = "seekflux-content-search-index-v2")
     public void removeWithdrawn(String envelopeJson) throws Exception {
         JsonNode payload = objectMapper.readTree(envelopeJson).path("payload");
         if ("WITHDRAWN".equals(payload.path("distribution_status").asText())) {
