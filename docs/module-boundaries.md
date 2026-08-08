@@ -12,7 +12,7 @@ domain -> JDK only
 
 `contexts` 之间不得共享数据库 Entity 或直接访问对方存储。跨上下文协作使用输入 Port、版本化 DTO 或领域事件。
 
-当前仓库有九个业务 Context。规划中的 `AgentOrchestration` 是第十个业务 Context；`platform/agent-runtime` 是横向执行基础设施，不是业务 Context。两者均从 Step 5 开始实现，不能因本文定义了边界就视为已经存在。
+当前仓库有十个业务 Context，`AgentOrchestration` 是第十个；`platform/agent-runtime` 是横向执行基础设施，不是业务 Context。Step 5 已经实现二者，但后续新增 Agent 能力仍必须保持这一业务语义与运行机制的分离。
 
 ## Context 内部目录
 
@@ -36,18 +36,20 @@ apps/agent-server
 
 contexts/agent-orchestration-context
   -> 自身 domain + port/out
-  -> Search Use Case（跨 Context 的稳定输入 Port）
+  -/> Search Context、Agent Runtime 具体实现、外部存储
 
 platform/agent-runtime
   -> LLM / Session / RuntimeEvent / Clock 等输出 Port
   -/> AgentOrchestration domain、Search domain、模型 SDK、Redis、Kafka、Elasticsearch
 
 Search Tool Adapter
+  -> AgentOrchestration 的 AgentExecutionPort 实现
+  -> platform/agent-runtime input API
   -> Search Use Case
   -/> Elasticsearch / Redis / Ranking Adapter
 ```
 
-AgentOrchestration 决定搜索目标、约束修正、追问和业务回退；Runtime 只执行有限步循环、Deadline、取消、Tool 调度与运行事件。Direct Search 不反向依赖 Agent 模块，Agent 失败时必须能回退到同一个 Search Use Case。
+AgentOrchestration 决定搜索目标、约束修正、追问和业务回退；Runtime 只执行有限步循环、Deadline、取消、Tool 调度与运行事件。跨 Context 装配发生在 `agent-server` Adapter：`SearchDirectTool` 与确定性回退都调用 Search 的稳定输入 Port。Direct Search 不反向依赖 Agent 模块。
 
 ## 物理部署基线
 
@@ -56,7 +58,7 @@ AgentOrchestration 决定搜索目标、约束修正、追问和业务回退；R
 | online-server | Search、Recommendation、Interaction、UserInterest、Ranking、Experiment、Moderation |
 | content-server | Content、Moderation、Feature/Model 控制面 |
 | worker-runner | 内容理解、索引发布、特征写入、Outbox 消费 |
-| agent-server（Step 5 规划） | Agent API、AgentOrchestration、Agent Runtime 与 Tool 装配；独立限流和故障隔离 |
+| agent-server | Agent API、AgentOrchestration、Agent Runtime 与 Tool 装配；端口 `8083`，独立线程池和故障边界 |
 | realtime-features（Step 9 可选） | Flink 行为清洗、会话化、窗口聚合、短期兴趣 |
 | training-runner（Step 10 可选） | 样本生成、基线训练、离线评测、模型注册 |
 

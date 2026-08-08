@@ -19,16 +19,19 @@ import java.util.concurrent.TimeoutException;
 public final class AgentRuntime {
 
     private final AgentToolRegistry tools;
+    private final AgentToolExecutor toolExecutor;
     private final ExecutorService executor;
     private final AgentRunRecorder recorder;
     private final Clock clock;
 
     public AgentRuntime(
             AgentToolRegistry tools,
+            AgentToolExecutor toolExecutor,
             ExecutorService executor,
             AgentRunRecorder recorder,
             Clock clock) {
         this.tools = Objects.requireNonNull(tools, "tool registry must not be null");
+        this.toolExecutor = Objects.requireNonNull(toolExecutor, "tool executor must not be null");
         this.executor = Objects.requireNonNull(executor, "agent executor must not be null");
         this.recorder = Objects.requireNonNull(recorder, "run recorder must not be null");
         this.clock = Objects.requireNonNull(clock, "clock must not be null");
@@ -142,10 +145,10 @@ public final class AgentRuntime {
                         request,
                         call.arguments(),
                         Duration.ofNanos(remainingNanos(deadlineNanos)));
-                toolResult = invoke(() -> tool.execute(toolContext), deadlineNanos);
-                if (toolResult == null) {
-                    toolResult = AgentToolResult.failure("TOOL_RETURNED_NULL");
-                }
+                AgentToolInvocation invocation = invoke(
+                        () -> toolExecutor.execute(tool.name(), call.arguments(), toolContext),
+                        deadlineNanos);
+                toolResult = invocation.result();
             } catch (CallFailure failure) {
                 toolResult = AgentToolResult.failure(failure.code);
             }

@@ -7,17 +7,16 @@
 ```bash
 ./seekflux.sh doctor   # 首次先检查环境
 ./seekflux.sh install  # 只安装中间件
-./seekflux.sh up       # 安装并启动中间件、三个 Java 应用与 Web
+./seekflux.sh up       # 安装并启动中间件、四个 Java 应用与 Web
 ./seekflux.sh status
 ./seekflux.sh logs online
+./seekflux.sh logs agent
 ./seekflux.sh open
 ./seekflux.sh down
 ```
 
 `up` 会依次启动 PostgreSQL、Redis、Kafka、Elasticsearch、MinIO、Content Server、
-Worker Runner、Online Server 和 `apps/web`。`open` 只打开 `http://localhost:3001/` 这一个前端入口。脚本是幂等的，已安装或已运行的组件不会重复处理。
-
-当前脚本不会启动 Agent Server，因为该进程要到开发 Step 5 才创建。Step 4 的 Direct Search 评测仍复用现有 Online Server；未来加入 `agent-server` 时，需要同步更新 `stack.sh` 的启动、健康检查、日志、状态和停止逻辑，不能只把新进程写进架构文档。
+Worker Runner、Online Server、Agent Server 和 `apps/web`。Agent Server 默认使用 `8083`，避免与可选 Flink UI 的 `8082` 冲突。`open` 只打开 `http://localhost:3001/` 这一个前端入口。脚本是幂等的，已安装或已运行的组件不会重复处理。
 
 国外源较慢且本机已有代理时，可在根目录 `.env` 中设置：
 

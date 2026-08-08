@@ -38,18 +38,11 @@ public class JdbcAgentRunRecorder implements AgentRunRecorder {
 
     private void startRun(AgentRunEvent event) {
         int sessionRows = jdbcClient.sql("""
-                        INSERT INTO agent.sessions (
-                            session_id, version, last_turn_id, last_agent_run_id,
-                            snapshot, created_at, updated_at
-                        ) VALUES (
-                            :sessionId, 1, :turnId, :agentRunId,
-                            '{}'::jsonb, :eventTime, :eventTime
-                        )
-                        ON CONFLICT (session_id) DO UPDATE
-                        SET version = agent.sessions.version + 1,
-                            last_turn_id = EXCLUDED.last_turn_id,
-                            last_agent_run_id = EXCLUDED.last_agent_run_id,
-                            updated_at = EXCLUDED.updated_at
+                        UPDATE agent.sessions
+                        SET last_turn_id = :turnId,
+                            last_agent_run_id = :agentRunId,
+                            updated_at = :eventTime
+                        WHERE session_id = :sessionId
                         """)
                 .param("sessionId", event.sessionId())
                 .param("turnId", event.turnId())
@@ -57,7 +50,7 @@ public class JdbcAgentRunRecorder implements AgentRunRecorder {
                 .param("eventTime", databaseTime(event.eventTime()))
                 .update();
         if (sessionRows != 1) {
-            throw new IllegalStateException("agent session upsert did not affect exactly one row");
+            throw new IllegalStateException("agent session update did not affect exactly one row");
         }
 
         int runRows = jdbcClient.sql("""

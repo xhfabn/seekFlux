@@ -1,6 +1,6 @@
 # Step 0：工程基线
 
-> 本文按序记录最初建立仓库骨架时的历史切片。它对应开发 Step 0，不是 [`SeekFlux.md`](../../SeekFlux.md) 中的 Agent Phase 0。当前项目已经完成到 Step 3，真实下一步见[学习路线首页](README.md)。
+> 本文按序记录最初建立仓库骨架时的历史切片。它对应开发 Step 0，不是 [`SeekFlux.md`](../../SeekFlux.md) 中的 Agent Phase 0。当前项目已经完成到 Step 5，真实下一步见[学习路线首页](README.md)。
 
 ## 本阶段状态
 
@@ -22,7 +22,7 @@
 - `deploy/` 提供本地中间件和 Compose 配置；
 - `.tool-versions` 固定 JDK、Maven 和 Python 基线。
 
-这里列出的是 Step 0 完成时的状态，不应用来判断今天的功能进度。当前已有 Search、Feed、画像和内容链路；尚未创建规划中的第十个 `AgentOrchestration` Context、`apps/agent-server` 和 `platform/agent-runtime`。目录中的 `.gitkeep` 或空模块只代表边界预留，不代表能力已经实现。
+这里列出的是 Step 0 完成时的状态，不应用来判断今天的功能进度。当时尚未创建第十个 `AgentOrchestration` Context、`apps/agent-server` 和 `platform/agent-runtime`；它们现在已经由 Step 5 实现。目录中的 `.gitkeep` 或空模块仍只代表边界预留，不能单独作为完成证据。
 
 ## 架构上学什么
 
@@ -32,7 +32,7 @@
 
 ### 2. 逻辑边界与部署边界不同
 
-当前九个 Context 是逻辑业务边界，但首期不会部署成九个微服务。多个 Context 可以被 `online-server` 装配到同一进程，同时仍禁止共享可变实体和越界访问数据库。未来的 `AgentOrchestration` 是第十个业务 Context；Agent Runtime 属于 Platform，不应被误列为第十一个 Context。
+Step 0 建立的九个 Context 是逻辑业务边界，但首期不会部署成九个微服务。Step 5 新增 `AgentOrchestration` 作为第十个业务 Context；Agent Runtime 属于 Platform，不应被误列为第十一个 Context。多个 Context 可以被同一应用装配，同时仍禁止共享可变实体和越界访问数据库。
 
 ### 3. 六边形架构控制依赖方向
 
@@ -44,7 +44,7 @@
 
 ### 5. 为什么 Java 与 Python 共存
 
-低延迟在线服务、Worker、未来 Agent Runtime 和 Flink Job 使用 Java；训练及部分算法实验可以使用 Python。Direct Search 与 Agent Eval 的格式属于版本化评测契约，不因使用哪种语言而改变。Python 是后置训练/实验工具，不是开始 Agent 的前置条件。
+低延迟在线服务、Worker、Agent Runtime 和 Flink Job 使用 Java；训练及部分算法实验可以使用 Python。Direct Search 与 Agent Eval 的格式属于版本化评测契约，不因使用哪种语言而改变。Python 是后置训练/实验工具，不是开始 Agent 的前置条件。
 
 ## 关键文件入口
 
@@ -78,6 +78,6 @@ uv run --project apps/training-runner python --version
 
 ## 当时的下一步与当前路线
 
-Step 0 完成后，当时的下一步是 Step 1“内容登记与画像发布”，该切片现在已经完成。项目随后也已完成 Step 2 关键词搜索和 Step 3 Feed 基线。
+Step 0 完成后，当时的下一步是 Step 1“内容登记与画像发布”，该切片现在已经完成。项目随后也已完成 Step 2 关键词搜索、Step 3 Feed 基线、Step 4 Agent-ready Direct Search 和 Step 5 Agent Runtime MVP。
 
 当前不要从本文最后一段推断下一任务；真实阶段和下一步始终以[学习路线首页](README.md)为准。

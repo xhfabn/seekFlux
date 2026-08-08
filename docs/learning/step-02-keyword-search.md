@@ -127,7 +127,7 @@ curl http://localhost:9200/seekflux-content-v1/_count
 
 Step 2 提供了未来 Search Tool 的确定性 Direct Search 雏形。它的价值是：输入、字段权重、结果和失败都能在没有大模型与 Agent Loop 的情况下独立验证，未来 Agent 失败时也可以回退到这条路径。
 
-本切片当时还不能称为“Agent-ready”：它缺少版本化 Query—相关性数据集、统一评测 Runner、语义向量召回、跨通道融合与单路降级、完整 Search Trace、查询约束和内容安全过滤。这些能力现在已经由 [Step 4](step-04-agent-ready-direct-search.md) 补齐；Agent Runtime 仍从 Step 5 创建。
+本切片当时还不能称为“Agent-ready”：它缺少版本化 Query—相关性数据集、统一评测 Runner、语义向量召回、跨通道融合与单路降级、完整 Search Trace、查询约束和内容安全过滤。这些能力后来由 [Step 4](step-04-agent-ready-direct-search.md) 补齐；Agent Runtime 和 Search Tool 已由 [Step 5](step-05-agent-runtime-mvp.md) 实现。
 
 ## 10. 练习
 

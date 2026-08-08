@@ -2,13 +2,33 @@ CREATE SCHEMA IF NOT EXISTS agent;
 
 CREATE TABLE IF NOT EXISTS agent.sessions (
     session_id VARCHAR(128) PRIMARY KEY,
+    agent_id VARCHAR(128) NOT NULL,
+    agent_version VARCHAR(128) NOT NULL,
     version BIGINT NOT NULL DEFAULT 0,
+    event_position BIGINT NOT NULL DEFAULT 0,
+    status VARCHAR(32) NOT NULL DEFAULT 'IDLE',
     last_turn_id VARCHAR(128),
     last_agent_run_id UUID,
     snapshot JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS agent.workspace_events (
+    event_id UUID PRIMARY KEY,
+    session_id VARCHAR(128) NOT NULL REFERENCES agent.sessions(session_id),
+    event_position BIGINT NOT NULL,
+    event_type VARCHAR(48) NOT NULL,
+    request_id VARCHAR(128),
+    turn_id VARCHAR(128),
+    event_time TIMESTAMPTZ NOT NULL,
+    payload JSONB NOT NULL,
+    CONSTRAINT agent_workspace_event_position_unique UNIQUE (session_id, event_position),
+    CONSTRAINT agent_workspace_event_request_unique UNIQUE (session_id, request_id)
+);
+
+CREATE INDEX IF NOT EXISTS agent_workspace_events_session_position_idx
+    ON agent.workspace_events (session_id, event_position);
 
 CREATE TABLE IF NOT EXISTS agent.runs (
     agent_run_id UUID PRIMARY KEY,

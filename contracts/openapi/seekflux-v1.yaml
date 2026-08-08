@@ -2,10 +2,58 @@ openapi: 3.1.0
 info:
   title: SeekFlux API
   version: 0.1.0
-  description: SeekFlux content, search, recommendation, and interaction contracts.
+  description: SeekFlux content, search, recommendation, Agent Runtime, and interaction contracts.
 servers:
   - url: http://localhost:8080
+    description: Direct Search and recommendation
+  - url: http://localhost:8083
+    description: Agent Server
 paths:
+  /v1/agent/search:
+    post:
+      operationId: agentSearch
+      summary: Execute the bounded Search Agent and fall back to Direct Search when required
+      tags: [Agent]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentSearchRequest"
+      responses:
+        "200":
+          description: Stable Agent terminal state, results, and correlated Agent/Search traces
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentSearchResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/AgentConflict"
+        "503":
+          $ref: "#/components/responses/AgentUnavailable"
+  /v1/agent/sessions/{sessionId}:cancel:
+    post:
+      operationId: cancelAgentSession
+      summary: Request cancellation of the locally executing Agent Session
+      tags: [Agent]
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema: {type: string, minLength: 1, maxLength: 128}
+      responses:
+        "200":
+          description: Whether an in-process execution received the cancellation signal
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [sessionId, cancelled]
+                properties:
+                  sessionId: {type: string}
+                  cancelled: {type: boolean}
   /v1/users/{userId}/interest-profile:
     get:
       operationId: getUserInterestProfile
@@ -285,6 +333,136 @@ components:
       description: Optional request-scoped override. When omitted, the persisted user profile is used.
       schema: {type: string, maxLength: 1300}
   schemas:
+    AgentSearchOptions:
+      type: object
+      properties:
+        allowClarification: {type: boolean, default: true}
+    AgentSearchRequest:
+      type: object
+      required: [sessionId, turnId, query]
+      properties:
+        requestId: {type: string, maxLength: 128}
+        sessionId: {type: string, minLength: 1, maxLength: 128}
+        turnId: {type: string, minLength: 1, maxLength: 128}
+        agentId:
+          type: string
+          maxLength: 128
+          default: search-assistant
+          enum: [search-assistant, search-precise]
+        query: {type: string, minLength: 1, maxLength: 500}
+        page: {type: integer, minimum: 0, default: 0}
+        size: {type: integer, minimum: 1, maximum: 50, default: 12}
+        requiredTags:
+          type: array
+          maxItems: 10
+          items: {type: string, maxLength: 64}
+        options:
+          $ref: "#/components/schemas/AgentSearchOptions"
+    QueryConstraintSet:
+      type: object
+      required: [page, size, requiredTags]
+      properties:
+        page: {type: integer, minimum: 0}
+        size: {type: integer, minimum: 1, maximum: 50}
+        requiredTags:
+          type: array
+          maxItems: 10
+          items: {type: string, maxLength: 64}
+    AgentStepTrace:
+      type: object
+      required: [step, action, status, tookMillis]
+      properties:
+        step: {type: integer, minimum: 1}
+        action: {type: string, enum: [PLAN, CALL_TOOL, COMPLETE, CLARIFY, FALLBACK]}
+        status: {type: string}
+        toolCallId: {type: [string, "null"]}
+        toolName: {type: [string, "null"]}
+        linkedTraceId: {type: [string, "null"]}
+        tookMillis: {type: integer, format: int64, minimum: 0}
+        errorCode: {type: [string, "null"]}
+    AgentTrace:
+      type: object
+      required:
+        - agentRunId
+        - agentId
+        - agentVersion
+        - plannerVersion
+        - promptVersion
+        - decisionProviderVersion
+        - toolSchemaVersions
+        - startedAt
+        - tookMillis
+        - terminalState
+        - executionMode
+        - steps
+      properties:
+        agentRunId: {type: string, format: uuid}
+        agentId: {type: string}
+        agentVersion: {type: string}
+        plannerVersion: {type: string}
+        promptVersion: {type: string}
+        decisionProviderVersion: {type: string}
+        toolSchemaVersions:
+          type: object
+          additionalProperties: {type: string}
+        startedAt: {type: string, format: date-time}
+        tookMillis: {type: integer, format: int64, minimum: 0}
+        terminalState:
+          type: string
+          enum: [RESULTS_READY, NEED_CLARIFICATION, FALLBACK_REQUIRED, CANCELLED, FAILED]
+        executionMode:
+          type: string
+          enum: [AGENT, AGENT_TO_DIRECT_FALLBACK]
+        fallbackReason: {type: [string, "null"]}
+        steps:
+          type: array
+          items:
+            $ref: "#/components/schemas/AgentStepTrace"
+    AgentSearchResponse:
+      type: object
+      required:
+        - requestId
+        - agentRunId
+        - sessionId
+        - turnId
+        - state
+        - executionMode
+        - appliedConstraints
+        - total
+        - page
+        - size
+        - items
+        - agentTrace
+        - degraded
+      properties:
+        requestId: {type: string}
+        agentRunId: {type: string, format: uuid}
+        sessionId: {type: string}
+        turnId: {type: string}
+        state:
+          type: string
+          enum: [RESULTS_READY, NEED_CLARIFICATION, FALLBACK_RESULTS, CANCELLED, FAILED]
+        executionMode:
+          type: string
+          enum: [AGENT, AGENT_TO_DIRECT_FALLBACK]
+        appliedConstraints:
+          $ref: "#/components/schemas/QueryConstraintSet"
+        clarification: {type: [string, "null"]}
+        total: {type: integer, format: int64, minimum: 0}
+        page: {type: integer, minimum: 0}
+        size: {type: integer, minimum: 1, maximum: 50}
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/SearchHit"
+        searchTrace:
+          oneOf:
+            - $ref: "#/components/schemas/SearchTrace"
+            - type: "null"
+        agentTrace:
+          $ref: "#/components/schemas/AgentTrace"
+        degraded: {type: boolean}
+        fallbackReason: {type: [string, "null"]}
     UpdateUserInterestProfileRequest:
       type: object
       required: [topics]
@@ -577,6 +755,18 @@ components:
             $ref: "#/components/schemas/ApiError"
     SearchUnavailable:
       description: All Direct Search retrieval channels failed or exceeded the request deadline
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+    AgentConflict:
+      description: Agent Session is busy or the request id was already committed
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ApiError"
+    AgentUnavailable:
+      description: Agent Runtime, Session store, or execution authority is unavailable
       content:
         application/json:
           schema:

@@ -13,7 +13,7 @@
 
 未来 Search Agent 需要调用稳定的 Search Use Case，而不是直接访问 Elasticsearch。Step 4 把原来的单路关键词查询升级为可复现、可评测、可追踪、可降级的 Direct Search，使 Agent 尚未实现或不可用时仍有确定性结果。
 
-本阶段不创建 Agent Server、Agent Loop、LLM Adapter 或多轮 Session；这些从 Step 5 开始。
+本阶段当时不创建 Agent Server、Agent Loop、LLM Adapter 或 Session；这些基础能力后来由 [Step 5](step-05-agent-runtime-mvp.md) 实现，多轮约束仍属于 Step 6。
 
 ## 架构位置
 
@@ -115,9 +115,9 @@ python3 evals/run_direct_search_eval.py --require-hybrid --min-recall 1.0
 - Encoder 不是预训练文本/视频模型，不能证明语义效果提升；
 - 只有发布内容和阻断标签，没有完整 Moderation Policy/审计链；
 - 候选和页码窗口上限为 200，尚无搜索 Cursor；
-- Trace 在 API 响应内可见，但还没有进入统一 Agent/OTel Trace；
-- Agent Server、Agent Runtime、Session、LLM Port、Search Tool Adapter 和 Agent Eval 尚未创建。
+- Search Trace 已在 Step 5 通过 `linkedTraceId` 接入 Agent Trace，但尚未完成统一 OpenTelemetry 链路；
+- 在 Step 4 完成时，Agent Server、Agent Runtime、Session、LLM Port、Search Tool Adapter 和 Agent Eval 尚未创建；这些现在已由 Step 5 的 Phase 1 MVP 补齐。
 
 ## 下一步
 
-进入 Step 5“Agent Runtime MVP”：创建独立 Agent Server、AgentOrchestration Context 和通用有限步 Runtime；通过标准 Search Tool 复用本阶段的 Search Use Case，并建立 Session、运行事件和 Direct/Agent 对照 Eval。当前状态始终以[学习路线首页](README.md)为准。
+本阶段完成时的下一步是 Step 5“Agent Runtime MVP”，该切片现在已经完成。当前下一步是 Step 6“复杂 Search Agent”，具体范围和门槛始终以[学习路线首页](README.md)为准。

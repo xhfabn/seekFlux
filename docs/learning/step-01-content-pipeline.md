@@ -169,9 +169,9 @@ curl http://localhost:8081/v1/contents/{contentId}
 
 ## 9. 与 Agent 主线的关系
 
-这条内容管线是 Agent Phase 0 的数据前置：它保证 Search Tool 将来检索到的是经过发布状态约束、能够撤回并可以重建索引的内容证据，但它本身不是 Agent。
+这条内容管线是 Agent Phase 0 的数据前置：它保证 Step 5 的 Search Tool 检索到的是经过发布状态约束、能够撤回并可以重建索引的内容证据，但它本身不是 Agent。
 
-未来 Agent 不得直接查询 Content 表、Outbox 或 Elasticsearch。Search Tool 只能调用 Search Use Case，由 Search Context 负责检索、过滤、Trace 和降级；内容发布与撤回仍沿现有事件链更新搜索读模型。这样即使 Agent Runtime 停止，Direct Search 和内容管线也能独立运行。
+当前和未来 Agent 都不得直接查询 Content 表、Outbox 或 Elasticsearch。Step 5 的 Search Tool 只调用 Search Use Case，由 Search Context 负责检索、过滤、Trace 和降级；内容发布与撤回仍沿现有事件链更新搜索读模型。这样即使 Agent Runtime 停止，Direct Search 和内容管线也能独立运行。
 
 ## 10. 可以继续做的练习
 

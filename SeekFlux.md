@@ -8,8 +8,10 @@
 | 目标读者 | Agent 服务端工程师、搜索工程师、后端工程师、算法工程师、SRE、架构师 |
 | 核心定位 | 在确定性搜索内核之上自研可复用 Agent Runtime，以短视频复杂搜索作为首个参考应用；推荐与实时反馈作为后续共享能力演进 |
 | 首要交付 | Agent Runtime、Direct/Agent 双路径、复杂 Search Agent、结构化执行轨迹和专项评测 |
-| 支撑基线 | 1 万条内容画像，跑通 BM25、ANN、融合排序和确定性降级 |
+| 支撑基线 | 当前 6 条固定画像验证 BM25、ANN、融合排序和确定性降级；1 万条作为后续容量基线 |
 | 后续演进 | 多实例恢复、模型与策略灰度；按需要扩展 Feed、实时兴趣和更大规模模型 |
+
+> 截至 2026-08-08，Phase 0 与 Phase 1 已由代码、测试、真实链路和版本化 Eval 完成；当前下一步是 Phase 2。Phase 1 使用可复现的确定性决策 Provider 验证内部 Runtime，不代表真实 LLM 或复杂 Search Agent 已完成。唯一开发进度以 [`docs/learning/README.md`](docs/learning/README.md) 为准。
 
 ## 目录
 
@@ -1993,28 +1995,28 @@ token_cost_per_second ≈ Q_agent × (Token_in + Token_out)
 
 ## 23. 分阶段演进路线
 
-### Phase 0：Direct Search 基线补齐（当前优先）
+### Phase 0：Direct Search 基线补齐（已完成）
 
-- 导入 1 万条带标题、Caption、OCR/ASR 文本和可选向量的内容画像；
-- 保留已完成的 Elasticsearch 关键词基线，补齐基础 ANN、RRF/规则融合和安全过滤；
-- 固定 Query 集、相关性标注、索引版本和离线评测 Runner；
-- 完成低延迟 `/v1/search`、稳定错误码和可观察的召回/排序 Trace；
+- 使用 6 条版本化固定画像与 Query 标注完成真实链路评测，1 万条容量验证留到后续基准测试；
+- 在 Elasticsearch 关键词基线上补齐 Hashing n-gram ANN、RRF 融合和阻断标签过滤；
+- 固定 Query 集、相关性标注、索引/Retriever/策略版本和真实 API Eval Runner；
+- 完成同步 `/v1/search`、稳定错误码、共同 Deadline、单路降级和 Search Trace；
 - 建立 Agent 不可用时仍能独立运行的确定性搜索基线。
 
 退出条件：Direct Search 能返回可解释、可评测结果；BM25/ANN 单路故障有稳定降级；基线结果可复现。
 
-### Phase 1：Agent Runtime MVP（首要交付）
+### Phase 1：Agent Runtime MVP（已完成）
 
-- 建立 `platform/agent-runtime`：Ingress、Feature Pipeline、有限步 AgentLoop、Context Assembly、Tool Registry/Executor；
+- 建立 `platform/agent-runtime` 的 `Router → FeaturePipeline → SessionExecutor → AgentLoop` 主链路、Context Engine 与 Tool Registry/Executor；
 - 建立 `AgentOrchestration` Context：SearchGoal、QueryConstraintSet、追问和 FallbackPolicy；
-- 实现 AgentDef/Prompt/模型/Tool 配置版本和运行时冻结快照；
-- 实现 PostgreSQL Session 追加事件、乐观版本、基础快照和 Redis 热投影；
-- 统一 Agent/LLM/Tool/检索/排序 Trace，接入 OpenTelemetry；
-- 建立 Agent Eval 数据集和 Direct/Agent 对照 Runner。
+- 实现两个 AgentDef，冻结 Agent/Prompt/决策 Provider/Tool Schema 版本；
+- 实现 PostgreSQL Session 追加事件与独立 RunEvent、Redis owner-CAS 执行权和热投影；
+- 实现结构化 Agent/Tool Trace，并通过 linkedTraceId 关联权威 Search Trace；完整 OpenTelemetry 串联后移到 Phase 3；
+- 建立 Direct/Agent 对照 Runner、固定结果 Artifact、追问/重复/Session Busy 和回退测试。
 
 退出条件：至少两个配置化 AgentDef 可复用同一 Runtime（其中只有 Search Agent 需要完整业务实现）；Runtime Core 不依赖 Search 或具体模型 SDK；有限步执行、追问和 Trace 通过自动化测试。
 
-### Phase 2：复杂 Search Agent（核心业务闭环）
+### Phase 2：复杂 Search Agent（下一步）
 
 - 实现 Query Mode Router，简单 Query 直搜、复杂 Query 进入 Agent；
 - 实现意图解析、Query 改写、缺参追问和多轮 ConstraintPatch；
@@ -2278,4 +2280,4 @@ Direct Search 可复现基线
 
 每个切片完成时，学习文档必须同步说明业务目标、架构位置、核心流程、关键代码入口、设计取舍、验证方式和练习；架构决策进入 `docs/adr/`，API/事件变化进入 `contracts/`，Agent/检索效果进入 `evals/`。建议另建 `docs/agent-runtime.md` 保存 Runtime 内核详细设计，本文只维护系统定位、边界和跨模块决策。
 
-学习文档和 README 只能把已由代码、测试、故障注入和评测 Artifact 证明的能力标记为完成；本文件中的 Phase 1～4 在实现前均属于目标架构。简历中的“自研”“多实例恢复”和效果指标必须遵循同一完成口径。
+学习文档和 README 只能把已由代码、测试、真实链路和评测 Artifact 证明的能力标记为完成；当前 Phase 0～1 已完成，Phase 2～4 仍是目标架构。简历中的“自研”“多实例恢复”和效果指标必须遵循同一完成口径。

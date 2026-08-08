@@ -91,6 +91,7 @@ load_local_env() {
   MINIO_ROOT_PASSWORD="${MINIO_ROOT_PASSWORD:-seekflux_local_secret}"
   ONLINE_SERVER_PORT="${ONLINE_SERVER_PORT:-8080}"
   CONTENT_SERVER_PORT="${CONTENT_SERVER_PORT:-8081}"
+  AGENT_SERVER_PORT="${AGENT_SERVER_PORT:-8083}"
   WEB_SERVER_PORT="${WEB_SERVER_PORT:-3001}"
 }
 
@@ -574,7 +575,7 @@ launchd_pid() {
 build_apps() {
   configure_java
   require_command mvn
-  log "构建 Content、Worker 与 Online 三个应用"
+  log "构建 Content、Worker、Online 与 Agent 四个应用"
   (cd "${ROOT_DIR}" && mvn -DskipTests package)
 }
 
@@ -635,6 +636,7 @@ apps_up() {
   start_java_app "Content Server" content-server "http://127.0.0.1:${CONTENT_SERVER_PORT}/actuator/health"
   start_java_app "Worker Runner" worker-runner
   start_java_app "Online Server" online-server "http://127.0.0.1:${ONLINE_SERVER_PORT}/actuator/health"
+  start_java_app "Agent Server" agent-server "http://127.0.0.1:${AGENT_SERVER_PORT}/actuator/health"
   start_web_app
 }
 
@@ -702,7 +704,7 @@ stop_pidfile() {
 apps_down() {
   if [[ "${OS_NAME}" == "Darwin" ]]; then
     local app label
-    for app in web online-server worker-runner content-server; do
+    for app in web agent-server online-server worker-runner content-server; do
       label="$(launchd_label "${app}")"
       if launchctl print "gui/$(id -u)/${label}" >/dev/null 2>&1; then
         launchctl remove "${label}" >/dev/null 2>&1 || true
@@ -714,6 +716,7 @@ apps_down() {
     return
   fi
   stop_pidfile "Online Server" "${LOCAL_DIR}/apps/run/online-server.pid"
+  stop_pidfile "Agent Server" "${LOCAL_DIR}/apps/run/agent-server.pid"
   stop_pidfile "Worker Runner" "${LOCAL_DIR}/apps/run/worker-runner.pid"
   stop_pidfile "Content Server" "${LOCAL_DIR}/apps/run/content-server.pid"
   stop_pidfile "Web" "${LOCAL_DIR}/apps/run/web.pid"
@@ -764,6 +767,7 @@ status_all() {
   service_status MinIO "${MINIO_API_PORT}" || failed=1
   service_status "Content Server" "${CONTENT_SERVER_PORT}" || failed=1
   service_status "Online Server" "${ONLINE_SERVER_PORT}" || failed=1
+  service_status "Agent Server" "${AGENT_SERVER_PORT}" || failed=1
   web_status || failed=1
   local worker_pidfile="${LOCAL_DIR}/apps/run/worker-runner.pid"
   local worker_pid=""
@@ -806,6 +810,7 @@ show_logs() {
     content) files=("${LOCAL_DIR}/apps/logs/content-server.log") ;;
     worker) files=("${LOCAL_DIR}/apps/logs/worker-runner.log") ;;
     online) files=("${LOCAL_DIR}/apps/logs/online-server.log") ;;
+    agent) files=("${LOCAL_DIR}/apps/logs/agent-server.log") ;;
     web) files=("${LOCAL_DIR}/apps/logs/web.log") ;;
     postgres) files=("${LOCAL_DIR}/postgres/logs/postgres.log") ;;
     redis) files=("${LOCAL_DIR}/redis/logs/redis.log") ;;
@@ -839,14 +844,14 @@ SeekFlux macOS 本地开发环境
   versions          显示固定的中间件版本
   install           安装/升级中间件，不启动服务
   infra-up          安装并启动 PostgreSQL、Redis、Kafka、ES、MinIO
-  build             构建三个 Java 应用
-  apps-up           构建并启动 Content、Worker、Online 与 Web
+  build             构建四个 Java 应用
+  apps-up           构建并启动 Content、Worker、Online、Agent 与 Web
   seed-demo         通过内容发布链路创建六类画像示例视频
-  up                 安装并启动中间件、三个 Java 应用与 Web
+  up                 安装并启动中间件、四个 Java 应用与 Web
   status             查看全部中间件与应用状态
-  logs [name]        查看日志；name: content|worker|online|web|postgres|redis|kafka|elasticsearch|minio
+  logs [name]        查看日志；name: content|worker|online|agent|web|postgres|redis|kafka|elasticsearch|minio
   open               在 macOS 浏览器打开唯一 Web 前端
-  apps-down          停止三个 Java 应用与 Web
+  apps-down          停止四个 Java 应用与 Web
   infra-down         停止项目管理的中间件进程
   down               停止应用和中间件
   restart            重启完整本地环境
