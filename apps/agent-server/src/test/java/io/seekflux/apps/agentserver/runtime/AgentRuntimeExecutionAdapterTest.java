@@ -8,9 +8,11 @@ import static org.mockito.Mockito.when;
 
 import io.seekflux.agent.domain.QueryConstraintSet;
 import io.seekflux.agent.domain.SearchGoal;
+import io.seekflux.agent.domain.SearchPlan;
 import io.seekflux.agent.port.in.AgentExecutionMode;
 import io.seekflux.agent.port.in.AgentSearchState;
 import io.seekflux.agent.port.out.AgentExecutionRequest;
+import io.seekflux.agent.port.out.SearchGoalChange;
 import io.seekflux.platform.agentruntime.AgentDefinition;
 import io.seekflux.platform.agentruntime.AgentRunResult;
 import io.seekflux.platform.agentruntime.AgentRunTrace;
@@ -101,12 +103,20 @@ class AgentRuntimeExecutionAdapterTest {
                 directSearch,
                 projection);
 
+        SearchGoal goal = new SearchGoal(
+                "杭州亲子露营", QueryConstraintSet.firstPage(5, List.of()));
         var result = adapter.execute(new AgentExecutionRequest(
                 "request-1",
                 "session-1",
                 "turn-1",
                 definition.id(),
-                new SearchGoal("杭州亲子露营", QueryConstraintSet.firstPage(5, List.of())),
+                "杭州亲子露营",
+                goal,
+                new SearchPlan("杭州亲子露营", "杭州 亲子 露营", List.of("杭州", "亲子", "露营"),
+                        true, List.of("MULTI_SLOT_QUERY")),
+                "COMPLEX_QUERY",
+                List.of("search_direct"),
+                new SearchGoalChange(0, goal.toState()),
                 true));
 
         assertThat(result.state()).isEqualTo(AgentSearchState.FALLBACK_RESULTS);

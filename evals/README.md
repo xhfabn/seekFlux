@@ -20,6 +20,16 @@ python3 evals/run_agent_search_eval.py \
   --min-top1-agreement 1.0
 ```
 
-该 Runner 使用数据集里的 `requiredTags` 隔离共享本地索引，分别调用 8080 Direct Search 与 8083 Agent Search。除相关性指标外，还校验 Agent 稳定终态、冻结的 Agent/Tool 版本、`CALL_TOOL → COMPLETE` 主链和 Agent Trace 到 Search Trace 的关联。结果写入 `evals/results/agent-search-v1-baseline.json`。
+该 Runner 使用数据集里的 `requiredTags` 隔离共享本地索引，分别调用 8080 Direct Search 与 8083 Agent Search。除相关性指标外，还校验 Agent 稳定终态、冻结的 Agent/Tool 版本、有限步 Tool 主链，以及最终所选 Tool 的 Agent Trace 到 Search Trace 关联。Phase 1 历史结果保留在 `evals/results/agent-search-v1-baseline.json`；当前 Runtime 回归写入 `evals/results/agent-search-v2-regression.json`，避免覆盖旧版本事实。
+
+复杂 Search Agent 使用对抗关键词陷阱、简单路由和多轮补丁数据集：
+
+```bash
+python3 evals/run_complex_agent_eval.py \
+  --min-mrr-gain 0.5 \
+  --min-tool-selection-accuracy 1.0
+```
+
+Runner 通过真实 Content → Worker → Elasticsearch 链路创建 12 条临时内容，并校验 6 条复杂 Query 的 Direct/Agent Top-1 指标、SearchPlan 标签、并行 Tool Trace、候选复用、简单 Query 直达和 `ConstraintPatch` 版本冲突。默认结果写入 `evals/results/complex-search-v1-baseline.json`。该结果使用确定性 Provider，衡量编排和结构化检索增量，不代表真实模型成本或泛化效果。
 
 运行前需要 PostgreSQL、Redis、Kafka、Elasticsearch、Content Server、Worker Runner、Online Server 均健康；Agent 对照评测还需要 Agent Server。若只想保留临时内容用于排查，可增加 `--keep-fixtures`。

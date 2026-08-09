@@ -1,0 +1,316 @@
+{
+  "datasetVersion": "direct-search-v1",
+  "evaluationVersion": "agent-search-v2-regression",
+  "generatedAt": "2026-08-08T14:48:12.665611+00:00",
+  "agentId": "search-assistant",
+  "k": 5,
+  "queryCount": 6,
+  "directAggregate": {
+    "precision@5": 0.2,
+    "recall@5": 1.0,
+    "mrr@5": 1.0,
+    "ndcg@5": 1.0,
+    "zeroResult": 0.0
+  },
+  "agentAggregate": {
+    "precision@5": 0.2,
+    "recall@5": 1.0,
+    "mrr@5": 1.0,
+    "ndcg@5": 1.0,
+    "zeroResult": 0.0
+  },
+  "comparison": {
+    "top1Agreement": 1.0,
+    "overlap@5": 0.6
+  },
+  "queries": [
+    {
+      "queryId": "q-camping",
+      "query": "杭州亲子露营",
+      "directRankedDocumentKeys": [
+        "camping-family",
+        "travel-photography",
+        "cat-care",
+        "ai-office",
+        "home-cooking"
+      ],
+      "agentRankedDocumentKeys": [
+        "camping-family"
+      ],
+      "directMetrics": {
+        "precision@5": 0.2,
+        "recall@5": 1.0,
+        "mrr@5": 1.0,
+        "ndcg@5": 1.0,
+        "zeroResult": 0.0
+      },
+      "agentMetrics": {
+        "precision@5": 0.2,
+        "recall@5": 1.0,
+        "mrr@5": 1.0,
+        "ndcg@5": 1.0,
+        "zeroResult": 0.0
+      },
+      "agentTrace": {
+        "agentId": "search-assistant",
+        "agentVersion": "search-assistant-v2",
+        "plannerVersion": "default-react-loop-v1",
+        "decisionProviderVersion": "deterministic-complex-search-decision-v2",
+        "toolSchemaVersions": {
+          "search_direct": "search-direct-tool-v1",
+          "search_filtered": "search-filtered-tool-v1"
+        },
+        "terminalState": "RESULTS_READY",
+        "executionMode": "AGENT",
+        "selectedTool": "search_filtered",
+        "stepActions": [
+          "CALL_TOOL",
+          "CALL_TOOL",
+          "COMPLETE"
+        ],
+        "searchExecutionMode": "DIRECT_HYBRID"
+      }
+    },
+    {
+      "queryId": "q-coffee",
+      "query": "手冲咖啡教程",
+      "directRankedDocumentKeys": [
+        "coffee-pour-over",
+        "home-cooking",
+        "camping-family",
+        "cat-care",
+        "travel-photography"
+      ],
+      "agentRankedDocumentKeys": [
+        "coffee-pour-over"
+      ],
+      "directMetrics": {
+        "precision@5": 0.2,
+        "recall@5": 1.0,
+        "mrr@5": 1.0,
+        "ndcg@5": 1.0,
+        "zeroResult": 0.0
+      },
+      "agentMetrics": {
+        "precision@5": 0.2,
+        "recall@5": 1.0,
+        "mrr@5": 1.0,
+        "ndcg@5": 1.0,
+        "zeroResult": 0.0
+      },
+      "agentTrace": {
+        "agentId": "search-assistant",
+        "agentVersion": "search-assistant-v2",
+        "plannerVersion": "default-react-loop-v1",
+        "decisionProviderVersion": "deterministic-complex-search-decision-v2",
+        "toolSchemaVersions": {
+          "search_direct": "search-direct-tool-v1",
+          "search_filtered": "search-filtered-tool-v1"
+        },
+        "terminalState": "RESULTS_READY",
+        "executionMode": "AGENT",
+        "selectedTool": "search_filtered",
+        "stepActions": [
+          "CALL_TOOL",
+          "CALL_TOOL",
+          "COMPLETE"
+        ],
+        "searchExecutionMode": "DIRECT_HYBRID"
+      }
+    },
+    {
+      "queryId": "q-ai-office",
+      "query": "AI 办公效率",
+      "directRankedDocumentKeys": [
+        "ai-office",
+        "camping-family",
+        "home-cooking",
+        "cat-care",
+        "coffee-pour-over"
+      ],
+      "agentRankedDocumentKeys": [
+        "ai-office",
+        "camping-family",
+        "home-cooking",
+        "cat-care",
+        "coffee-pour-over"
+      ],
+      "directMetrics": {
+        "precision@5": 0.2,
+        "recall@5": 1.0,
+        "mrr@5": 1.0,
+        "ndcg@5": 1.0,
+        "zeroResult": 0.0
+      },
+      "agentMetrics": {
+        "precision@5": 0.2,
+        "recall@5": 1.0,
+        "mrr@5": 1.0,
+        "ndcg@5": 1.0,
+        "zeroResult": 0.0
+      },
+      "agentTrace": {
+        "agentId": "search-assistant",
+        "agentVersion": "search-assistant-v2",
+        "plannerVersion": "default-react-loop-v1",
+        "decisionProviderVersion": "deterministic-complex-search-decision-v2",
+        "toolSchemaVersions": {
+          "search_direct": "search-direct-tool-v1"
+        },
+        "terminalState": "RESULTS_READY",
+        "executionMode": "AGENT",
+        "selectedTool": "search_direct",
+        "stepActions": [
+          "CALL_TOOL",
+          "COMPLETE"
+        ],
+        "searchExecutionMode": "DIRECT_HYBRID"
+      }
+    },
+    {
+      "queryId": "q-photography",
+      "query": "旅行摄影构图",
+      "directRankedDocumentKeys": [
+        "travel-photography",
+        "ai-office",
+        "cat-care",
+        "coffee-pour-over",
+        "camping-family"
+      ],
+      "agentRankedDocumentKeys": [
+        "travel-photography",
+        "ai-office",
+        "cat-care",
+        "coffee-pour-over",
+        "camping-family"
+      ],
+      "directMetrics": {
+        "precision@5": 0.2,
+        "recall@5": 1.0,
+        "mrr@5": 1.0,
+        "ndcg@5": 1.0,
+        "zeroResult": 0.0
+      },
+      "agentMetrics": {
+        "precision@5": 0.2,
+        "recall@5": 1.0,
+        "mrr@5": 1.0,
+        "ndcg@5": 1.0,
+        "zeroResult": 0.0
+      },
+      "agentTrace": {
+        "agentId": "search-assistant",
+        "agentVersion": "search-assistant-v2",
+        "plannerVersion": "default-react-loop-v1",
+        "decisionProviderVersion": "deterministic-complex-search-decision-v2",
+        "toolSchemaVersions": {
+          "search_direct": "search-direct-tool-v1"
+        },
+        "terminalState": "RESULTS_READY",
+        "executionMode": "AGENT",
+        "selectedTool": "search_direct",
+        "stepActions": [
+          "CALL_TOOL",
+          "COMPLETE"
+        ],
+        "searchExecutionMode": "DIRECT_HYBRID"
+      }
+    },
+    {
+      "queryId": "q-cooking",
+      "query": "新手家常菜做法",
+      "directRankedDocumentKeys": [
+        "home-cooking",
+        "camping-family",
+        "travel-photography",
+        "cat-care",
+        "ai-office"
+      ],
+      "agentRankedDocumentKeys": [
+        "home-cooking",
+        "camping-family",
+        "travel-photography",
+        "cat-care",
+        "ai-office"
+      ],
+      "directMetrics": {
+        "precision@5": 0.2,
+        "recall@5": 1.0,
+        "mrr@5": 1.0,
+        "ndcg@5": 1.0,
+        "zeroResult": 0.0
+      },
+      "agentMetrics": {
+        "precision@5": 0.2,
+        "recall@5": 1.0,
+        "mrr@5": 1.0,
+        "ndcg@5": 1.0,
+        "zeroResult": 0.0
+      },
+      "agentTrace": {
+        "agentId": "search-assistant",
+        "agentVersion": "search-assistant-v2",
+        "plannerVersion": "default-react-loop-v1",
+        "decisionProviderVersion": "deterministic-complex-search-decision-v2",
+        "toolSchemaVersions": {
+          "search_direct": "search-direct-tool-v1"
+        },
+        "terminalState": "RESULTS_READY",
+        "executionMode": "AGENT",
+        "selectedTool": "search_direct",
+        "stepActions": [
+          "CALL_TOOL",
+          "COMPLETE"
+        ],
+        "searchExecutionMode": "DIRECT_HYBRID"
+      }
+    },
+    {
+      "queryId": "q-cat-care",
+      "query": "猫咪护理知识",
+      "directRankedDocumentKeys": [
+        "cat-care",
+        "ai-office",
+        "home-cooking",
+        "coffee-pour-over",
+        "travel-photography"
+      ],
+      "agentRankedDocumentKeys": [
+        "cat-care"
+      ],
+      "directMetrics": {
+        "precision@5": 0.2,
+        "recall@5": 1.0,
+        "mrr@5": 1.0,
+        "ndcg@5": 1.0,
+        "zeroResult": 0.0
+      },
+      "agentMetrics": {
+        "precision@5": 0.2,
+        "recall@5": 1.0,
+        "mrr@5": 1.0,
+        "ndcg@5": 1.0,
+        "zeroResult": 0.0
+      },
+      "agentTrace": {
+        "agentId": "search-assistant",
+        "agentVersion": "search-assistant-v2",
+        "plannerVersion": "default-react-loop-v1",
+        "decisionProviderVersion": "deterministic-complex-search-decision-v2",
+        "toolSchemaVersions": {
+          "search_direct": "search-direct-tool-v1",
+          "search_filtered": "search-filtered-tool-v1"
+        },
+        "terminalState": "RESULTS_READY",
+        "executionMode": "AGENT",
+        "selectedTool": "search_filtered",
+        "stepActions": [
+          "CALL_TOOL",
+          "CALL_TOOL",
+          "COMPLETE"
+        ],
+        "searchExecutionMode": "DIRECT_HYBRID"
+      }
+    }
+  ]
+}

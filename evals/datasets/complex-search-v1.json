@@ -1,0 +1,145 @@
+{
+  "datasetVersion": "complex-search-v1",
+  "description": "Adversarial natural-language queries for Query Mode routing, constraint extraction, parallel Search Tools and multi-turn goal patches.",
+  "requiredTags": ["seekflux-complex-eval-v1"],
+  "documents": [
+    {
+      "key": "camping-target",
+      "creatorId": "seekflux-complex-eval",
+      "mediaUri": "https://media.example/eval/complex-camping-target.mp4",
+      "title": "周末家庭轻松路线",
+      "description": "营地选择、装备清单和家庭出行准备。",
+      "tags": ["杭州", "亲子", "露营", "教程", "seekflux-complex-eval-v1"]
+    },
+    {
+      "key": "camping-keyword-trap",
+      "creatorId": "seekflux-complex-eval",
+      "mediaUri": "https://media.example/eval/complex-camping-trap.mp4",
+      "title": "只看适合亲子的杭州露营教程 不要成人徒步",
+      "description": "关键词示例，实际内容是成人极限徒步。",
+      "tags": ["成人", "徒步", "seekflux-complex-eval-v1"]
+    },
+    {
+      "key": "coffee-target",
+      "creatorId": "seekflux-complex-eval",
+      "mediaUri": "https://media.example/eval/complex-coffee-target.mp4",
+      "title": "桌面冲煮基础课",
+      "description": "从研磨、水温到注水节奏的入门步骤。",
+      "tags": ["咖啡", "手冲", "教程", "新手", "室内", "seekflux-complex-eval-v1"]
+    },
+    {
+      "key": "coffee-keyword-trap",
+      "creatorId": "seekflux-complex-eval",
+      "mediaUri": "https://media.example/eval/complex-coffee-trap.mp4",
+      "title": "只看适合新手的室内手冲咖啡教程 不要户外旅行",
+      "description": "关键词示例，实际内容是户外旅行。",
+      "tags": ["户外", "旅行", "seekflux-complex-eval-v1"]
+    },
+    {
+      "key": "photo-target",
+      "creatorId": "seekflux-complex-eval",
+      "mediaUri": "https://media.example/eval/complex-photo-target.mp4",
+      "title": "湖畔暗光构图练习",
+      "description": "蓝调时刻与城市灯光的拍摄方法。",
+      "tags": ["杭州", "西湖", "摄影", "夜景", "教程", "seekflux-complex-eval-v1"]
+    },
+    {
+      "key": "photo-keyword-trap",
+      "creatorId": "seekflux-complex-eval",
+      "mediaUri": "https://media.example/eval/complex-photo-trap.mp4",
+      "title": "只看杭州西湖附近的夜景摄影教程 不要北京旅行",
+      "description": "关键词示例，实际内容是北京旅行。",
+      "tags": ["北京", "旅行", "seekflux-complex-eval-v1"]
+    },
+    {
+      "key": "cat-target",
+      "creatorId": "seekflux-complex-eval",
+      "mediaUri": "https://media.example/eval/complex-cat-target.mp4",
+      "title": "幼猫生活照护基础",
+      "description": "梳毛、饮水、清洁和健康观察。",
+      "tags": ["猫咪", "宠物", "护理", "知识", "新手", "seekflux-complex-eval-v1"]
+    },
+    {
+      "key": "cat-keyword-trap",
+      "creatorId": "seekflux-complex-eval",
+      "mediaUri": "https://media.example/eval/complex-cat-trap.mp4",
+      "title": "只看新手猫咪宠物护理知识 不要户外旅行",
+      "description": "关键词示例，实际内容是户外旅行。",
+      "tags": ["户外", "旅行", "seekflux-complex-eval-v1"]
+    },
+    {
+      "key": "ai-target",
+      "creatorId": "seekflux-complex-eval",
+      "mediaUri": "https://media.example/eval/complex-ai-target.mp4",
+      "title": "智能工具入门工作流",
+      "description": "会议纪要、表格整理和任务拆分。",
+      "tags": ["AI", "办公", "教程", "新手", "seekflux-complex-eval-v1"]
+    },
+    {
+      "key": "ai-keyword-trap",
+      "creatorId": "seekflux-complex-eval",
+      "mediaUri": "https://media.example/eval/complex-ai-trap.mp4",
+      "title": "只看适合新手的 AI 办公教程 不要旅行摄影",
+      "description": "关键词示例，实际内容是旅行摄影。",
+      "tags": ["旅行", "摄影", "seekflux-complex-eval-v1"]
+    },
+    {
+      "key": "cooking-target",
+      "creatorId": "seekflux-complex-eval",
+      "mediaUri": "https://media.example/eval/complex-cooking-target.mp4",
+      "title": "厨房三道基础练习",
+      "description": "备菜、火候与调味的室内入门课程。",
+      "tags": ["家常菜", "美食", "教程", "新手", "室内", "seekflux-complex-eval-v1"]
+    },
+    {
+      "key": "cooking-keyword-trap",
+      "creatorId": "seekflux-complex-eval",
+      "mediaUri": "https://media.example/eval/complex-cooking-trap.mp4",
+      "title": "只看适合新手的室内家常菜美食教程 不要户外露营",
+      "description": "关键词示例，实际内容是户外露营。",
+      "tags": ["户外", "露营", "seekflux-complex-eval-v1"]
+    }
+  ],
+  "queries": [
+    {
+      "id": "complex-camping",
+      "text": "只看适合亲子的杭州露营教程，不要成人徒步",
+      "relevance": {"camping-target": 3},
+      "expectedTags": ["杭州", "亲子", "露营", "教程"]
+    },
+    {
+      "id": "complex-coffee",
+      "text": "只看适合新手的室内手冲咖啡教程，不要户外旅行",
+      "relevance": {"coffee-target": 3},
+      "expectedTags": ["咖啡", "手冲", "教程", "新手", "室内"]
+    },
+    {
+      "id": "complex-photo",
+      "text": "只看杭州西湖附近的夜景摄影教程，不要北京旅行",
+      "relevance": {"photo-target": 3},
+      "expectedTags": ["杭州", "西湖", "摄影", "夜景", "教程"]
+    },
+    {
+      "id": "complex-cat",
+      "text": "只看新手猫咪宠物护理知识，不要户外旅行",
+      "relevance": {"cat-target": 3},
+      "expectedTags": ["猫咪", "宠物", "护理", "知识", "新手"]
+    },
+    {
+      "id": "complex-ai",
+      "text": "只看适合新手的 AI 办公教程，不要旅行摄影",
+      "relevance": {"ai-target": 3},
+      "expectedTags": ["AI", "办公", "教程", "新手"]
+    },
+    {
+      "id": "complex-cooking",
+      "text": "只看适合新手的室内家常菜美食教程，不要户外露营",
+      "relevance": {"cooking-target": 3},
+      "expectedTags": ["家常菜", "美食", "教程", "新手", "室内"]
+    }
+  ],
+  "simpleQueries": [
+    {"id": "simple-cat", "text": "猫咪护理"},
+    {"id": "simple-coffee", "text": "手冲咖啡"}
+  ]
+}

@@ -1,6 +1,7 @@
 package io.seekflux.platform.agentruntime;
 
 import java.util.List;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Objects;
 
@@ -22,6 +23,58 @@ public record AgentToolSchema(String version, Map<String, AgentToolParameter> pa
             }
         }
         parameters.forEach((name, parameter) -> validateValue(name, parameter, arguments.get(name)));
+    }
+
+    public Map<String, Object> repair(Map<String, Object> arguments) {
+        Objects.requireNonNull(arguments, "tool arguments must not be null");
+        Map<String, Object> repaired = new LinkedHashMap<>();
+        parameters.forEach((name, parameter) -> {
+            Object value = arguments.get(name);
+            if (value == null) {
+                return;
+            }
+            Object normalized = switch (parameter.type()) {
+                case INTEGER -> repairInteger(value);
+                case BOOLEAN -> repairBoolean(value);
+                case STRING_LIST -> repairStringList(value);
+                case STRING -> value instanceof String text ? text.trim() : value;
+            };
+            repaired.put(name, normalized);
+        });
+        return Map.copyOf(repaired);
+    }
+
+    private static Object repairInteger(Object value) {
+        if (value instanceof String text) {
+            try {
+                return Long.parseLong(text.trim());
+            } catch (NumberFormatException ignored) {
+                return value;
+            }
+        }
+        return value;
+    }
+
+    private static Object repairBoolean(Object value) {
+        if (value instanceof String text) {
+            if ("true".equalsIgnoreCase(text.trim())) {
+                return true;
+            }
+            if ("false".equalsIgnoreCase(text.trim())) {
+                return false;
+            }
+        }
+        return value;
+    }
+
+    private static Object repairStringList(Object value) {
+        if (value instanceof String text) {
+            return java.util.Arrays.stream(text.split("[,，]"))
+                    .map(String::trim)
+                    .filter(item -> !item.isBlank())
+                    .toList();
+        }
+        return value;
     }
 
     private static void validateValue(String name, AgentToolParameter parameter, Object value) {

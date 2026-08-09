@@ -1,6 +1,7 @@
 package io.seekflux.apps.agentserver.api;
 
 import io.seekflux.agent.domain.QueryConstraintSet;
+import io.seekflux.agent.domain.SearchPlan;
 import io.seekflux.agent.port.in.AgentExecutionMode;
 import io.seekflux.agent.port.in.AgentSearchResult;
 import io.seekflux.agent.port.in.AgentSearchState;
@@ -16,6 +17,9 @@ public record AgentSearchResponse(
         String turnId,
         AgentSearchState state,
         AgentExecutionMode executionMode,
+        long goalVersion,
+        String routeReason,
+        SearchPlan searchPlan,
         QueryConstraintSet appliedConstraints,
         String clarification,
         long total,
@@ -24,6 +28,9 @@ public record AgentSearchResponse(
         List<SearchHitView> items,
         SearchTrace searchTrace,
         AgentTraceView agentTrace,
+        String selectedTool,
+        int successfulToolCount,
+        boolean candidateSetReused,
         boolean degraded,
         String fallbackReason) {
 
@@ -36,6 +43,9 @@ public record AgentSearchResponse(
                 result.turnId(),
                 result.state(),
                 result.executionMode(),
+                result.goalVersion(),
+                result.routeReason(),
+                result.searchPlan(),
                 result.appliedConstraints(),
                 result.clarification(),
                 search == null ? 0 : search.total(),
@@ -44,6 +54,9 @@ public record AgentSearchResponse(
                 search == null ? List.of() : search.hits(),
                 search == null ? null : search.trace(),
                 result.trace(),
+                result.selectedTool(),
+                result.successfulToolCount(),
+                result.candidateSetReused(),
                 result.degraded(),
                 result.fallbackReason());
     }

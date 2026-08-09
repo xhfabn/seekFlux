@@ -2,6 +2,7 @@ package io.seekflux.platform.agentruntime.session;
 
 import io.seekflux.platform.agentruntime.AgentTerminalState;
 import java.time.Instant;
+import java.util.Map;
 
 public sealed interface WorkspaceEvent {
 
@@ -22,6 +23,18 @@ public sealed interface WorkspaceEvent {
             String requestId,
             String turnId,
             String text) implements WorkspaceEvent {
+    }
+
+    record StatePatched(
+            long position,
+            Instant eventTime,
+            long baseVersion,
+            long stateVersion,
+            Map<String, Object> state) implements WorkspaceEvent {
+
+        public StatePatched {
+            state = state == null ? Map.of() : Map.copyOf(state);
+        }
     }
 
     record RunCompleted(

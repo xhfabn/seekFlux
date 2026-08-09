@@ -6,7 +6,7 @@
 
 SeekFlux 没有依赖 Ark-Leto 二进制或源码。当前实现参考《Ark-Leto 框架内核 与 Agentspark 主链路 原理详解》中的主链路、会话事件和执行权思想，自行实现内部 Runtime。类名相似只代表设计映射，不代表复制或集成了未提供的框架。
 
-Phase 1 的目标是证明一个业务无关、有界、可追踪、能稳定回退的运行内核；真实大模型推理、多轮约束和多实例恢复在后续阶段完成。
+Phase 1 已证明业务无关、有界、可追踪、能稳定回退的运行内核；Phase 2 又完成 Query Mode、多轮约束、动态并行 Tool、OpenAI-compatible Provider Adapter 和复杂 Query Eval。真实模型线上基线与多实例恢复仍在后续阶段。
 
 ## 2. 模块职责
 
@@ -21,7 +21,7 @@ flowchart LR
     LOOP --> CTX["ContextEngine"]
     LOOP --> LLM["LlmClient SPI"]
     LOOP --> TOOLS["Tool Registry / Executor"]
-    TOOLS --> SEARCH["Search Tool → SearchUseCase"]
+    TOOLS --> SEARCH["Search Tools → SearchUseCase"]
     ROUTER --> SESSION["WorkspaceEvent Store"]
     LOOP --> RUNS["AgentRun / RunEvent Recorder"]
     EXEC --> AUTH["ExecutionAuthority Store"]
@@ -30,7 +30,7 @@ flowchart LR
 | 模块 | 已实现职责 | 禁止拥有的职责 |
 | --- | --- | --- |
 | `platform/agent-runtime` | Router、Feature、Session 执行、有限步 Loop、上下文、Tool、运行事件 | Search 约束语义、Spring、模型厂商 SDK、Redis/ES 访问 |
-| `contexts/agent-orchestration-context` | SearchGoal、QueryConstraintSet、追问与回退业务状态、输入/输出 Port | 线程池、租约实现、HTTP、直接检索索引 |
+| `contexts/agent-orchestration-context` | SearchGoal/ConstraintPatch、SearchPlan、Query Mode、追问与回退业务状态、输入/输出 Port | 线程池、租约实现、HTTP、直接检索索引 |
 | `apps/agent-server` | Spring 装配、HTTP、Redis/JDBC/Search Tool/决策 Provider Adapter | 在 Controller 内规划或过滤结果 |
 | `platform/persistence` | Session 追加事件、最新投影、Run/RunEvent 持久化 | Agent 业务决策 |
 
@@ -47,7 +47,7 @@ sequenceDiagram
     participant Executor as SessionExecutor
     participant Loop as AgentLoop
     participant LLM as LlmClient
-    participant Tool as SearchDirectTool
+    participant Tool as Search Tools
     participant Search as SearchUseCase
 
     Client->>Router: AgentRunRequest
@@ -67,8 +67,8 @@ sequenceDiagram
             Executor->>Store: restoreFresh
             Executor->>Loop: run
             Loop->>LLM: chat(assembled context)
-            LLM-->>Loop: CallTool
-            Loop->>Tool: validated invocation
+            LLM-->>Loop: CallTool / CallTools
+            Loop->>Tool: validated bounded invocation(s)
             Tool->>Search: SearchUseCase.search
             Search-->>Tool: SearchResult + SearchTrace
             Loop->>LLM: chat(context + observation)
@@ -101,22 +101,23 @@ FeatureNode 不依赖 Spring 扫描顺序，装配层明确传入列表，Pipeli
 
 | 类型 | 存储/生命周期 | 用途 |
 | --- | --- | --- |
-| `WorkspaceEvent` | PostgreSQL 追加式事实源 | 重建 Session：Created、UserMessage、RunCompleted/Cancelled/Failed |
+| `WorkspaceEvent` | PostgreSQL 追加式事实源 | 重建 Session：Created、StatePatched、UserMessage、RunCompleted/Cancelled/Failed |
 | `AgentRunEvent` | PostgreSQL 独立运行表 | 诊断每次 Decision、Tool 和终态，关联版本及 Search Trace ID |
 | `PushEvent` | 请求内 Publisher；当前不持久化 | 客户端过程投影；Phase 1 同步响应内按逻辑顺序缓冲 |
 
-PostgreSQL 的 `agent.sessions` 保存最新版本、事件位置和快照，`agent.workspace_events` 以 `(session_id, event_position)` 排序，并以 `(session_id, request_id)` 保证 Ingress 幂等。`agent.runs` 与 `agent.run_events` 不参与 Workspace 重放。Redis 只保存热投影和执行权，不是 Session 真相源。
+PostgreSQL 的 `agent.sessions` 保存最新版本、状态版本、事件位置和快照，`agent.workspace_events` 以 `(session_id, event_position)` 排序，并以 `(session_id, request_id)` 保证 Ingress 幂等。状态补丁和 UserMessage 在同一事务中提交，旧 `baseVersion` 不能覆盖新目标。`agent.runs` 与 `agent.run_events` 不参与 Workspace 重放。Redis 只保存热投影和执行权，不是 Session 真相源。
 
 ## 6. 有限步 AgentLoop
 
-`AgentRuntime` 对每次运行建立共同 Deadline，并冻结以下版本：Agent、Planner、Prompt、Decision Provider、Tool Schema。每一步只接受四种结构化 Decision：
+`AgentRuntime` 对每次运行建立共同 Deadline，并冻结以下版本：Agent、Planner、Prompt、Decision Provider、请求级 Tool Schema 子集。每一步接受以下结构化 Decision：
 
 - `CallTool`：先校验 Tool 是否允许、参数 Schema、Tool 次数和 Deadline，再由 ToolExecutor 执行；
+- `CallTools`：在同一总预算下把多个调用提交给有界执行器；部分成功继续，全部失败回退；
 - `Complete`：结束为 `RESULTS_READY`；
 - `Clarify`：结束为 `NEED_CLARIFICATION`；
 - `Fallback`：结束为 `FALLBACK_REQUIRED`，由业务 Adapter 决定确定性回退。
 
-执行器是命名、有界线程池；超时会取消 Future，队列饱和产生稳定失败原因。Runtime 不使用公共线程池，也不把异步类型暴露到 Port 或 HTTP。
+Tool 参数校验失败后只做一次不改变业务意图的确定性修复；相同规范化 Tool 指纹再次出现时返回 `NO_PROGRESS_DETECTED`。执行器是命名、有界线程池；超时会取消 Future，队列饱和产生稳定失败原因。Runtime 不使用公共线程池，也不把异步类型暴露到 Port 或 HTTP。
 
 ## 7. Search Agent
 
@@ -124,12 +125,14 @@ PostgreSQL 的 `agent.sessions` 保存最新版本、事件位置和快照，`ag
 
 | Agent | 版本 | 最大步数 | Tool |
 | --- | --- | ---: | --- |
-| `search-assistant` | `search-assistant-v1` | 3 | `search_direct@search-direct-tool-v1` |
-| `search-precise` | `search-precise-v1` | 2 | `search_direct@search-direct-tool-v1` |
+| `search-assistant` | `search-assistant-v2` | 4 | `search_direct@v1`、`search_filtered@v1` |
+| `search-precise` | `search-precise-v2` | 3 | `search_direct@v1`、`search_filtered@v1` |
 
-二者复用同一 Runtime 和 `DeterministicSearchLlmClient@deterministic-search-decision-v1`。该 Provider 的作用是无需 API Key 即可稳定验证“追问或调用 Search Tool → 观察结果 → 完成”的编排契约；它不代表真实 LLM。接入真实 Provider 时只实现 `LlmClient.chat(AssembledContext)`，并保留现有 AgentDef、Tool、Session 和 Eval 作为回归对照。
+二者复用同一 Runtime。默认 `DeterministicSearchLlmClient@deterministic-complex-search-decision-v2` 无需 API Key，可以稳定验证“并行 Search Tool → 观察结果 → 选择候选集 → 完成”。`OpenAiCompatibleLlmClient` 已实现真实 Chat Completions 兼容协议和结构化 Decision 解析，可通过配置切换；协议测试不等同于真实模型质量、Token 或成本评测。
 
-`SearchDirectTool` 只调用 `SearchUseCase`。Tool 成功后，Agent Step 中的 `linkedTraceId` 指向权威 Search Trace；Agent Trace 不复制或改写检索来源。模型/Tool/Runtime 无法完成时，Adapter 使用原 SearchGoal 调用同一个 Search Use Case，响应模式为 `AGENT_TO_DIRECT_FALLBACK`。
+`SearchDirectTool` 和 `SearchFilteredTool` 都只调用 `SearchUseCase`。复杂 Query 同时执行原 Query 宽搜与改写 Query + 派生标签精搜，最终原样复用一个 Search Tool 候选集；Agent 不二次重排。Tool 成功后，Agent Step 中的 `linkedTraceId` 指向权威 Search Trace；模型/全部 Tool/Runtime 无法完成时，Adapter 使用原 SearchGoal 调用同一个 Search Use Case，响应模式为 `AGENT_TO_DIRECT_FALLBACK`。
+
+`AUTO` Query Mode 在进入 Runtime 前分流：简单 Query 直接调用 Search Use Case，返回 `executionMode=DIRECT` 且不创建 AgentRun；复杂 Query 或 ConstraintPatch 才进入 Agent。响应返回 `routeReason`、`SearchPlan`、`goalVersion`、所选 Tool 和候选复用证据。
 
 ## 8. API 与运行
 
@@ -155,9 +158,9 @@ POST /v1/agent/sessions/{sessionId}:cancel
 ```bash
 mvn -pl platform/agent-runtime,contexts/agent-orchestration-context,apps/agent-server -am test
 python3 evals/run_agent_search_eval.py
+python3 evals/run_complex_agent_eval.py
 ```
 
-固定 `direct-search-v1` 六 Query 基线上，Agent 与 Direct 的 `Recall@5/MRR@5/nDCG@5` 均为 `1.0`，Top1 Agreement 与 Overlap@5 均为 `1.0`。这证明 Agent 正确复用了 Direct Search，不证明 Agent 已产生质量增益。
+固定 `direct-search-v1` 六 Query 基线上，强制 Agent 与 Direct 的 `Recall@5/MRR@5/nDCG@5` 均为 `1.0`，证明基础复用没有回归。`complex-search-v1` 的六条关键词陷阱 Query 中，Direct `MRR@1/Recall@1=0.0`，Agent `MRR@1/Recall@1=1.0`；Tool 选择、任务完成、简单 Direct 路由和多轮版本测试全部通过。
 
-Phase 1 尚未完成真实 LLM、复杂 Query 路由、多轮约束补丁、动态/并行工具、多副本恢复、跨实例取消、实时 Push/SSE、HITL、子 Agent、MCP、完整 OTel 和故障注入。这些边界不能因为已经有租约、取消接口或扩展 Port 就提前标记为完成。
-
+当前尚未完成真实模型线上质量/成本基线、多副本 fencing 与失主恢复、跨实例取消、事务 Outbox、实时 Push/SSE、HITL、子 Agent、MCP、完整 OTel 和故障注入。这些边界不能因为已经有 Provider Adapter、租约或取消接口就提前标记为完成。

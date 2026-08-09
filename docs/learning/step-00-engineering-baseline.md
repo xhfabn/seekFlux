@@ -1,6 +1,6 @@
 # Step 0：工程基线
 
-> 本文按序记录最初建立仓库骨架时的历史切片。它对应开发 Step 0，不是 [`SeekFlux.md`](../../SeekFlux.md) 中的 Agent Phase 0。当前项目已经完成到 Step 5，真实下一步见[学习路线首页](README.md)。
+> 本文按序记录最初建立仓库骨架时的历史切片。它对应开发 Step 0，不是 [`SeekFlux.md`](../../SeekFlux.md) 中的 Agent Phase 0。当前项目已经完成到 Step 6，真实下一步见[学习路线首页](README.md)。
 
 ## 本阶段状态
 

@@ -164,5 +164,4 @@ curl -X POST http://localhost:8083/v1/agent/search \
 
 ## 下一步
 
-当时和当前的下一步都是 Step 6“复杂 Search Agent”：接入真实 `LlmClient` Provider 与可版本化 Prompt，增加 Query Mode Router、多轮 SearchGoal/ConstraintPatch、动态工具暴露、并行 Tool fan-out、无进展检测，并用复杂 Query 数据集证明相对 Direct Search 的增量价值。多实例恢复、跨实例取消、故障注入和 Shadow 属于 Step 7。
-
+本阶段完成时的下一步是 Step 6“复杂 Search Agent”，该切片现在已经完成。当前下一步是 Step 7“Agent 可靠性与平台化”，具体范围和门槛始终以[学习路线首页](README.md)为准。

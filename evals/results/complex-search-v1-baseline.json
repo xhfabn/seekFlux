@@ -1,0 +1,358 @@
+{
+  "datasetVersion": "complex-search-v1",
+  "evaluationVersion": "complex-search-agent-v1",
+  "generatedAt": "2026-08-08T14:50:00.825918+00:00",
+  "agentId": "search-assistant",
+  "k": 1,
+  "queryCount": 6,
+  "directAggregate": {
+    "precision@1": 0.0,
+    "recall@1": 0.0,
+    "mrr@1": 0.0,
+    "ndcg@1": 0.0,
+    "zeroResult": 0.0
+  },
+  "agentAggregate": {
+    "precision@1": 1.0,
+    "recall@1": 1.0,
+    "mrr@1": 1.0,
+    "ndcg@1": 1.0,
+    "zeroResult": 0.0
+  },
+  "comparison": {
+    "mrrGain": 1.0,
+    "toolSelectionAccuracy": 1.0,
+    "taskCompletionRate": 1.0,
+    "simpleDirectRate": 1.0,
+    "fallbackRate": 0.0,
+    "multiTurnVersionPassed": true,
+    "directP95Ms": 24.622,
+    "agentP95Ms": 159.344,
+    "agentAddedP95Ms": 136.214,
+    "simpleDirectP95Ms": 35.329,
+    "modelTokenAndCostMeasured": false
+  },
+  "queries": [
+    {
+      "queryId": "complex-camping",
+      "query": "只看适合亲子的杭州露营教程，不要成人徒步",
+      "derivedRequiredTags": [
+        "杭州",
+        "亲子",
+        "露营",
+        "教程"
+      ],
+      "directRankedDocumentKeys": [
+        "camping-keyword-trap"
+      ],
+      "agentRankedDocumentKeys": [
+        "camping-target"
+      ],
+      "directMetrics": {
+        "precision@1": 0.0,
+        "recall@1": 0.0,
+        "mrr@1": 0.0,
+        "ndcg@1": 0.0,
+        "zeroResult": 0.0
+      },
+      "agentMetrics": {
+        "precision@1": 1.0,
+        "recall@1": 1.0,
+        "mrr@1": 1.0,
+        "ndcg@1": 1.0,
+        "zeroResult": 0.0
+      },
+      "selectedTool": "search_filtered",
+      "directLatencyMs": 23.13,
+      "agentLatencyMs": 159.344,
+      "agentTrace": {
+        "agentVersion": "search-assistant-v2",
+        "plannerVersion": "default-react-loop-v1",
+        "decisionProviderVersion": "deterministic-complex-search-decision-v2",
+        "toolSchemaVersions": {
+          "search_direct": "search-direct-tool-v1",
+          "search_filtered": "search-filtered-tool-v1"
+        },
+        "stepActions": [
+          "CALL_TOOL",
+          "CALL_TOOL",
+          "COMPLETE"
+        ],
+        "terminalState": "RESULTS_READY"
+      }
+    },
+    {
+      "queryId": "complex-coffee",
+      "query": "只看适合新手的室内手冲咖啡教程，不要户外旅行",
+      "derivedRequiredTags": [
+        "咖啡",
+        "手冲",
+        "教程",
+        "新手",
+        "室内"
+      ],
+      "directRankedDocumentKeys": [
+        "coffee-keyword-trap"
+      ],
+      "agentRankedDocumentKeys": [
+        "coffee-target"
+      ],
+      "directMetrics": {
+        "precision@1": 0.0,
+        "recall@1": 0.0,
+        "mrr@1": 0.0,
+        "ndcg@1": 0.0,
+        "zeroResult": 0.0
+      },
+      "agentMetrics": {
+        "precision@1": 1.0,
+        "recall@1": 1.0,
+        "mrr@1": 1.0,
+        "ndcg@1": 1.0,
+        "zeroResult": 0.0
+      },
+      "selectedTool": "search_filtered",
+      "directLatencyMs": 24.413,
+      "agentLatencyMs": 41.876,
+      "agentTrace": {
+        "agentVersion": "search-assistant-v2",
+        "plannerVersion": "default-react-loop-v1",
+        "decisionProviderVersion": "deterministic-complex-search-decision-v2",
+        "toolSchemaVersions": {
+          "search_direct": "search-direct-tool-v1",
+          "search_filtered": "search-filtered-tool-v1"
+        },
+        "stepActions": [
+          "CALL_TOOL",
+          "CALL_TOOL",
+          "COMPLETE"
+        ],
+        "terminalState": "RESULTS_READY"
+      }
+    },
+    {
+      "queryId": "complex-photo",
+      "query": "只看杭州西湖附近的夜景摄影教程，不要北京旅行",
+      "derivedRequiredTags": [
+        "杭州",
+        "西湖",
+        "摄影",
+        "夜景",
+        "教程"
+      ],
+      "directRankedDocumentKeys": [
+        "photo-keyword-trap"
+      ],
+      "agentRankedDocumentKeys": [
+        "photo-target"
+      ],
+      "directMetrics": {
+        "precision@1": 0.0,
+        "recall@1": 0.0,
+        "mrr@1": 0.0,
+        "ndcg@1": 0.0,
+        "zeroResult": 0.0
+      },
+      "agentMetrics": {
+        "precision@1": 1.0,
+        "recall@1": 1.0,
+        "mrr@1": 1.0,
+        "ndcg@1": 1.0,
+        "zeroResult": 0.0
+      },
+      "selectedTool": "search_filtered",
+      "directLatencyMs": 24.622,
+      "agentLatencyMs": 35.976,
+      "agentTrace": {
+        "agentVersion": "search-assistant-v2",
+        "plannerVersion": "default-react-loop-v1",
+        "decisionProviderVersion": "deterministic-complex-search-decision-v2",
+        "toolSchemaVersions": {
+          "search_direct": "search-direct-tool-v1",
+          "search_filtered": "search-filtered-tool-v1"
+        },
+        "stepActions": [
+          "CALL_TOOL",
+          "CALL_TOOL",
+          "COMPLETE"
+        ],
+        "terminalState": "RESULTS_READY"
+      }
+    },
+    {
+      "queryId": "complex-cat",
+      "query": "只看新手猫咪宠物护理知识，不要户外旅行",
+      "derivedRequiredTags": [
+        "猫咪",
+        "宠物",
+        "护理",
+        "知识",
+        "新手"
+      ],
+      "directRankedDocumentKeys": [
+        "cat-keyword-trap"
+      ],
+      "agentRankedDocumentKeys": [
+        "cat-target"
+      ],
+      "directMetrics": {
+        "precision@1": 0.0,
+        "recall@1": 0.0,
+        "mrr@1": 0.0,
+        "ndcg@1": 0.0,
+        "zeroResult": 0.0
+      },
+      "agentMetrics": {
+        "precision@1": 1.0,
+        "recall@1": 1.0,
+        "mrr@1": 1.0,
+        "ndcg@1": 1.0,
+        "zeroResult": 0.0
+      },
+      "selectedTool": "search_filtered",
+      "directLatencyMs": 22.198,
+      "agentLatencyMs": 30.489,
+      "agentTrace": {
+        "agentVersion": "search-assistant-v2",
+        "plannerVersion": "default-react-loop-v1",
+        "decisionProviderVersion": "deterministic-complex-search-decision-v2",
+        "toolSchemaVersions": {
+          "search_direct": "search-direct-tool-v1",
+          "search_filtered": "search-filtered-tool-v1"
+        },
+        "stepActions": [
+          "CALL_TOOL",
+          "CALL_TOOL",
+          "COMPLETE"
+        ],
+        "terminalState": "RESULTS_READY"
+      }
+    },
+    {
+      "queryId": "complex-ai",
+      "query": "只看适合新手的 AI 办公教程，不要旅行摄影",
+      "derivedRequiredTags": [
+        "AI",
+        "办公",
+        "教程",
+        "新手"
+      ],
+      "directRankedDocumentKeys": [
+        "ai-keyword-trap"
+      ],
+      "agentRankedDocumentKeys": [
+        "ai-target"
+      ],
+      "directMetrics": {
+        "precision@1": 0.0,
+        "recall@1": 0.0,
+        "mrr@1": 0.0,
+        "ndcg@1": 0.0,
+        "zeroResult": 0.0
+      },
+      "agentMetrics": {
+        "precision@1": 1.0,
+        "recall@1": 1.0,
+        "mrr@1": 1.0,
+        "ndcg@1": 1.0,
+        "zeroResult": 0.0
+      },
+      "selectedTool": "search_filtered",
+      "directLatencyMs": 19.037,
+      "agentLatencyMs": 26.87,
+      "agentTrace": {
+        "agentVersion": "search-assistant-v2",
+        "plannerVersion": "default-react-loop-v1",
+        "decisionProviderVersion": "deterministic-complex-search-decision-v2",
+        "toolSchemaVersions": {
+          "search_direct": "search-direct-tool-v1",
+          "search_filtered": "search-filtered-tool-v1"
+        },
+        "stepActions": [
+          "CALL_TOOL",
+          "CALL_TOOL",
+          "COMPLETE"
+        ],
+        "terminalState": "RESULTS_READY"
+      }
+    },
+    {
+      "queryId": "complex-cooking",
+      "query": "只看适合新手的室内家常菜美食教程，不要户外露营",
+      "derivedRequiredTags": [
+        "家常菜",
+        "美食",
+        "教程",
+        "新手",
+        "室内"
+      ],
+      "directRankedDocumentKeys": [
+        "cooking-keyword-trap"
+      ],
+      "agentRankedDocumentKeys": [
+        "cooking-target"
+      ],
+      "directMetrics": {
+        "precision@1": 0.0,
+        "recall@1": 0.0,
+        "mrr@1": 0.0,
+        "ndcg@1": 0.0,
+        "zeroResult": 0.0
+      },
+      "agentMetrics": {
+        "precision@1": 1.0,
+        "recall@1": 1.0,
+        "mrr@1": 1.0,
+        "ndcg@1": 1.0,
+        "zeroResult": 0.0
+      },
+      "selectedTool": "search_filtered",
+      "directLatencyMs": 21.98,
+      "agentLatencyMs": 28.183,
+      "agentTrace": {
+        "agentVersion": "search-assistant-v2",
+        "plannerVersion": "default-react-loop-v1",
+        "decisionProviderVersion": "deterministic-complex-search-decision-v2",
+        "toolSchemaVersions": {
+          "search_direct": "search-direct-tool-v1",
+          "search_filtered": "search-filtered-tool-v1"
+        },
+        "stepActions": [
+          "CALL_TOOL",
+          "CALL_TOOL",
+          "COMPLETE"
+        ],
+        "terminalState": "RESULTS_READY"
+      }
+    }
+  ],
+  "simpleRouting": [
+    {
+      "queryId": "simple-cat",
+      "executionMode": "DIRECT",
+      "routeReason": "SIMPLE_QUERY",
+      "agentTraceAbsent": true,
+      "latencyMs": 7.856,
+      "passed": true
+    },
+    {
+      "queryId": "simple-coffee",
+      "executionMode": "DIRECT",
+      "routeReason": "SIMPLE_QUERY",
+      "agentTraceAbsent": true,
+      "latencyMs": 35.329,
+      "passed": true
+    }
+  ],
+  "multiTurn": {
+    "initialGoalVersion": 1,
+    "patchedGoalVersion": 2,
+    "patchedDerivedRequiredTags": [
+      "杭州",
+      "亲子",
+      "露营"
+    ],
+    "stalePatchErrorCode": "AGENT_CONSTRAINT_VERSION_CONFLICT",
+    "passed": true
+  }
+}

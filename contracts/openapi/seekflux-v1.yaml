@@ -349,6 +349,11 @@ components:
           maxLength: 128
           default: search-assistant
           enum: [search-assistant, search-precise]
+        mode:
+          type: string
+          default: AUTO
+          enum: [AUTO, DIRECT, AGENT]
+          description: AUTO sends simple queries directly to Search and complex or multi-turn queries to the Agent.
         query: {type: string, minLength: 1, maxLength: 500}
         page: {type: integer, minimum: 0, default: 0}
         size: {type: integer, minimum: 1, maximum: 50, default: 12}
@@ -356,8 +361,27 @@ components:
           type: array
           maxItems: 10
           items: {type: string, maxLength: 64}
+        constraintPatch:
+          $ref: "#/components/schemas/ConstraintPatchRequest"
         options:
           $ref: "#/components/schemas/AgentSearchOptions"
+    ConstraintPatchRequest:
+      type: object
+      required: [baseVersion]
+      description: Optimistic, version-checked update to the persisted Search Goal.
+      properties:
+        baseVersion: {type: integer, format: int64, minimum: 1}
+        replacementQuery: {type: string, minLength: 1, maxLength: 500}
+        page: {type: integer, minimum: 0}
+        size: {type: integer, minimum: 1, maximum: 50}
+        addRequiredTags:
+          type: array
+          maxItems: 10
+          items: {type: string, maxLength: 64}
+        removeRequiredTags:
+          type: array
+          maxItems: 10
+          items: {type: string, maxLength: 64}
     QueryConstraintSet:
       type: object
       required: [page, size, requiredTags]
@@ -368,6 +392,21 @@ components:
           type: array
           maxItems: 10
           items: {type: string, maxLength: 64}
+    SearchPlan:
+      type: object
+      required: [originalQuery, rewrittenQuery, derivedRequiredTags, complex, reasons]
+      properties:
+        originalQuery: {type: string}
+        rewrittenQuery: {type: string}
+        derivedRequiredTags:
+          type: array
+          items: {type: string}
+        complex: {type: boolean}
+        reasons:
+          type: array
+          items:
+            type: string
+            enum: [LONG_NATURAL_LANGUAGE_QUERY, EXPLICIT_CONSTRAINT_LANGUAGE, MULTI_SLOT_QUERY, MULTI_TURN_GOAL]
     AgentStepTrace:
       type: object
       required: [step, action, status, tookMillis]
@@ -427,16 +466,21 @@ components:
         - turnId
         - state
         - executionMode
+        - goalVersion
+        - routeReason
+        - searchPlan
         - appliedConstraints
         - total
         - page
         - size
         - items
         - agentTrace
+        - successfulToolCount
+        - candidateSetReused
         - degraded
       properties:
         requestId: {type: string}
-        agentRunId: {type: string, format: uuid}
+        agentRunId: {type: [string, "null"], format: uuid}
         sessionId: {type: string}
         turnId: {type: string}
         state:
@@ -444,7 +488,17 @@ components:
           enum: [RESULTS_READY, NEED_CLARIFICATION, FALLBACK_RESULTS, CANCELLED, FAILED]
         executionMode:
           type: string
-          enum: [AGENT, AGENT_TO_DIRECT_FALLBACK]
+          enum: [DIRECT, AGENT, AGENT_TO_DIRECT_FALLBACK]
+        goalVersion:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Zero for stateless Direct routing; positive for a committed Agent Search Goal.
+        routeReason:
+          type: string
+          enum: [SIMPLE_QUERY, COMPLEX_QUERY, MULTI_TURN_PATCH, EXPLICIT_DIRECT, EXPLICIT_AGENT]
+        searchPlan:
+          $ref: "#/components/schemas/SearchPlan"
         appliedConstraints:
           $ref: "#/components/schemas/QueryConstraintSet"
         clarification: {type: [string, "null"]}
@@ -460,7 +514,14 @@ components:
             - $ref: "#/components/schemas/SearchTrace"
             - type: "null"
         agentTrace:
-          $ref: "#/components/schemas/AgentTrace"
+          oneOf:
+            - $ref: "#/components/schemas/AgentTrace"
+            - type: "null"
+        selectedTool: {type: [string, "null"]}
+        successfulToolCount: {type: integer, minimum: 0}
+        candidateSetReused:
+          type: boolean
+          description: True when the response returns one Search Tool candidate set without Agent-side reranking.
         degraded: {type: boolean}
         fallbackReason: {type: [string, "null"]}
     UpdateUserInterestProfileRequest:
@@ -760,7 +821,7 @@ components:
           schema:
             $ref: "#/components/schemas/ApiError"
     AgentConflict:
-      description: Agent Session is busy or the request id was already committed
+      description: Agent Session is busy, the request id was already committed, or a Search Goal patch used a stale version
       content:
         application/json:
           schema:

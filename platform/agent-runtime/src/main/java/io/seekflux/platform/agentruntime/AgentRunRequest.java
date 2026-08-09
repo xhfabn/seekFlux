@@ -7,7 +7,8 @@ public record AgentRunRequest(
         String sessionId,
         String turnId,
         String input,
-        Map<String, Object> attributes) {
+        Map<String, Object> attributes,
+        SessionStatePatch statePatch) {
 
     public AgentRunRequest {
         requestId = requireText(requestId, "request id", 128);
@@ -15,6 +16,15 @@ public record AgentRunRequest(
         turnId = requireText(turnId, "turn id", 128);
         input = requireText(input, "agent input", 500);
         attributes = attributes == null ? Map.of() : Map.copyOf(attributes);
+    }
+
+    public AgentRunRequest(
+            String requestId,
+            String sessionId,
+            String turnId,
+            String input,
+            Map<String, Object> attributes) {
+        this(requestId, sessionId, turnId, input, attributes, null);
     }
 
     private static String requireText(String value, String name, int maxLength) {

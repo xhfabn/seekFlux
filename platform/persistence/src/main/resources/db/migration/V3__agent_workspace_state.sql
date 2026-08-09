@@ -1,0 +1,2 @@
+ALTER TABLE agent.sessions
+    ADD COLUMN IF NOT EXISTS state_version BIGINT NOT NULL DEFAULT 0;

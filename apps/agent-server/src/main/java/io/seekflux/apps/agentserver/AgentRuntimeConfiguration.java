@@ -3,13 +3,22 @@ package io.seekflux.apps.agentserver;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.seekflux.agent.application.AgentSearchApplicationService;
 import io.seekflux.agent.domain.SearchClarificationPolicy;
+import io.seekflux.agent.domain.QueryModeRouter;
+import io.seekflux.agent.domain.SearchIntentAnalyzer;
+import io.seekflux.agent.domain.SearchToolPolicy;
 import io.seekflux.agent.port.in.AgentSearchUseCase;
+import io.seekflux.agent.port.out.AgentConversationPort;
+import io.seekflux.agent.port.out.DirectSearchPort;
 import io.seekflux.agent.port.out.AgentExecutionPort;
 import io.seekflux.apps.agentserver.runtime.AgentRuntimeExecutionAdapter;
+import io.seekflux.apps.agentserver.runtime.AgentSessionGoalAdapter;
 import io.seekflux.apps.agentserver.runtime.DeterministicSearchLlmClient;
+import io.seekflux.apps.agentserver.runtime.DirectSearchExecutionAdapter;
+import io.seekflux.apps.agentserver.runtime.OpenAiCompatibleLlmClient;
 import io.seekflux.apps.agentserver.runtime.RedisAgentSessionProjection;
 import io.seekflux.apps.agentserver.runtime.RedisExecutionAuthorityStore;
 import io.seekflux.apps.agentserver.runtime.SearchDirectTool;
+import io.seekflux.apps.agentserver.runtime.SearchFilteredTool;
 import io.seekflux.platform.agentruntime.AgentDefinition;
 import io.seekflux.platform.agentruntime.AgentRunRecorder;
 import io.seekflux.platform.agentruntime.AgentRuntime;
@@ -19,6 +28,8 @@ import io.seekflux.platform.agentruntime.AgentToolRegistry;
 import io.seekflux.platform.agentruntime.DefaultAgentToolExecutor;
 import io.seekflux.platform.agentruntime.context.ContextEngine;
 import io.seekflux.platform.agentruntime.context.DefaultContextEngine;
+import io.seekflux.platform.agentruntime.context.MapPromptResolver;
+import io.seekflux.platform.agentruntime.context.PromptResolver;
 import io.seekflux.platform.agentruntime.execution.ExecutionAuthorityStore;
 import io.seekflux.platform.agentruntime.execution.SessionExecutor;
 import io.seekflux.platform.agentruntime.feature.BuiltInFeatureNodes;
@@ -34,6 +45,8 @@ import io.seekflux.platform.agentruntime.session.AgentSessionStore;
 import io.seekflux.search.port.in.SearchUseCase;
 import java.time.Clock;
 import java.time.Duration;
+import java.net.URI;
+import java.net.http.HttpClient;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -78,13 +91,35 @@ class AgentRuntimeConfiguration {
     }
 
     @Bean
+    QueryModeRouter queryModeRouter() {
+        return new QueryModeRouter();
+    }
+
+    @Bean
+    SearchIntentAnalyzer searchIntentAnalyzer() {
+        return new SearchIntentAnalyzer();
+    }
+
+    @Bean
+    SearchToolPolicy searchToolPolicy() {
+        return new SearchToolPolicy();
+    }
+
+    @Bean
     SearchDirectTool searchDirectTool(SearchUseCase directSearchUseCase) {
         return new SearchDirectTool(directSearchUseCase);
     }
 
+    @Bean
+    SearchFilteredTool searchFilteredTool(SearchUseCase directSearchUseCase) {
+        return new SearchFilteredTool(directSearchUseCase);
+    }
+
     @Bean(name = "seekFluxAgentTools")
-    List<AgentTool> seekFluxAgentTools(SearchDirectTool searchDirectTool) {
-        return List.of(searchDirectTool);
+    List<AgentTool> seekFluxAgentTools(
+            SearchDirectTool searchDirectTool,
+            SearchFilteredTool searchFilteredTool) {
+        return List.of(searchDirectTool, searchFilteredTool);
     }
 
     @Bean
@@ -99,8 +134,30 @@ class AgentRuntimeConfiguration {
     }
 
     @Bean
-    ContextEngine agentContextEngine() {
-        return new DefaultContextEngine();
+    PromptResolver agentPromptResolver() {
+        return new MapPromptResolver(Map.of(
+                "search-agent-prompt-v2", """
+                        你是 SeekFlux 复杂搜索规划器。只能输出 JSON，不得输出说明文字。
+                        允许动作：call_tool、call_tools、complete、clarify、fallback。
+                        call_tools 格式为 {"action":"call_tools","calls":[{"tool":"工具名","arguments":{}}]}。
+                        观察 Tool 结果后，complete 只返回 {"action":"complete","output":{"selectedTool":"工具名"}}，
+                        Runtime 会按引用复用真实候选，禁止复制、编造或重排候选内容。
+                        只能调用请求上下文允许的 Tool；复杂查询优先并行调用宽搜与精确过滤，
+                        得到 Tool 观察后复用成功候选，不虚构结果，不自行改写 Search 排序。
+                        """,
+                "search-precise-prompt-v2", """
+                        你是 SeekFlux 精确搜索规划器。只能输出结构化 JSON Decision。
+                        严格遵守动态工具集、参数 Schema、共同 Deadline 和已有 SearchGoal，
+                        Tool 成功后只用 complete.output.selectedTool 引用一个真实候选集，
+                        缺少必要目标时追问；Tool 失败时返回 fallback，不生成虚构内容。
+                        """));
+    }
+
+    @Bean
+    ContextEngine agentContextEngine(
+            PromptResolver agentPromptResolver,
+            AgentToolRegistry agentToolRegistry) {
+        return new DefaultContextEngine(agentPromptResolver, agentToolRegistry);
     }
 
     @Bean
@@ -181,25 +238,53 @@ class AgentRuntimeConfiguration {
 
     @Bean(name = "seekFluxAgentDefinitions")
     Map<String, AgentDefinition> seekFluxAgentDefinitions(
+            @Qualifier("seekFluxAgentLlmClients") Map<String, LlmClient> llmClients,
             @Value("${seekflux.agent.timeout-ms:2500}") long timeoutMillis) {
         AgentDefinition assistant = definition(
                 "search-assistant",
-                "search-assistant-v1",
-                "search-agent-prompt-v1",
-                3,
+                "search-assistant-v2",
+                "search-agent-prompt-v2",
+                llmClients.get("search-assistant").version(),
+                4,
                 timeoutMillis);
         AgentDefinition precise = definition(
                 "search-precise",
-                "search-precise-v1",
-                "search-precise-prompt-v1",
-                2,
+                "search-precise-v2",
+                "search-precise-prompt-v2",
+                llmClients.get("search-precise").version(),
+                3,
                 timeoutMillis);
         return Map.of(assistant.id(), assistant, precise.id(), precise);
     }
 
     @Bean(name = "seekFluxAgentLlmClients")
-    Map<String, LlmClient> seekFluxAgentLlmClients(SearchClarificationPolicy clarificationPolicy) {
-        LlmClient client = new DeterministicSearchLlmClient(clarificationPolicy);
+    Map<String, LlmClient> seekFluxAgentLlmClients(
+            SearchClarificationPolicy clarificationPolicy,
+            ObjectMapper objectMapper,
+            @Value("${seekflux.agent.llm.provider:deterministic}") String provider,
+            @Value("${seekflux.agent.llm.endpoint:}") String endpoint,
+            @Value("${seekflux.agent.llm.api-key:}") String apiKey,
+            @Value("${seekflux.agent.llm.model:gpt-4.1-mini}") String model,
+            @Value("${seekflux.agent.llm.timeout-ms:1800}") long timeoutMillis) {
+        LlmClient client;
+        if ("openai-compatible".equalsIgnoreCase(provider.trim())) {
+            if (endpoint == null || endpoint.isBlank()) {
+                throw new IllegalArgumentException("Agent LLM endpoint is required for openai-compatible provider");
+            }
+            client = new OpenAiCompatibleLlmClient(
+                    HttpClient.newBuilder()
+                            .connectTimeout(Duration.ofMillis(timeoutMillis))
+                            .build(),
+                    objectMapper,
+                    URI.create(endpoint.trim()),
+                    apiKey,
+                    model,
+                    Duration.ofMillis(timeoutMillis));
+        } else if ("deterministic".equalsIgnoreCase(provider.trim())) {
+            client = new DeterministicSearchLlmClient(clarificationPolicy);
+        } else {
+            throw new IllegalArgumentException("unsupported Agent LLM provider: " + provider);
+        }
         return Map.of("search-assistant", client, "search-precise", client);
     }
 
@@ -227,14 +312,37 @@ class AgentRuntimeConfiguration {
     }
 
     @Bean
-    AgentSearchUseCase agentSearchUseCase(AgentExecutionPort executionPort) {
-        return new AgentSearchApplicationService(executionPort);
+    AgentConversationPort agentConversationPort(AgentSessionStore sessions) {
+        return new AgentSessionGoalAdapter(sessions);
+    }
+
+    @Bean
+    DirectSearchPort directSearchPort(SearchUseCase directSearchUseCase) {
+        return new DirectSearchExecutionAdapter(directSearchUseCase);
+    }
+
+    @Bean
+    AgentSearchUseCase agentSearchUseCase(
+            AgentExecutionPort executionPort,
+            DirectSearchPort directSearchPort,
+            AgentConversationPort agentConversationPort,
+            QueryModeRouter queryModeRouter,
+            SearchIntentAnalyzer searchIntentAnalyzer,
+            SearchToolPolicy searchToolPolicy) {
+        return new AgentSearchApplicationService(
+                executionPort,
+                directSearchPort,
+                agentConversationPort,
+                queryModeRouter,
+                searchIntentAnalyzer,
+                searchToolPolicy);
     }
 
     private static AgentDefinition definition(
             String id,
             String version,
             String promptVersion,
+            String decisionProviderVersion,
             int maxSteps,
             long timeoutMillis) {
         return new AgentDefinition(
@@ -242,10 +350,10 @@ class AgentRuntimeConfiguration {
                 version,
                 "default-react-loop-v1",
                 promptVersion,
-                DeterministicSearchLlmClient.VERSION,
-                Set.of(SearchDirectTool.NAME),
+                decisionProviderVersion,
+                Set.of(SearchDirectTool.NAME, SearchFilteredTool.NAME),
                 maxSteps,
-                1,
+                2,
                 Duration.ofMillis(timeoutMillis),
                 true);
     }

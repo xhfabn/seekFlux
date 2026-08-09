@@ -120,4 +120,4 @@ python3 evals/run_direct_search_eval.py --require-hybrid --min-recall 1.0
 
 ## 下一步
 
-本阶段完成时的下一步是 Step 5“Agent Runtime MVP”，该切片现在已经完成。当前下一步是 Step 6“复杂 Search Agent”，具体范围和门槛始终以[学习路线首页](README.md)为准。
+本阶段完成时的下一步是 Step 5“Agent Runtime MVP”，该切片和其后的复杂 Search Agent 都已经完成。当前下一步以[学习路线首页](README.md)为准。

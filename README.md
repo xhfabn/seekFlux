@@ -1,8 +1,8 @@
 # SeekFlux
 
-SeekFlux 是面向短视频内容平台的多模态搜索、推荐与 Search Agent 系统。当前代码已经跑通内容登记、PostgreSQL/Outbox/Kafka/Worker 画像生产、Elasticsearch BM25/kNN 混合检索、热门／兴趣／相似内容多路召回，以及有限步 Search Agent、Session 事件、Tool 调用和确定性回退。
+SeekFlux 是面向短视频内容平台的多模态搜索、推荐与 Search Agent 系统。当前代码已经跑通内容登记、PostgreSQL/Outbox/Kafka/Worker 画像生产、Elasticsearch BM25/kNN 混合检索、热门／兴趣／相似内容多路召回，以及简单/复杂 Query 路由、多轮 SearchGoal、并行 Search Tool 和确定性回退。
 
-> 当前开发 Step、Agent Phase、下一步及完成门槛只在[学习路线](docs/learning/README.md)维护，避免多个 README 重复记录后产生冲突。架构目标不等于已经实现，当前只把测试与评测证明的 Phase 1 标记为完成。
+> 当前开发 Step、Agent Phase、下一步及完成门槛只在[学习路线](docs/learning/README.md)维护，避免多个 README 重复记录后产生冲突。架构目标不等于已经实现，当前只把测试与评测证明的 Phase 0～2 标记为完成。
 
 架构依据见 [SeekFlux.md](SeekFlux.md)，模块依赖规则见 [docs/module-boundaries.md](docs/module-boundaries.md)。如果希望按实现顺序学习项目，请从 [docs/learning/README.md](docs/learning/README.md) 开始；其中包含唯一的开发路线、当前状态、按序阶段日志和验收门槛。
 
@@ -25,7 +25,7 @@ SeekFlux 是面向短视频内容平台的多模态搜索、推荐与 Search Age
 - `deploy/`：本地 Compose、后续 Helm、Dashboard 和告警；
 - `evals/`：评测数据与版本化结果。
 
-Agent Phase 1 模块已经实现：`apps/agent-server` 负责独立进程入口，`contexts/agent-orchestration-context` 负责搜索目标、基础约束、追问与回退语义，`platform/agent-runtime` 负责 Router、FeaturePipeline、SessionExecutor、有限步 AgentLoop、Deadline、取消和运行事件。Search Tool 只能调用 Search Use Case，不能直接访问 Elasticsearch、Redis 或数据库。详细内核见 [`docs/agent-runtime.md`](docs/agent-runtime.md)。
+Agent Phase 2 已经实现：`apps/agent-server` 负责独立进程入口和 Provider/Tool Adapter，`contexts/agent-orchestration-context` 负责 Query Mode、SearchPlan、版本化 SearchGoal/ConstraintPatch 与回退语义，`platform/agent-runtime` 负责 Router、FeaturePipeline、SessionExecutor、有限步 AgentLoop、动态并行 Tool、Deadline、取消和运行事件。Search Tool 只能调用 Search Use Case，不能直接访问 Elasticsearch、Redis 或数据库。详细内核见 [`docs/agent-runtime.md`](docs/agent-runtime.md)。
 
 首期保持模块化单体，`online-server` 装配 Search/Recommendation 等 Context。只有出现独立扩缩容、发布或故障隔离需求后，才将模块拆成服务。
 
@@ -110,7 +110,7 @@ mvn validate
 - 当前语义通道是可复现的 Hashing n-gram ANN 基线，尚未实现专业中文分词、预训练文本/视频 Embedding 和 Cursor 深分页；
 - Feed 当前使用新鲜度作为无行为数据时的热门代理，兴趣来自显式输入；真实热度、最近行为兴趣和 Item-Item 协同后移到可选 Step 8～10；
 - 尚未实现互动、实时特征和模型排序业务；
-- Agent 当前使用确定性决策 Provider，尚未接入真实 LLM、Query Mode Router、多轮 ConstraintPatch、动态/并行 Tool、多实例恢复、HITL、子 Agent、MCP 和实时流式 Push；
+- Agent 默认使用确定性决策 Provider，已经提供 OpenAI-compatible Adapter，但尚无真实模型质量/Token/成本基线；多实例 fencing/恢复、跨实例取消、HITL、子 Agent、MCP 和实时流式 Push 仍未实现；
 - 没有把十个 Context 拆成十个进程。
 
 后续工作的唯一顺序、状态和验收门槛见[学习路线](docs/learning/README.md)，根 README 不再维护路线副本。

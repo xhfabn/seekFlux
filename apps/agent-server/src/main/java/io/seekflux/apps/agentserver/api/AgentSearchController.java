@@ -1,5 +1,7 @@
 package io.seekflux.apps.agentserver.api;
 
+import io.seekflux.agent.domain.ConstraintPatch;
+import io.seekflux.agent.port.in.AgentRequestedMode;
 import io.seekflux.agent.port.in.AgentSearchCommand;
 import io.seekflux.agent.port.in.AgentSearchUseCase;
 import io.seekflux.platform.agentruntime.router.Router;
@@ -48,7 +50,22 @@ public class AgentSearchController {
                 request.page() == null ? 0 : request.page(),
                 request.size() == null ? 12 : request.size(),
                 request.requiredTags() == null ? List.of() : request.requiredTags(),
-                allowClarification)));
+                allowClarification,
+                request.mode() == null ? AgentRequestedMode.AUTO : request.mode(),
+                constraintPatch(request.constraintPatch()))));
+    }
+
+    private static ConstraintPatch constraintPatch(AgentSearchRequest.ConstraintPatchRequest patch) {
+        if (patch == null) {
+            return null;
+        }
+        return new ConstraintPatch(
+                patch.baseVersion(),
+                patch.replacementQuery(),
+                patch.page(),
+                patch.size(),
+                patch.addRequiredTags() == null ? List.of() : patch.addRequiredTags(),
+                patch.removeRequiredTags() == null ? List.of() : patch.removeRequiredTags());
     }
 
     @PostMapping("/sessions/{sessionId}:cancel")

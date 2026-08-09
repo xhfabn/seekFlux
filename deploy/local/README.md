@@ -18,6 +18,8 @@
 `up` 会依次启动 PostgreSQL、Redis、Kafka、Elasticsearch、MinIO、Content Server、
 Worker Runner、Online Server、Agent Server 和 `apps/web`。Agent Server 默认使用 `8083`，避免与可选 Flink UI 的 `8082` 冲突。`open` 只打开 `http://localhost:3001/` 这一个前端入口。脚本是幂等的，已安装或已运行的组件不会重复处理。
 
+Agent Server 默认使用无需密钥的确定性 Provider。联调 Chat Completions 兼容端点时，在 `.env` 设置 `AGENT_LLM_PROVIDER=openai-compatible`、`AGENT_LLM_ENDPOINT`、`AGENT_LLM_API_KEY`、`AGENT_LLM_MODEL` 和可选的 `AGENT_LLM_TIMEOUT_MS`，再执行 `./seekflux.sh apps-down && ./seekflux.sh apps-up`。密钥不能提交到仓库。
+
 国外源较慢且本机已有代理时，可在根目录 `.env` 中设置：
 
 ```bash

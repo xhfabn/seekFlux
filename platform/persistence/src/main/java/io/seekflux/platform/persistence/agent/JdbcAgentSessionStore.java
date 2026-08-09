@@ -7,7 +7,9 @@ import io.seekflux.platform.agentruntime.AgentDefinition;
 import io.seekflux.platform.agentruntime.AgentRunRequest;
 import io.seekflux.platform.agentruntime.AgentRunResult;
 import io.seekflux.platform.agentruntime.AgentTerminalState;
+import io.seekflux.platform.agentruntime.SessionStatePatch;
 import io.seekflux.platform.agentruntime.session.AgentSession;
+import io.seekflux.platform.agentruntime.session.AgentSessionStateConflictException;
 import io.seekflux.platform.agentruntime.session.AgentSessionStore;
 import io.seekflux.platform.agentruntime.session.IngressCommitResult;
 import io.seekflux.platform.agentruntime.session.WorkspaceEvent;
@@ -103,7 +105,26 @@ public class JdbcAgentSessionStore implements AgentSessionStore {
         if (duplicate) {
             return IngressCommitResult.DUPLICATE;
         }
-        long position = advancePosition(request.sessionId(), "EXECUTING", eventTime);
+        SessionStatePatch statePatch = request.statePatch();
+        long position;
+        if (statePatch == null) {
+            position = advancePosition(request.sessionId(), "EXECUTING", eventTime);
+        } else {
+            PositionAdvance advanced = advancePositionWithState(
+                    request.sessionId(), statePatch, "EXECUTING", eventTime);
+            insertWorkspaceEvent(
+                    request.sessionId(),
+                    advanced.eventPosition() - 1,
+                    "STATE_PATCHED",
+                    null,
+                    null,
+                    eventTime,
+                    Map.of(
+                            "baseVersion", statePatch.baseVersion(),
+                            "stateVersion", advanced.stateVersion(),
+                            "state", statePatch.state()));
+            position = advanced.eventPosition();
+        }
         insertWorkspaceEvent(
                 request.sessionId(),
                 position,
@@ -148,6 +169,35 @@ public class JdbcAgentSessionStore implements AgentSessionStore {
                 .param("sessionId", sessionId)
                 .query(Long.class)
                 .single();
+    }
+
+    private PositionAdvance advancePositionWithState(
+            String sessionId,
+            SessionStatePatch patch,
+            String status,
+            Instant eventTime) {
+        Optional<PositionAdvance> advanced = jdbcClient.sql("""
+                        UPDATE agent.sessions
+                        SET event_position = event_position + 2,
+                            version = version + 2,
+                            state_version = state_version + 1,
+                            snapshot = CAST(:snapshot AS jsonb),
+                            status = :status,
+                            updated_at = :eventTime
+                        WHERE session_id = :sessionId
+                          AND state_version = :baseVersion
+                        RETURNING event_position, state_version
+                        """)
+                .param("snapshot", toJson(patch.state()))
+                .param("status", status)
+                .param("eventTime", databaseTime(eventTime))
+                .param("sessionId", sessionId)
+                .param("baseVersion", patch.baseVersion())
+                .query((row, rowNumber) -> new PositionAdvance(
+                        row.getLong("event_position"),
+                        row.getLong("state_version")))
+                .optional();
+        return advanced.orElseThrow(() -> new AgentSessionStateConflictException(patch.baseVersion()));
     }
 
     private void insertWorkspaceEvent(
@@ -199,6 +249,12 @@ public class JdbcAgentSessionStore implements AgentSessionStore {
                     row.getString("request_id"),
                     row.getString("turn_id"),
                     string(payload, "text"));
+            case "STATE_PATCHED" -> new WorkspaceEvent.StatePatched(
+                    position,
+                    eventTime,
+                    number(payload, "baseVersion"),
+                    number(payload, "stateVersion"),
+                    map(payload, "state"));
             case "RUN_COMPLETED" -> new WorkspaceEvent.RunCompleted(
                     position,
                     eventTime,
@@ -234,7 +290,28 @@ public class JdbcAgentSessionStore implements AgentSessionStore {
         return value == null ? null : String.valueOf(value);
     }
 
+    private static long number(Map<String, Object> payload, String key) {
+        Object value = payload.get(key);
+        if (!(value instanceof Number number)) {
+            throw new IllegalStateException("workspace event field is not numeric: " + key);
+        }
+        return number.longValue();
+    }
+
+    private static Map<String, Object> map(Map<String, Object> payload, String key) {
+        Object value = payload.get(key);
+        if (!(value instanceof Map<?, ?> values)) {
+            throw new IllegalStateException("workspace event field is not an object: " + key);
+        }
+        Map<String, Object> result = new java.util.LinkedHashMap<>();
+        values.forEach((itemKey, itemValue) -> result.put(String.valueOf(itemKey), itemValue));
+        return Map.copyOf(result);
+    }
+
     private static OffsetDateTime databaseTime(Instant value) {
         return value.atOffset(ZoneOffset.UTC);
+    }
+
+    private record PositionAdvance(long eventPosition, long stateVersion) {
     }
 }

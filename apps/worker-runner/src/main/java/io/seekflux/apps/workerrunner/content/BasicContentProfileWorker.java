@@ -4,6 +4,8 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.seekflux.content.application.ContentApplicationService;
 import io.seekflux.content.domain.ContentId;
+import io.seekflux.content.domain.ContentStateException;
+import io.seekflux.content.domain.ContentStatus;
 import io.seekflux.content.port.in.CompleteContentProfileCommand;
 import io.seekflux.content.port.in.ContentUseCase;
 import java.util.ArrayList;
@@ -30,6 +32,9 @@ public final class BasicContentProfileWorker {
         }
         JsonNode payload = envelope.path("payload");
         ContentId contentId = ContentId.parse(requiredText(payload, "content_id"));
+        if (contentUseCase.get(contentId).status() == ContentStatus.WITHDRAWN) {
+            return;
+        }
         String title = requiredText(payload, "title");
         String description = payload.path("description").asText("").trim();
         String summary = description.isEmpty() ? title : title + " — " + description;
@@ -46,8 +51,16 @@ public final class BasicContentProfileWorker {
 
         CompleteContentProfileCommand command = new CompleteContentProfileCommand(
                 contentId, 1, summary, tags, "");
-        contentUseCase.completeProfile(command);
-        contentUseCase.publish(contentId);
+        try {
+            contentUseCase.completeProfile(command);
+            contentUseCase.publish(contentId);
+        } catch (ContentStateException error) {
+            // A withdrawal can race the asynchronous profile worker. The stale event is
+            // already satisfied and must not poison the Kafka partition with retries.
+            if (contentUseCase.get(contentId).status() != ContentStatus.WITHDRAWN) {
+                throw error;
+            }
+        }
     }
 
     private static String requiredText(JsonNode payload, String field) {

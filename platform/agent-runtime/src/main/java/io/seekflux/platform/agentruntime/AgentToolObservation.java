@@ -7,6 +7,7 @@ public record AgentToolObservation(
         String toolName,
         String schemaVersion,
         Map<String, Object> arguments,
+        boolean argumentsRepaired,
         AgentToolResult result,
         long tookMillis) {
 

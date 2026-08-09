@@ -34,6 +34,12 @@ seekflux:
     read-timeout-ms: ${RETRIEVAL_READ_TIMEOUT_MS:1200}
   agent:
     timeout-ms: ${AGENT_REQUEST_TIMEOUT_MS:2500}
+    llm:
+      provider: ${AGENT_LLM_PROVIDER:deterministic}
+      endpoint: ${AGENT_LLM_ENDPOINT:}
+      api-key: ${AGENT_LLM_API_KEY:}
+      model: ${AGENT_LLM_MODEL:gpt-4.1-mini}
+      timeout-ms: ${AGENT_LLM_TIMEOUT_MS:1800}
     execution-pool:
       core-size: ${AGENT_EXECUTION_CORE_SIZE:2}
       max-size: ${AGENT_EXECUTION_MAX_SIZE:4}

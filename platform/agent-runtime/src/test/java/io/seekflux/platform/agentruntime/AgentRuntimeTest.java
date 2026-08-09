@@ -12,6 +12,9 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -128,16 +131,120 @@ class AgentRuntimeTest {
         assertNotNull(result.trace());
     }
 
+    @Test
+    void executesToolFanOutInParallelUnderOneDeadline() {
+        CyclicBarrier barrier = new CyclicBarrier(2);
+        AtomicInteger active = new AtomicInteger();
+        AtomicInteger maxActive = new AtomicInteger();
+        java.util.function.Function<AgentToolContext, AgentToolResult> action = context -> {
+            int running = active.incrementAndGet();
+            maxActive.accumulateAndGet(running, Math::max);
+            try {
+                barrier.await(500, TimeUnit.MILLISECONDS);
+                return AgentToolResult.success(Map.of("tool", context.arguments().get("query")), null);
+            } catch (Exception error) {
+                return AgentToolResult.failure("BARRIER_FAILED");
+            } finally {
+                active.decrementAndGet();
+            }
+        };
+        AgentToolRegistry registry = new AgentToolRegistry(List.of(
+                tool("search_direct", action),
+                tool("search_filtered", action)));
+        AgentRuntime runtime = new AgentRuntime(
+                registry,
+                new DefaultAgentToolExecutor(registry),
+                executor,
+                AgentRunRecorder.NOOP,
+                Clock.systemUTC());
+
+        AgentRunResult result = runtime.run(
+                definition(Duration.ofSeconds(1), 3, Set.of("search_direct", "search_filtered"), 2),
+                request(),
+                context -> context.observations().isEmpty()
+                        ? new AgentDecision.CallTools(List.of(
+                                new AgentDecision.ToolCall("search_direct", Map.of("query", "宽搜")),
+                                new AgentDecision.ToolCall("search_filtered", Map.of("query", "精搜"))))
+                        : new AgentDecision.Complete(Map.of("observations", context.observations().size())));
+
+        assertEquals(AgentTerminalState.RESULTS_READY, result.state());
+        assertEquals(2, result.output().get("observations"));
+        assertEquals(2, maxActive.get());
+        assertEquals(2, result.trace().steps().stream()
+                .filter(step -> "CALL_TOOL".equals(step.action()))
+                .count());
+    }
+
+    @Test
+    void repairsToolArgumentsOnceBeforeInvocation() {
+        AgentTool tool = tool(context -> {
+            assertEquals(1L, context.arguments().get("page"));
+            assertTrue(!context.arguments().containsKey("unknown"));
+            return AgentToolResult.success(Map.of("repaired", true), null);
+        });
+        AgentToolRegistry registry = new AgentToolRegistry(List.of(tool));
+        AgentRuntime runtime = new AgentRuntime(
+                registry,
+                new DefaultAgentToolExecutor(registry),
+                executor,
+                AgentRunRecorder.NOOP,
+                Clock.systemUTC());
+
+        AgentRunResult result = runtime.run(
+                definition(Duration.ofSeconds(1), 3),
+                request(),
+                context -> context.observations().isEmpty()
+                        ? new AgentDecision.CallTool("search_direct", Map.of(
+                                "query", "露营", "page", "1", "unknown", true))
+                        : new AgentDecision.Complete(context.observations().getFirst().result().output()));
+
+        assertEquals(AgentTerminalState.RESULTS_READY, result.state());
+        assertEquals("SUCCEEDED_REPAIRED", result.trace().steps().getFirst().status());
+    }
+
+    @Test
+    void stopsRepeatedInvocationAsNoProgress() {
+        AtomicInteger invocations = new AtomicInteger();
+        AgentTool tool = tool(context -> {
+            invocations.incrementAndGet();
+            return AgentToolResult.success(Map.of("same", true), null);
+        });
+        AgentToolRegistry registry = new AgentToolRegistry(List.of(tool));
+        AgentRuntime runtime = new AgentRuntime(
+                registry,
+                new DefaultAgentToolExecutor(registry),
+                executor,
+                AgentRunRecorder.NOOP,
+                Clock.systemUTC());
+
+        AgentRunResult result = runtime.run(
+                definition(Duration.ofSeconds(1), 3, Set.of("search_direct"), 2),
+                request(),
+                ignored -> new AgentDecision.CallTool("search_direct", Map.of("query", "露营")));
+
+        assertEquals(AgentTerminalState.FALLBACK_REQUIRED, result.state());
+        assertEquals("NO_PROGRESS_DETECTED", result.fallbackReason());
+        assertEquals(1, invocations.get());
+    }
+
     private static AgentDefinition definition(Duration timeout, int maxSteps) {
+        return definition(timeout, maxSteps, Set.of("search_direct"), 1);
+    }
+
+    private static AgentDefinition definition(
+            Duration timeout,
+            int maxSteps,
+            Set<String> allowedTools,
+            int maxToolCalls) {
         return new AgentDefinition(
                 "search-assistant",
                 "v1",
                 "loop-v1",
                 "prompt-v1",
                 "decision-v1",
-                Set.of("search_direct"),
+                allowedTools,
                 maxSteps,
-                1,
+                maxToolCalls,
                 timeout,
                 true);
     }
@@ -147,17 +254,25 @@ class AgentRuntimeTest {
     }
 
     private static AgentTool tool(java.util.function.Function<AgentToolContext, AgentToolResult> action) {
+        return tool("search_direct", action);
+    }
+
+    private static AgentTool tool(
+            String name,
+            java.util.function.Function<AgentToolContext, AgentToolResult> action) {
         return new AgentTool() {
             @Override
             public String name() {
-                return "search_direct";
+                return name;
             }
 
             @Override
             public AgentToolSchema schema() {
                 return new AgentToolSchema(
                         "search-direct-tool-test-v1",
-                        Map.of("query", AgentToolParameter.requiredString(500)));
+                        Map.of(
+                                "query", AgentToolParameter.requiredString(500),
+                                "page", AgentToolParameter.optionalInteger(0, 199)));
             }
 
             @Override

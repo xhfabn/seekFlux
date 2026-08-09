@@ -1,5 +1,6 @@
 package io.seekflux.agent.port.in;
 
+import io.seekflux.agent.domain.ConstraintPatch;
 import java.util.List;
 
 public record AgentSearchCommand(
@@ -11,7 +12,9 @@ public record AgentSearchCommand(
         int page,
         int size,
         List<String> requiredTags,
-        boolean allowClarification) {
+        boolean allowClarification,
+        AgentRequestedMode requestedMode,
+        ConstraintPatch constraintPatch) {
 
     public AgentSearchCommand {
         requestId = requireText(requestId, "request id");
@@ -19,6 +22,21 @@ public record AgentSearchCommand(
         turnId = requireText(turnId, "turn id");
         agentId = requireText(agentId, "agent id");
         requiredTags = requiredTags == null ? List.of() : List.copyOf(requiredTags);
+        requestedMode = requestedMode == null ? AgentRequestedMode.AUTO : requestedMode;
+    }
+
+    public AgentSearchCommand(
+            String requestId,
+            String sessionId,
+            String turnId,
+            String agentId,
+            String query,
+            int page,
+            int size,
+            List<String> requiredTags,
+            boolean allowClarification) {
+        this(requestId, sessionId, turnId, agentId, query, page, size, requiredTags,
+                allowClarification, AgentRequestedMode.AUTO, null);
     }
 
     private static String requireText(String value, String name) {

@@ -2,6 +2,8 @@ package io.seekflux.apps.agentserver.api;
 
 import io.seekflux.apps.agentserver.runtime.AgentSessionBusyException;
 import io.seekflux.apps.agentserver.runtime.DuplicateAgentRequestException;
+import io.seekflux.agent.domain.ConstraintVersionConflictException;
+import io.seekflux.platform.agentruntime.session.AgentSessionStateConflictException;
 import jakarta.servlet.http.HttpServletRequest;
 import java.time.Instant;
 import java.util.Map;
@@ -26,6 +28,12 @@ public class AgentExceptionHandler {
     @ExceptionHandler(DuplicateAgentRequestException.class)
     public Map<String, Object> duplicate(DuplicateAgentRequestException error) {
         return error("DUPLICATE_AGENT_REQUEST", error.getMessage());
+    }
+
+    @ResponseStatus(HttpStatus.CONFLICT)
+    @ExceptionHandler({ConstraintVersionConflictException.class, AgentSessionStateConflictException.class})
+    public Map<String, Object> constraintConflict(RuntimeException error) {
+        return error("AGENT_CONSTRAINT_VERSION_CONFLICT", error.getMessage());
     }
 
     @ResponseStatus(HttpStatus.BAD_REQUEST)

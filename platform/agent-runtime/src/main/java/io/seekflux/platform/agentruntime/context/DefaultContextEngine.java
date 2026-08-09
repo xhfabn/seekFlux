@@ -1,6 +1,7 @@
 package io.seekflux.platform.agentruntime.context;
 
 import io.seekflux.platform.agentruntime.AgentDecisionContext;
+import io.seekflux.platform.agentruntime.AgentToolRegistry;
 import io.seekflux.platform.agentruntime.AgentToolObservation;
 import io.seekflux.platform.agentruntime.feature.RuntimeContext;
 import io.seekflux.platform.agentruntime.session.AgentSession;
@@ -14,13 +15,35 @@ import java.util.List;
 
 public final class DefaultContextEngine implements ContextEngine {
 
+    private final PromptResolver prompts;
+    private final AgentToolRegistry tools;
+
+    public DefaultContextEngine() {
+        this(promptVersion -> promptVersion, null);
+    }
+
+    public DefaultContextEngine(PromptResolver prompts) {
+        this(prompts, null);
+    }
+
+    public DefaultContextEngine(PromptResolver prompts, AgentToolRegistry tools) {
+        this.prompts = java.util.Objects.requireNonNull(prompts, "prompt resolver must not be null");
+        this.tools = tools;
+    }
+
     @Override
     public AssembledContext assemble(
             AgentSession session,
             RuntimeContext runtimeContext,
             AgentDecisionContext decisionContext) {
         List<ContextMessage> messages = new ArrayList<>();
-        messages.add(new ContextMessage("system", runtimeContext.definition().promptVersion()));
+        messages.add(new ContextMessage(
+                "system",
+                prompts.resolve(runtimeContext.definition().promptVersion())));
+        messages.add(new ContextMessage("system", runtimeInstructions(runtimeContext, decisionContext)));
+        if (!session.workspaceState().isEmpty()) {
+            messages.add(new ContextMessage("system", "workspace_state:" + session.workspaceState()));
+        }
         for (WorkspaceEvent event : session.events()) {
             if (event instanceof WorkspaceEvent.UserMessage message) {
                 messages.add(new ContextMessage("user", message.text()));
@@ -39,6 +62,38 @@ public final class DefaultContextEngine implements ContextEngine {
                 messages,
                 specId(messages.getFirst().content()),
                 estimatedTokens);
+    }
+
+    private String runtimeInstructions(
+            RuntimeContext runtimeContext,
+            AgentDecisionContext decisionContext) {
+        StringBuilder value = new StringBuilder("runtime_context:\n")
+                .append("step=").append(decisionContext.step()).append('\n')
+                .append("remaining_ms=").append(decisionContext.remaining().toMillis()).append('\n')
+                .append("request_attributes=").append(decisionContext.request().attributes()).append('\n')
+                .append("allowed_tools:\n");
+        for (String name : effectiveTools(runtimeContext)) {
+            value.append("- ").append(name);
+            if (tools != null) {
+                var schema = tools.require(name).schema();
+                value.append('@').append(schema.version())
+                        .append(" parameters=").append(new java.util.TreeMap<>(schema.parameters()));
+            }
+            value.append('\n');
+        }
+        return value.toString();
+    }
+
+    private static List<String> effectiveTools(RuntimeContext runtimeContext) {
+        Object configured = runtimeContext.request().attributes().get("allowedTools");
+        if (configured instanceof List<?> values) {
+            return values.stream()
+                    .filter(String.class::isInstance)
+                    .map(String.class::cast)
+                    .sorted()
+                    .toList();
+        }
+        return runtimeContext.definition().allowedTools().stream().sorted().toList();
     }
 
     private static int estimateUnicodeTokens(String text) {

@@ -11,6 +11,7 @@ import io.seekflux.platform.agentruntime.AgentRunRequest;
 import io.seekflux.platform.agentruntime.AgentRunResult;
 import io.seekflux.platform.agentruntime.AgentRunTrace;
 import io.seekflux.platform.agentruntime.AgentTerminalState;
+import io.seekflux.platform.agentruntime.SessionStatePatch;
 import io.seekflux.platform.agentruntime.event.DefaultPushEventPublisher;
 import io.seekflux.platform.agentruntime.feature.FeatureRequest;
 import io.seekflux.platform.agentruntime.llm.LlmClient;
@@ -52,16 +53,26 @@ public final class AgentRuntimeExecutionAdapter implements AgentExecutionPort {
             throw new IllegalStateException("agent definition has no decision provider: " + request.agentId());
         }
         var constraints = request.goal().constraints();
+        Map<String, Object> attributes = new java.util.LinkedHashMap<>();
+        attributes.put("page", constraints.page());
+        attributes.put("size", constraints.size());
+        attributes.put("requiredTags", constraints.requiredTags());
+        attributes.put("allowClarification", request.allowClarification());
+        attributes.put("goalQuery", request.goal().query());
+        attributes.put("goalVersion", request.goal().version());
+        attributes.put("rewrittenQuery", request.plan().rewrittenQuery());
+        attributes.put("derivedRequiredTags", request.plan().derivedRequiredTags());
+        attributes.put("allowedTools", request.exposedTools());
+        attributes.put("routeReason", request.routeReason());
         AgentRunRequest runRequest = new AgentRunRequest(
                 request.requestId(),
                 request.sessionId(),
                 request.turnId(),
-                request.goal().query(),
-                Map.of(
-                        "page", constraints.page(),
-                        "size", constraints.size(),
-                        "requiredTags", constraints.requiredTags(),
-                        "allowClarification", request.allowClarification()));
+                request.userInput(),
+                attributes,
+                new SessionStatePatch(
+                        request.goalChange().baseVersion(),
+                        request.goalChange().state()));
         RouterResult routed = router.execute(
                 new FeatureRequest(definition, runRequest, llmClient),
                 new DefaultPushEventPublisher());
@@ -97,9 +108,15 @@ public final class AgentRuntimeExecutionAdapter implements AgentExecutionPort {
                 request.turnId(),
                 state,
                 mode,
+                request.goal().version(),
+                request.routeReason(),
+                request.plan(),
                 constraints,
                 runtime.clarification(),
                 searchResult,
+                string(runtime.output().get("selectedTool")),
+                integer(runtime.output().get("successfulToolCount")),
+                Boolean.TRUE.equals(runtime.output().get("candidateSetReused")),
                 degraded,
                 runtime.fallbackReason(),
                 traceView(runtime.trace(), mode));
@@ -110,6 +127,14 @@ public final class AgentRuntimeExecutionAdapter implements AgentExecutionPort {
     private static SearchResultPage searchResult(Map<String, Object> output) {
         Object result = output.get("searchResult");
         return result instanceof SearchResultPage searchResult ? searchResult : null;
+    }
+
+    private static String string(Object value) {
+        return value == null ? null : String.valueOf(value);
+    }
+
+    private static int integer(Object value) {
+        return value instanceof Number number ? number.intValue() : 0;
     }
 
     private static AgentSearchState mapState(AgentTerminalState state) {

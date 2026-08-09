@@ -8,10 +8,10 @@
 | 目标读者 | Agent 服务端工程师、搜索工程师、后端工程师、算法工程师、SRE、架构师 |
 | 核心定位 | 在确定性搜索内核之上自研可复用 Agent Runtime，以短视频复杂搜索作为首个参考应用；推荐与实时反馈作为后续共享能力演进 |
 | 首要交付 | Agent Runtime、Direct/Agent 双路径、复杂 Search Agent、结构化执行轨迹和专项评测 |
-| 支撑基线 | 当前 6 条固定画像验证 BM25、ANN、融合排序和确定性降级；1 万条作为后续容量基线 |
+| 支撑基线 | 6 条固定画像验证 BM25、ANN、融合排序和确定性降级；12 条对抗内容验证复杂 Agent 增量；1 万条作为后续容量基线 |
 | 后续演进 | 多实例恢复、模型与策略灰度；按需要扩展 Feed、实时兴趣和更大规模模型 |
 
-> 截至 2026-08-08，Phase 0 与 Phase 1 已由代码、测试、真实链路和版本化 Eval 完成；当前下一步是 Phase 2。Phase 1 使用可复现的确定性决策 Provider 验证内部 Runtime，不代表真实 LLM 或复杂 Search Agent 已完成。唯一开发进度以 [`docs/learning/README.md`](docs/learning/README.md) 为准。
+> 截至 2026-08-08，Phase 0～2 已由代码、测试、真实链路和版本化 Eval 完成；当前下一步是 Phase 3。Phase 2 提供 OpenAI-compatible Provider Adapter，但效果评测仍使用可复现的确定性 Provider，不代表真实模型质量、Token 或成本已经完成验证。唯一开发进度以 [`docs/learning/README.md`](docs/learning/README.md) 为准。
 
 ## 目录
 
@@ -2016,18 +2016,18 @@ token_cost_per_second ≈ Q_agent × (Token_in + Token_out)
 
 退出条件：至少两个配置化 AgentDef 可复用同一 Runtime（其中只有 Search Agent 需要完整业务实现）；Runtime Core 不依赖 Search 或具体模型 SDK；有限步执行、追问和 Trace 通过自动化测试。
 
-### Phase 2：复杂 Search Agent（下一步）
+### Phase 2：复杂 Search Agent（已完成）
 
 - 实现 Query Mode Router，简单 Query 直搜、复杂 Query 进入 Agent；
-- 实现意图解析、Query 改写、缺参追问和多轮 ConstraintPatch；
-- 将 BM25、ANN、用户兴趣和热点召回适配为标准化 Search Tool；
+- 实现确定性意图解析、Query 改写、缺参追问和多轮 ConstraintPatch；
+- 将宽搜与标签精搜适配为标准化 Search Tool，二者统一调用已有 Search Use Case；用户兴趣和热点保持 Search/Feed 内部召回，不伪装成独立 Agent Tool；
 - 根据意图动态暴露工具集，支持并行 Tool fan-out、参数校验和无进展检测；
 - 实现候选复用和 Agent → Direct Search 确定性回退；
-- 评估 Tool 正确率、任务完成率、Recall/零结果率、P95 和单请求成本。
+- 使用 12 条对抗内容和 6 条复杂 Query 评估 Tool 正确率、任务完成率、Recall/MRR、简单路由、多轮冲突和 Fallback；真实 Provider 的 Token、成本与 P95 留到 Phase 3。
 
 退出条件：复杂 Query 相对 Direct 基线有可复现增益；简单 Query 不因 Agent 获得不可接受的额外延迟；模型或全部 Tool 故障时仍返回可解释的回退结果。
 
-### Phase 3：多实例可靠性与平台化
+### Phase 3：多实例可靠性与平台化（下一步）
 
 - 实现 `requestId/turnId/toolCallId` 幂等、Session 执行权/续租、fencing 和实例接管；
 - 实现先入队后取消的插话流程、快照恢复、优雅停机和残留任务治理；
@@ -2280,4 +2280,4 @@ Direct Search 可复现基线
 
 每个切片完成时，学习文档必须同步说明业务目标、架构位置、核心流程、关键代码入口、设计取舍、验证方式和练习；架构决策进入 `docs/adr/`，API/事件变化进入 `contracts/`，Agent/检索效果进入 `evals/`。建议另建 `docs/agent-runtime.md` 保存 Runtime 内核详细设计，本文只维护系统定位、边界和跨模块决策。
 
-学习文档和 README 只能把已由代码、测试、真实链路和评测 Artifact 证明的能力标记为完成；当前 Phase 0～1 已完成，Phase 2～4 仍是目标架构。简历中的“自研”“多实例恢复”和效果指标必须遵循同一完成口径。
+学习文档和 README 只能把已由代码、测试、真实链路和评测 Artifact 证明的能力标记为完成；当前 Phase 0～2 已完成，Phase 3～4 仍是目标架构。简历中的“自研”“多实例恢复”和效果指标必须遵循同一完成口径。

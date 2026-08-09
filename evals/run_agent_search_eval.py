@@ -17,7 +17,7 @@ import run_direct_search_eval as direct
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DATASET = ROOT / "evals" / "datasets" / "direct-search-v1.json"
-DEFAULT_OUTPUT = ROOT / "evals" / "results" / "agent-search-v1-baseline.json"
+DEFAULT_OUTPUT = ROOT / "evals" / "results" / "agent-search-v2-regression.json"
 
 
 def parse_args() -> argparse.Namespace:
@@ -48,6 +48,7 @@ def agent_search(
         "sessionId": f"eval-session-{suffix}",
         "turnId": "turn-1",
         "agentId": agent_id,
+        "mode": "AGENT",
         "query": query,
         "size": size,
         "requiredTags": required_tags,
@@ -108,7 +109,12 @@ def main() -> int:
             agent_trace = agent_response.get("agentTrace") or {}
             search_trace = agent_response.get("searchTrace") or {}
             steps = agent_trace.get("steps") or []
-            linked = [step.get("linkedTraceId") for step in steps if step.get("toolName") == "search_direct"]
+            selected_tool = agent_response.get("selectedTool") or "search_direct"
+            linked = [
+                step.get("linkedTraceId") for step in steps
+                if step.get("toolName") == selected_tool
+                and step.get("status", "").startswith("SUCCEEDED")
+            ]
             if not agent_trace.get("agentVersion") or not agent_trace.get("toolSchemaVersions"):
                 raise RuntimeError(f"query {query['id']} returned an incomplete Agent Trace")
             if linked != [search_trace.get("requestId")]:
@@ -140,6 +146,7 @@ def main() -> int:
                     "toolSchemaVersions": agent_trace["toolSchemaVersions"],
                     "terminalState": agent_trace["terminalState"],
                     "executionMode": agent_trace["executionMode"],
+                    "selectedTool": selected_tool,
                     "stepActions": [step["action"] for step in steps],
                     "searchExecutionMode": search_trace["executionMode"],
                 },
@@ -153,7 +160,7 @@ def main() -> int:
         }
         artifact = {
             "datasetVersion": dataset["datasetVersion"],
-            "evaluationVersion": "agent-search-v1",
+            "evaluationVersion": "agent-search-v2-regression",
             "generatedAt": datetime.now(timezone.utc).isoformat(),
             "agentId": args.agent_id,
             "k": args.k,
