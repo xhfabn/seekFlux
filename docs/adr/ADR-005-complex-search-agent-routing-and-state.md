@@ -20,7 +20,6 @@ Phase 1 已证明 Runtime 能有限步调用 Search Tool，但所有查询都进
 ## 后果
 
 - 简单查询没有 Agent Loop 与 LLM 延迟，复杂查询才消耗 Agent 预算。
-- Workspace 状态具备原子提交和乐观版本冲突语义，但跨实例失主接管、fencing 与恢复仍属于 Phase 3。
+- Workspace 状态具备原子提交和乐观版本冲突语义；当时后置的跨实例失主接管、fencing 与恢复已在 [ADR-006](ADR-006-agent-reliability-fencing-outbox-shadow.md) 完成。
 - Agent 的增益可归因于结构化意图与标准 Search Tool，而不是无法解释的 Agent 侧重排。
 - 确定性规则的标签词表仍有限；真实 Provider 已有 Adapter，但尚未形成真实模型的在线质量、Token 和成本基线。
-

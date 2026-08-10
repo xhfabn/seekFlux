@@ -28,6 +28,7 @@ public final class AgentRuntimeExecutionAdapter implements AgentExecutionPort {
     private final Map<String, LlmClient> llmClients;
     private final SearchUseCase directSearch;
     private final RedisAgentSessionProjection projection;
+    private final AgentExecutionMetrics metrics;
 
     public AgentRuntimeExecutionAdapter(
             Router router,
@@ -35,15 +36,36 @@ public final class AgentRuntimeExecutionAdapter implements AgentExecutionPort {
             Map<String, LlmClient> llmClients,
             SearchUseCase directSearch,
             RedisAgentSessionProjection projection) {
+        this(router, definitions, llmClients, directSearch, projection, AgentExecutionMetrics.NOOP);
+    }
+
+    public AgentRuntimeExecutionAdapter(
+            Router router,
+            Map<String, AgentDefinition> definitions,
+            Map<String, LlmClient> llmClients,
+            SearchUseCase directSearch,
+            RedisAgentSessionProjection projection,
+            AgentExecutionMetrics metrics) {
         this.router = router;
         this.definitions = Map.copyOf(definitions);
         this.llmClients = Map.copyOf(llmClients);
         this.directSearch = directSearch;
         this.projection = projection;
+        this.metrics = metrics;
     }
 
     @Override
     public AgentSearchResult execute(AgentExecutionRequest request) {
+        long startedNanos = System.nanoTime();
+        try {
+            return executeMeasured(request, startedNanos);
+        } catch (RuntimeException error) {
+            metrics.failed(request.agentId(), error, System.nanoTime() - startedNanos);
+            throw error;
+        }
+    }
+
+    private AgentSearchResult executeMeasured(AgentExecutionRequest request, long startedNanos) {
         AgentDefinition definition = definitions.get(request.agentId());
         if (definition == null) {
             throw new IllegalArgumentException("unknown agent definition: " + request.agentId());
@@ -121,6 +143,7 @@ public final class AgentRuntimeExecutionAdapter implements AgentExecutionPort {
                 runtime.fallbackReason(),
                 traceView(runtime.trace(), mode));
         projection.project(result);
+        metrics.succeeded(runtime, System.nanoTime() - startedNanos);
         return result;
     }
 
@@ -149,6 +172,7 @@ public final class AgentRuntimeExecutionAdapter implements AgentExecutionPort {
 
     private static AgentTraceView traceView(AgentRunTrace trace, AgentExecutionMode mode) {
         var definition = trace.definition();
+        var usage = trace.llmUsage();
         return new AgentTraceView(
                 trace.agentRunId(),
                 definition.id(),
@@ -162,6 +186,11 @@ public final class AgentRuntimeExecutionAdapter implements AgentExecutionPort {
                 trace.terminalState().name(),
                 mode.name(),
                 trace.fallbackReason(),
+                usage.inputTokens(),
+                usage.outputTokens(),
+                usage.totalTokens(),
+                usage.costMicros(),
+                usage.measured(),
                 trace.steps().stream().map(AgentRuntimeExecutionAdapter::stepView).toList());
     }
 

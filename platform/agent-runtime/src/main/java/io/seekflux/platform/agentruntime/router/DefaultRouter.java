@@ -41,7 +41,8 @@ public final class DefaultRouter implements Router {
         }
         ExecutionAuthority authority = acquired.get();
         try {
-            IngressCommitResult commit = sessions.commitIngress(request.runRequest(), clock.instant());
+            IngressCommitResult commit = sessions.commitIngress(
+                    request.runRequest(), authority.fencingToken(), clock.instant());
             if (commit == IngressCommitResult.DUPLICATE) {
                 authority.close();
                 return RouterResult.duplicate();

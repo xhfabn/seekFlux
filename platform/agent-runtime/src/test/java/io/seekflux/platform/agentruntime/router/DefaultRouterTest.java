@@ -86,6 +86,22 @@ class DefaultRouterTest {
         }
     }
 
+    @Test
+    void recoverableDuplicateReentersTheLoopWithoutAppendingAnotherMessage() {
+        List<String> calls = new ArrayList<>();
+        FakeSessionStore sessions = new FakeSessionStore(calls, IngressCommitResult.RECOVERED);
+        SessionExecutor executor = executor(authorityStore(calls, true), sessions, calls);
+        try {
+            RouterResult result = router(sessions, executor).execute(request(), PushEventPublisher.NOOP);
+
+            assertEquals(RouterResult.Status.COMPLETED, result.status());
+            assertTrue(calls.contains("loop"));
+            assertEquals(1, calls.stream().filter("commit"::equals).count());
+        } finally {
+            executor.close();
+        }
+    }
+
     private static DefaultRouter router(FakeSessionStore sessions, SessionExecutor executor) {
         FeatureNode init = new FeatureNode() {
             @Override public String name() { return "init"; }
@@ -139,6 +155,7 @@ class DefaultRouterTest {
                     return Optional.empty();
                 }
                 return Optional.of(new ExecutionAuthority() {
+                    @Override public long fencingToken() { return 1; }
                     @Override public boolean renew(long ttl) { calls.add("renew"); return true; }
                     @Override public void close() {
                         calls.add("close");
@@ -196,7 +213,7 @@ class DefaultRouterTest {
 
         @Override public Optional<AgentSession> restoreFresh(String sessionId) { calls.add("restore"); return Optional.of(session); }
         @Override public AgentSession createIfAbsent(String sessionId, AgentDefinition definition, Instant time) { return session; }
-        @Override public IngressCommitResult commitIngress(AgentRunRequest request, Instant time) { calls.add("commit"); return commitResult; }
-        @Override public void appendOutcome(String sessionId, AgentRunResult result, Instant time) { calls.add("outcome"); }
+        @Override public IngressCommitResult commitIngress(AgentRunRequest request, long token, Instant time) { calls.add("commit"); return commitResult; }
+        @Override public void appendOutcome(String sessionId, AgentRunResult result, long token, Instant time) { calls.add("outcome"); }
     }
 }

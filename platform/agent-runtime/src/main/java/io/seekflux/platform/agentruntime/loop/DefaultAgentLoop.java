@@ -47,8 +47,10 @@ public final class DefaultAgentLoop implements AgentLoop {
                     if (cancellationToken.isCancelled()) {
                         return new AgentDecision.Fallback("AGENT_CANCELLED");
                     }
-                    return context.llmClient().chat(
+                    var call = context.llmClient().chatWithUsage(
                             contextEngine.assemble(session, context, decisionContext));
+                    decisionContext.recordUsage(call.usage());
+                    return call.decision();
                 });
         publisher.publish(new PushEvent.LoopStarted(
                 result.trace().agentRunId(),

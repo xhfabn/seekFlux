@@ -11,16 +11,21 @@ import io.seekflux.agent.port.out.AgentConversationPort;
 import io.seekflux.agent.port.out.DirectSearchPort;
 import io.seekflux.agent.port.out.AgentExecutionPort;
 import io.seekflux.apps.agentserver.runtime.AgentRuntimeExecutionAdapter;
+import io.seekflux.apps.agentserver.runtime.AgentExecutionMetrics;
+import io.seekflux.apps.agentserver.runtime.MicrometerAgentExecutionMetrics;
 import io.seekflux.apps.agentserver.runtime.AgentSessionGoalAdapter;
 import io.seekflux.apps.agentserver.runtime.DeterministicSearchLlmClient;
 import io.seekflux.apps.agentserver.runtime.DirectSearchExecutionAdapter;
 import io.seekflux.apps.agentserver.runtime.OpenAiCompatibleLlmClient;
 import io.seekflux.apps.agentserver.runtime.RedisAgentSessionProjection;
 import io.seekflux.apps.agentserver.runtime.RedisExecutionAuthorityStore;
+import io.seekflux.apps.agentserver.runtime.RedisCancellationSignalStore;
+import io.seekflux.apps.agentserver.runtime.RedisShadowSettingsStore;
 import io.seekflux.apps.agentserver.runtime.SearchDirectTool;
 import io.seekflux.apps.agentserver.runtime.SearchFilteredTool;
 import io.seekflux.platform.agentruntime.AgentDefinition;
 import io.seekflux.platform.agentruntime.AgentRunRecorder;
+import io.seekflux.platform.agentruntime.AgentCallGuard;
 import io.seekflux.platform.agentruntime.AgentRuntime;
 import io.seekflux.platform.agentruntime.AgentTool;
 import io.seekflux.platform.agentruntime.AgentToolExecutor;
@@ -31,12 +36,17 @@ import io.seekflux.platform.agentruntime.context.DefaultContextEngine;
 import io.seekflux.platform.agentruntime.context.MapPromptResolver;
 import io.seekflux.platform.agentruntime.context.PromptResolver;
 import io.seekflux.platform.agentruntime.execution.ExecutionAuthorityStore;
+import io.seekflux.platform.agentruntime.execution.CancellationSignalStore;
 import io.seekflux.platform.agentruntime.execution.SessionExecutor;
 import io.seekflux.platform.agentruntime.feature.BuiltInFeatureNodes;
 import io.seekflux.platform.agentruntime.feature.DefaultFeaturePipeline;
 import io.seekflux.platform.agentruntime.feature.FeatureNode;
 import io.seekflux.platform.agentruntime.feature.FeaturePipeline;
 import io.seekflux.platform.agentruntime.llm.LlmClient;
+import io.seekflux.platform.agentruntime.llm.AgentShadowRecorder;
+import io.seekflux.platform.agentruntime.llm.ShadowControl;
+import io.seekflux.platform.agentruntime.llm.ShadowSettingsStore;
+import io.seekflux.platform.agentruntime.llm.ShadowingLlmClient;
 import io.seekflux.platform.agentruntime.loop.AgentLoop;
 import io.seekflux.platform.agentruntime.loop.DefaultAgentLoop;
 import io.seekflux.platform.agentruntime.router.DefaultRouter;
@@ -58,6 +68,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import io.micrometer.core.instrument.MeterRegistry;
 
 @Configuration
 class AgentRuntimeConfiguration {
@@ -65,6 +76,11 @@ class AgentRuntimeConfiguration {
     @Bean
     Clock agentClock() {
         return Clock.systemUTC();
+    }
+
+    @Bean
+    AgentExecutionMetrics agentExecutionMetrics(MeterRegistry meterRegistry) {
+        return new MicrometerAgentExecutionMetrics(meterRegistry);
     }
 
     @Bean(name = "agentExecutionExecutor", destroyMethod = "shutdown")
@@ -83,6 +99,26 @@ class AgentRuntimeConfiguration {
             thread.setDaemon(false);
             return thread;
         });
+    }
+
+    @Bean(name = "agentShadowExecutor", destroyMethod = "shutdown")
+    ExecutorService agentShadowExecutor(
+            @Value("${seekflux.agent.shadow.queue-capacity:20}") int queueCapacity) {
+        return AgentSearchConfiguration.boundedExecutor(
+                "seekflux-agent-shadow-", 1, 1, queueCapacity);
+    }
+
+    @Bean
+    ShadowControl agentShadowControl(
+            @Value("${seekflux.agent.shadow.enabled:false}") boolean enabled,
+            @Value("${seekflux.agent.shadow.sample-rate:0.0}") double sampleRate,
+            ShadowSettingsStore shadowSettingsStore) {
+        return new ShadowControl(enabled, sampleRate, shadowSettingsStore);
+    }
+
+    @Bean
+    ShadowSettingsStore shadowSettingsStore(StringRedisTemplate redis) {
+        return new RedisShadowSettingsStore(redis);
     }
 
     @Bean
@@ -166,8 +202,16 @@ class AgentRuntimeConfiguration {
             AgentToolExecutor toolExecutor,
             @Qualifier("agentExecutionExecutor") ExecutorService executor,
             AgentRunRecorder recorder,
+            AgentCallGuard agentCallGuard,
             Clock agentClock) {
-        return new AgentRuntime(tools, toolExecutor, executor, recorder, agentClock);
+        return new AgentRuntime(tools, toolExecutor, executor, recorder, agentClock, agentCallGuard);
+    }
+
+    @Bean
+    AgentCallGuard agentCallGuard(
+            @Value("${seekflux.agent.bulkhead.max-concurrent-model-calls:4}") int modelCalls,
+            @Value("${seekflux.agent.bulkhead.max-concurrent-tool-calls:8}") int toolCalls) {
+        return new AgentCallGuard(modelCalls, toolCalls, AgentCallGuard.FaultInjector.NONE);
     }
 
     @Bean
@@ -184,18 +228,31 @@ class AgentRuntimeConfiguration {
     }
 
     @Bean
+    CancellationSignalStore cancellationSignalStore(
+            StringRedisTemplate redis,
+            @Value("${seekflux.agent.cancel.signal-ttl-seconds:30}") long ttlSeconds) {
+        return new RedisCancellationSignalStore(redis, Duration.ofSeconds(ttlSeconds));
+    }
+
+    @Bean
     SessionExecutor agentSessionExecutor(
             ExecutionAuthorityStore authorityStore,
             AgentSessionStore sessions,
             AgentLoop defaultAgentLoop,
             ScheduledExecutorService agentAuthorityRenewalScheduler,
+            CancellationSignalStore cancellationSignalStore,
+            @Value("${seekflux.agent.cancel.poll-interval-ms:100}") long cancelPollMillis,
+            @Value("${seekflux.agent.shutdown-grace-ms:5000}") long shutdownGraceMillis,
             Clock agentClock) {
         return new SessionExecutor(
                 authorityStore,
                 sessions,
                 defaultAgentLoop,
                 agentAuthorityRenewalScheduler,
-                agentClock);
+                agentClock,
+                cancellationSignalStore,
+                Duration.ofMillis(cancelPollMillis),
+                Duration.ofMillis(shutdownGraceMillis));
     }
 
     @Bean(name = "agentSessionLoadFeatureNode")
@@ -265,13 +322,20 @@ class AgentRuntimeConfiguration {
             @Value("${seekflux.agent.llm.endpoint:}") String endpoint,
             @Value("${seekflux.agent.llm.api-key:}") String apiKey,
             @Value("${seekflux.agent.llm.model:gpt-4.1-mini}") String model,
-            @Value("${seekflux.agent.llm.timeout-ms:1800}") long timeoutMillis) {
-        LlmClient client;
+            @Value("${seekflux.agent.llm.timeout-ms:1800}") long timeoutMillis,
+            @Value("${seekflux.agent.llm.input-usd-per-million-tokens:0}") double inputPrice,
+            @Value("${seekflux.agent.llm.output-usd-per-million-tokens:0}") double outputPrice,
+            ShadowControl agentShadowControl,
+            @Qualifier("agentShadowExecutor") ExecutorService shadowExecutor,
+            AgentShadowRecorder shadowRecorder,
+            Clock agentClock,
+            @Value("${seekflux.agent.shadow.candidate-version:deterministic-shadow-v1}") String shadowVersion) {
+        LlmClient primary;
         if ("openai-compatible".equalsIgnoreCase(provider.trim())) {
             if (endpoint == null || endpoint.isBlank()) {
                 throw new IllegalArgumentException("Agent LLM endpoint is required for openai-compatible provider");
             }
-            client = new OpenAiCompatibleLlmClient(
+            primary = new OpenAiCompatibleLlmClient(
                     HttpClient.newBuilder()
                             .connectTimeout(Duration.ofMillis(timeoutMillis))
                             .build(),
@@ -279,12 +343,22 @@ class AgentRuntimeConfiguration {
                     URI.create(endpoint.trim()),
                     apiKey,
                     model,
-                    Duration.ofMillis(timeoutMillis));
+                    Duration.ofMillis(timeoutMillis),
+                    inputPrice,
+                    outputPrice);
         } else if ("deterministic".equalsIgnoreCase(provider.trim())) {
-            client = new DeterministicSearchLlmClient(clarificationPolicy);
+            primary = new DeterministicSearchLlmClient(clarificationPolicy);
         } else {
             throw new IllegalArgumentException("unsupported Agent LLM provider: " + provider);
         }
+        LlmClient client = new ShadowingLlmClient(
+                primary,
+                new DeterministicSearchLlmClient(clarificationPolicy),
+                shadowVersion,
+                agentShadowControl,
+                shadowExecutor,
+                shadowRecorder,
+                agentClock);
         return Map.of("search-assistant", client, "search-precise", client);
     }
 
@@ -302,13 +376,15 @@ class AgentRuntimeConfiguration {
             @Qualifier("seekFluxAgentDefinitions") Map<String, AgentDefinition> definitions,
             @Qualifier("seekFluxAgentLlmClients") Map<String, LlmClient> llmClients,
             SearchUseCase directSearchUseCase,
-            RedisAgentSessionProjection projection) {
+            RedisAgentSessionProjection projection,
+            AgentExecutionMetrics agentExecutionMetrics) {
         return new AgentRuntimeExecutionAdapter(
                 agentRouter,
                 definitions,
                 llmClients,
                 directSearchUseCase,
-                projection);
+                projection,
+                agentExecutionMetrics);
     }
 
     @Bean

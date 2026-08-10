@@ -8,6 +8,7 @@ import io.seekflux.platform.agentruntime.AgentRunRequest;
 import io.seekflux.platform.agentruntime.AgentRunResult;
 import io.seekflux.platform.agentruntime.AgentTerminalState;
 import io.seekflux.platform.agentruntime.SessionStatePatch;
+import io.seekflux.platform.agentruntime.execution.AgentExecutionFencedException;
 import io.seekflux.platform.agentruntime.session.AgentSession;
 import io.seekflux.platform.agentruntime.session.AgentSessionStateConflictException;
 import io.seekflux.platform.agentruntime.session.AgentSessionStore;
@@ -22,6 +23,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.nio.charset.StandardCharsets;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
@@ -91,7 +93,8 @@ public class JdbcAgentSessionStore implements AgentSessionStore {
 
     @Override
     @Transactional
-    public IngressCommitResult commitIngress(AgentRunRequest request, Instant eventTime) {
+    public IngressCommitResult commitIngress(
+            AgentRunRequest request, long fencingToken, Instant eventTime) {
         boolean duplicate = jdbcClient.sql("""
                         SELECT EXISTS (
                             SELECT 1 FROM agent.workspace_events
@@ -103,15 +106,33 @@ public class JdbcAgentSessionStore implements AgentSessionStore {
                 .query(Boolean.class)
                 .single();
         if (duplicate) {
+            boolean recovered = jdbcClient.sql("""
+                            UPDATE agent.sessions
+                            SET active_fencing_token = :fencingToken,
+                                updated_at = :eventTime
+                            WHERE session_id = :sessionId
+                              AND status = 'EXECUTING'
+                              AND active_fencing_token < :fencingToken
+                            RETURNING true
+                            """)
+                    .param("sessionId", request.sessionId())
+                    .param("fencingToken", fencingToken)
+                    .param("eventTime", databaseTime(eventTime))
+                    .query(Boolean.class)
+                    .optional()
+                    .orElse(false);
+            if (recovered) {
+                return IngressCommitResult.RECOVERED;
+            }
             return IngressCommitResult.DUPLICATE;
         }
         SessionStatePatch statePatch = request.statePatch();
         long position;
         if (statePatch == null) {
-            position = advancePosition(request.sessionId(), "EXECUTING", eventTime);
+            position = advancePosition(request.sessionId(), "EXECUTING", fencingToken, eventTime);
         } else {
             PositionAdvance advanced = advancePositionWithState(
-                    request.sessionId(), statePatch, "EXECUTING", eventTime);
+                    request.sessionId(), statePatch, "EXECUTING", fencingToken, eventTime);
             insertWorkspaceEvent(
                     request.sessionId(),
                     advanced.eventPosition() - 1,
@@ -138,13 +159,14 @@ public class JdbcAgentSessionStore implements AgentSessionStore {
 
     @Override
     @Transactional
-    public void appendOutcome(String sessionId, AgentRunResult result, Instant eventTime) {
+    public void appendOutcome(
+            String sessionId, AgentRunResult result, long fencingToken, Instant eventTime) {
         String eventType = switch (result.state()) {
             case CANCELLED -> "RUN_CANCELLED";
             case FAILED -> "RUN_FAILED";
             default -> "RUN_COMPLETED";
         };
-        long position = advancePosition(sessionId, "COMPLETED", eventTime);
+        long position = advanceOutcomePosition(sessionId, result, fencingToken, eventTime);
         Map<String, Object> payload = new java.util.LinkedHashMap<>();
         payload.put("agentRunId", result.trace().agentRunId());
         payload.put("state", result.state().name());
@@ -152,40 +174,49 @@ public class JdbcAgentSessionStore implements AgentSessionStore {
             payload.put("reason", result.fallbackReason());
         }
         insertWorkspaceEvent(sessionId, position, eventType, null, null, eventTime, payload);
+        insertOutcomeOutbox(sessionId, position, result, fencingToken, eventTime);
     }
 
-    private long advancePosition(String sessionId, String status, Instant eventTime) {
+    private long advancePosition(
+            String sessionId, String status, long fencingToken, Instant eventTime) {
         return jdbcClient.sql("""
                         UPDATE agent.sessions
                         SET event_position = event_position + 1,
                             version = version + 1,
+                            active_fencing_token = :fencingToken,
                             status = :status,
                             updated_at = :eventTime
                         WHERE session_id = :sessionId
+                          AND active_fencing_token <= :fencingToken
                         RETURNING event_position
                         """)
                 .param("status", status)
                 .param("eventTime", databaseTime(eventTime))
                 .param("sessionId", sessionId)
+                .param("fencingToken", fencingToken)
                 .query(Long.class)
-                .single();
+                .optional()
+                .orElseThrow(() -> new AgentExecutionFencedException(sessionId, fencingToken));
     }
 
     private PositionAdvance advancePositionWithState(
             String sessionId,
             SessionStatePatch patch,
             String status,
+            long fencingToken,
             Instant eventTime) {
         Optional<PositionAdvance> advanced = jdbcClient.sql("""
                         UPDATE agent.sessions
                         SET event_position = event_position + 2,
                             version = version + 2,
                             state_version = state_version + 1,
+                            active_fencing_token = :fencingToken,
                             snapshot = CAST(:snapshot AS jsonb),
                             status = :status,
                             updated_at = :eventTime
                         WHERE session_id = :sessionId
                           AND state_version = :baseVersion
+                          AND active_fencing_token <= :fencingToken
                         RETURNING event_position, state_version
                         """)
                 .param("snapshot", toJson(patch.state()))
@@ -193,11 +224,98 @@ public class JdbcAgentSessionStore implements AgentSessionStore {
                 .param("eventTime", databaseTime(eventTime))
                 .param("sessionId", sessionId)
                 .param("baseVersion", patch.baseVersion())
+                .param("fencingToken", fencingToken)
                 .query((row, rowNumber) -> new PositionAdvance(
                         row.getLong("event_position"),
                         row.getLong("state_version")))
                 .optional();
-        return advanced.orElseThrow(() -> new AgentSessionStateConflictException(patch.baseVersion()));
+        if (advanced.isPresent()) {
+            return advanced.get();
+        }
+        long activeToken = activeFencingToken(sessionId);
+        if (activeToken > fencingToken) {
+            throw new AgentExecutionFencedException(sessionId, fencingToken);
+        }
+        throw new AgentSessionStateConflictException(patch.baseVersion());
+    }
+
+    private long advanceOutcomePosition(
+            String sessionId,
+            AgentRunResult result,
+            long fencingToken,
+            Instant eventTime) {
+        return jdbcClient.sql("""
+                        UPDATE agent.sessions
+                        SET event_position = event_position + 1,
+                            version = version + 1,
+                            status = 'COMPLETED',
+                            last_agent_run_id = :agentRunId,
+                            updated_at = :eventTime
+                        WHERE session_id = :sessionId
+                          AND active_fencing_token = :fencingToken
+                        RETURNING event_position
+                        """)
+                .param("agentRunId", UUID.fromString(result.trace().agentRunId()))
+                .param("eventTime", databaseTime(eventTime))
+                .param("sessionId", sessionId)
+                .param("fencingToken", fencingToken)
+                .query(Long.class)
+                .optional()
+                .orElseThrow(() -> new AgentExecutionFencedException(sessionId, fencingToken));
+    }
+
+    private long activeFencingToken(String sessionId) {
+        return jdbcClient.sql("""
+                        SELECT active_fencing_token
+                        FROM agent.sessions
+                        WHERE session_id = :sessionId
+                        """)
+                .param("sessionId", sessionId)
+                .query(Long.class)
+                .single();
+    }
+
+    private void insertOutcomeOutbox(
+            String sessionId,
+            long position,
+            AgentRunResult result,
+            long fencingToken,
+            Instant eventTime) {
+        String eventType = switch (result.state()) {
+            case FALLBACK_REQUIRED -> "agent.run.fallback.v1";
+            case CANCELLED -> "agent.run.cancelled.v1";
+            case FAILED -> "agent.run.failed.v1";
+            default -> "agent.run.completed.v1";
+        };
+        UUID eventId = UUID.nameUUIDFromBytes(
+                ("agent-outcome:" + sessionId + ":" + position).getBytes(StandardCharsets.UTF_8));
+        Map<String, Object> payload = new java.util.LinkedHashMap<>();
+        payload.put("sessionId", sessionId);
+        payload.put("agentRunId", result.trace().agentRunId());
+        payload.put("requestId", result.trace().requestId());
+        payload.put("turnId", result.trace().turnId());
+        payload.put("state", result.state().name());
+        payload.put("executionMode", result.trace().executionMode());
+        payload.put("fallbackReason", result.fallbackReason());
+        payload.put("fencingToken", fencingToken);
+        payload.put("definition", result.trace().definition());
+        payload.put("tookMillis", result.trace().tookMillis());
+        jdbcClient.sql("""
+                        INSERT INTO outbox.events (
+                            event_id, aggregate_type, aggregate_id, event_type,
+                            schema_version, event_time, payload
+                        ) VALUES (
+                            :eventId, 'AGENT_SESSION', :aggregateId, :eventType,
+                            1, :eventTime, CAST(:payload AS jsonb)
+                        )
+                        ON CONFLICT (event_id) DO NOTHING
+                        """)
+                .param("eventId", eventId)
+                .param("aggregateId", sessionId)
+                .param("eventType", eventType)
+                .param("eventTime", databaseTime(eventTime))
+                .param("payload", toJson(payload))
+                .update();
     }
 
     private void insertWorkspaceEvent(

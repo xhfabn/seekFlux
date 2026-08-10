@@ -8,4 +8,8 @@ public interface LlmClient {
     String version();
 
     AgentDecision chat(AssembledContext context);
+
+    default LlmCallResult chatWithUsage(AssembledContext context) {
+        return new LlmCallResult(chat(context), LlmUsage.UNMEASURED);
+    }
 }

@@ -36,7 +36,7 @@ paths:
   /v1/agent/sessions/{sessionId}:cancel:
     post:
       operationId: cancelAgentSession
-      summary: Request cancellation of the locally executing Agent Session
+      summary: Request cancellation of an Agent Session through the distributed interrupt signal
       tags: [Agent]
       parameters:
         - name: sessionId
@@ -45,7 +45,7 @@ paths:
           schema: {type: string, minLength: 1, maxLength: 128}
       responses:
         "200":
-          description: Whether an in-process execution received the cancellation signal
+          description: Whether the distributed cancellation signal was accepted
           content:
             application/json:
               schema:
@@ -54,6 +54,37 @@ paths:
                 properties:
                   sessionId: {type: string}
                   cancelled: {type: boolean}
+  /v1/agent/runtime/shadow:
+    get:
+      operationId: getAgentShadowSettings
+      summary: Read the Redis-shared Agent shadow policy
+      tags: [Agent]
+      responses:
+        "200":
+          description: Current shadow settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentShadowSettings"
+    put:
+      operationId: updateAgentShadowSettings
+      summary: Enable, sample, or disable Agent shadow evaluation across instances
+      tags: [Agent]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentShadowSettings"
+      responses:
+        "200":
+          description: Updated shadow settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentShadowSettings"
+        "400":
+          $ref: "#/components/responses/BadRequest"
   /v1/users/{userId}/interest-profile:
     get:
       operationId: getUserInterestProfile
@@ -419,6 +450,12 @@ components:
         linkedTraceId: {type: [string, "null"]}
         tookMillis: {type: integer, format: int64, minimum: 0}
         errorCode: {type: [string, "null"]}
+    AgentShadowSettings:
+      type: object
+      required: [enabled, sampleRate]
+      properties:
+        enabled: {type: boolean}
+        sampleRate: {type: number, format: double, minimum: 0, maximum: 1}
     AgentTrace:
       type: object
       required:
@@ -433,6 +470,11 @@ components:
         - tookMillis
         - terminalState
         - executionMode
+        - inputTokens
+        - outputTokens
+        - totalTokens
+        - costMicros
+        - usageMeasured
         - steps
       properties:
         agentRunId: {type: string, format: uuid}
@@ -453,6 +495,17 @@ components:
           type: string
           enum: [AGENT, AGENT_TO_DIRECT_FALLBACK]
         fallbackReason: {type: [string, "null"]}
+        inputTokens: {type: integer, format: int64, minimum: 0}
+        outputTokens: {type: integer, format: int64, minimum: 0}
+        totalTokens: {type: integer, format: int64, minimum: 0}
+        costMicros:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Provider cost in micro-US-dollars using the configured versioned price inputs.
+        usageMeasured:
+          type: boolean
+          description: True only when the provider response included token usage.
         steps:
           type: array
           items:

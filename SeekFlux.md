@@ -9,9 +9,9 @@
 | 核心定位 | 在确定性搜索内核之上自研可复用 Agent Runtime，以短视频复杂搜索作为首个参考应用；推荐与实时反馈作为后续共享能力演进 |
 | 首要交付 | Agent Runtime、Direct/Agent 双路径、复杂 Search Agent、结构化执行轨迹和专项评测 |
 | 支撑基线 | 6 条固定画像验证 BM25、ANN、融合排序和确定性降级；12 条对抗内容验证复杂 Agent 增量；1 万条作为后续容量基线 |
-| 后续演进 | 多实例恢复、模型与策略灰度；按需要扩展 Feed、实时兴趣和更大规模模型 |
+| 后续演进 | 曝光与行为闭环；按需要扩展 Feed、实时兴趣和更大规模模型 |
 
-> 截至 2026-08-08，Phase 0～2 已由代码、测试、真实链路和版本化 Eval 完成；当前下一步是 Phase 3。Phase 2 提供 OpenAI-compatible Provider Adapter，但效果评测仍使用可复现的确定性 Provider，不代表真实模型质量、Token 或成本已经完成验证。唯一开发进度以 [`docs/learning/README.md`](docs/learning/README.md) 为准。
+> 截至 2026-08-10，Phase 0～3 已由代码、测试、真实链路和版本化 Eval 完成；当前下一步是曝光与行为闭环。OpenAI-compatible Provider Adapter 已支持 usage 与价格计量，但默认效果/可靠性评测仍使用可复现的确定性 Provider，不代表真实付费模型质量、Token 或成本已经完成验证。唯一开发进度以 [`docs/learning/README.md`](docs/learning/README.md) 为准。
 
 ## 目录
 
@@ -331,7 +331,7 @@ Agent Search：Query/Turn → Agent Runtime → Search Tool → Search Use Case 
 
 | 组件 | 职责 | 首期部署方式 |
 | --- | --- | --- |
-| Agent Server | Agent API、运行时、会话与业务编排 | 独立 Spring Boot 进程；MVP 单实例，Phase 3 完成后多副本 |
+| Agent Server | Agent API、运行时、会话与业务编排 | 独立 Spring Boot 进程；已具备多副本 fencing/恢复边界，本地仍为单实例 |
 | Search Service | Direct Search、召回、融合、排序与回退 | 模块化应用，多副本 |
 | Content/Index Worker | 内容画像导入、索引与可选 Embedding | 首期合并 Worker，按需扩缩 |
 | PostgreSQL/Redis/Kafka | Session 事件、热投影、租约、Outbox 与评测流 | 本地单实例，生产按 HA 方案部署 |
@@ -1633,7 +1633,9 @@ POST /v1/interactions:batch
 | Topic/Event | 生产者 | 消费者 | 用途 |
 | --- | --- | --- | --- |
 | `agent.run.completed.v1` | Agent Session Outbox | Eval/Observability | 任务、成本、延迟与结果关联 |
-| `agent.fallback.triggered.v1` | Agent Session Outbox | Eval/Alert | 回退原因与影响分析 |
+| `agent.run.fallback.v1` | Agent Session Outbox | Eval/Alert | 回退原因与影响分析 |
+| `agent.run.cancelled.v1` | Agent Session Outbox | Audit/Observability | 取消事实与实例治理 |
+| `agent.run.failed.v1` | Agent Session Outbox | Audit/Alert | 失败原因与影响分析 |
 | `agent.session.snapshot.v1` | Session Projector | Cold Storage | 可选的异步归档/恢复 |
 
 高频 LLM Chunk 和 Tool 进度只进入 Trace/实时推送，不为每个 Chunk 写事务 Outbox。Session 状态变化与 Outbox 在同一 PostgreSQL 事务中提交；消费者用 `eventId` 去重。
@@ -2011,7 +2013,7 @@ token_cost_per_second ≈ Q_agent × (Token_in + Token_out)
 - 建立 `AgentOrchestration` Context：SearchGoal、QueryConstraintSet、追问和 FallbackPolicy；
 - 实现两个 AgentDef，冻结 Agent/Prompt/决策 Provider/Tool Schema 版本；
 - 实现 PostgreSQL Session 追加事件与独立 RunEvent、Redis owner-CAS 执行权和热投影；
-- 实现结构化 Agent/Tool Trace，并通过 linkedTraceId 关联权威 Search Trace；完整 OpenTelemetry 串联后移到 Phase 3；
+- 实现结构化 Agent/Tool Trace，并通过 linkedTraceId 关联权威 Search Trace；完整 OpenTelemetry 串联按真实观测需求后置；
 - 建立 Direct/Agent 对照 Runner、固定结果 Artifact、追问/重复/Session Busy 和回退测试。
 
 退出条件：至少两个配置化 AgentDef 可复用同一 Runtime（其中只有 Search Agent 需要完整业务实现）；Runtime Core 不依赖 Search 或具体模型 SDK；有限步执行、追问和 Trace 通过自动化测试。
@@ -2023,20 +2025,23 @@ token_cost_per_second ≈ Q_agent × (Token_in + Token_out)
 - 将宽搜与标签精搜适配为标准化 Search Tool，二者统一调用已有 Search Use Case；用户兴趣和热点保持 Search/Feed 内部召回，不伪装成独立 Agent Tool；
 - 根据意图动态暴露工具集，支持并行 Tool fan-out、参数校验和无进展检测；
 - 实现候选复用和 Agent → Direct Search 确定性回退；
-- 使用 12 条对抗内容和 6 条复杂 Query 评估 Tool 正确率、任务完成率、Recall/MRR、简单路由、多轮冲突和 Fallback；真实 Provider 的 Token、成本与 P95 留到 Phase 3。
+- 使用 12 条对抗内容和 6 条复杂 Query 评估 Tool 正确率、任务完成率、Recall/MRR、简单路由、多轮冲突和 Fallback；Provider usage/成本计量与可靠性 P95 在 Phase 3 补齐，真实付费 Provider 运行基线仍由具体部署环境生成。
 
 退出条件：复杂 Query 相对 Direct 基线有可复现增益；简单 Query 不因 Agent 获得不可接受的额外延迟；模型或全部 Tool 故障时仍返回可解释的回退结果。
 
-### Phase 3：多实例可靠性与平台化（下一步）
+### Phase 3：多实例可靠性与平台化（已完成）
 
-- 实现 `requestId/turnId/toolCallId` 幂等、Session 执行权/续租、fencing 和实例接管；
-- 实现先入队后取消的插话流程、快照恢复、优雅停机和残留任务治理；
-- 使用事务 Outbox 发布 Agent 完成/回退事件，消费者幂等处理评测与审计；
-- 增加每模型/Tool Bulkhead、熔断、有界重试、多级缓存和成本配额；
-- 完成重复请求、实例失主、下游超时、Redis/模型异常等故障注入；
-- 实现 Agent/Prompt/Tool 策略 Shadow、小流量实验和快速回滚。
+- 实现 `requestId/turnId/toolCallId` 稳定标识、Session 执行权/续租、单调 fencing 和失主接管；
+- 新 owner 从 PostgreSQL WorkspaceEvent 强一致重放，旧 owner 不能提交终态；实现跨实例取消、优雅停机和残留任务治理；
+- 使用事务 Outbox 发布完成/回退/取消/失败事件，Kafka 消费者按 `eventId` 幂等处理审计；
+- 增加模型/Tool 独立 Bulkhead、共同 Deadline、部分成功和确定性回退；
+- 完成重复请求、实例失主、跨实例取消、模型/Tool 故障和 Bulkhead 饱和测试；
+- 实现异步 Shadow、PostgreSQL 对比记录、Redis 跨实例采样开关和快速关闭；
+- 解析真实 Provider usage、按配置价格计量并进入 Trace/Metrics；默认确定性报告明确标识 usage 未测量。
 
-退出条件：多副本下同一 Session 不双写、重复请求不产生重复副作用；失主可恢复；达到 Agent/Direct SLO 和故障注入验收标准。
+退出条件：固定可靠性评测证明同一 Session 单写、fencing 单调、重复请求无额外 Search Tool 事件、失主可恢复、Outbox/审计幂等、Shadow 不改变主结果，并形成版本化可用性/P95/Fallback 报告。
+
+阶段边界：完整 steer 排队、pending Tool Checkpoint、写 Tool 副作用账本、上下文压缩、熔断/多级缓存/硬成本配额和完整 OpenTelemetry 不属于已完成能力。当前 Tool 全部只读；引入任何写 Tool 前必须补副作用账本。真实付费 Provider 基线需要部署方端点和密钥，不能由确定性 Provider 伪造。
 
 ### Phase 4：可选的搜索推荐深化
 
@@ -2280,4 +2285,4 @@ Direct Search 可复现基线
 
 每个切片完成时，学习文档必须同步说明业务目标、架构位置、核心流程、关键代码入口、设计取舍、验证方式和练习；架构决策进入 `docs/adr/`，API/事件变化进入 `contracts/`，Agent/检索效果进入 `evals/`。建议另建 `docs/agent-runtime.md` 保存 Runtime 内核详细设计，本文只维护系统定位、边界和跨模块决策。
 
-学习文档和 README 只能把已由代码、测试、真实链路和评测 Artifact 证明的能力标记为完成；当前 Phase 0～2 已完成，Phase 3～4 仍是目标架构。简历中的“自研”“多实例恢复”和效果指标必须遵循同一完成口径。
+学习文档和 README 只能把已由代码、测试、真实链路和评测 Artifact 证明的能力标记为完成；当前 Phase 0～3 已完成，Phase 4 按业务价值逐项启动。简历中的“自研”“多实例恢复”和效果指标必须遵循同一完成口径。

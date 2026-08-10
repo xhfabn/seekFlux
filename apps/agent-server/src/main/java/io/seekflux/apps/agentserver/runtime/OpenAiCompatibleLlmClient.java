@@ -8,6 +8,8 @@ import io.seekflux.platform.agentruntime.AgentToolObservation;
 import io.seekflux.platform.agentruntime.context.AssembledContext;
 import io.seekflux.platform.agentruntime.context.ContextMessage;
 import io.seekflux.platform.agentruntime.llm.LlmClient;
+import io.seekflux.platform.agentruntime.llm.LlmCallResult;
+import io.seekflux.platform.agentruntime.llm.LlmUsage;
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -29,6 +31,8 @@ public final class OpenAiCompatibleLlmClient implements LlmClient {
     private final String model;
     private final Duration timeout;
     private final String version;
+    private final double inputUsdPerMillionTokens;
+    private final double outputUsdPerMillionTokens;
 
     public OpenAiCompatibleLlmClient(
             HttpClient httpClient,
@@ -37,6 +41,18 @@ public final class OpenAiCompatibleLlmClient implements LlmClient {
             String apiKey,
             String model,
             Duration timeout) {
+        this(httpClient, objectMapper, endpoint, apiKey, model, timeout, 0, 0);
+    }
+
+    public OpenAiCompatibleLlmClient(
+            HttpClient httpClient,
+            ObjectMapper objectMapper,
+            URI endpoint,
+            String apiKey,
+            String model,
+            Duration timeout,
+            double inputUsdPerMillionTokens,
+            double outputUsdPerMillionTokens) {
         this.httpClient = httpClient;
         this.objectMapper = objectMapper;
         this.endpoint = endpoint;
@@ -44,6 +60,8 @@ public final class OpenAiCompatibleLlmClient implements LlmClient {
         this.model = requireText(model, "LLM model");
         this.timeout = timeout;
         this.version = "openai-compatible:" + this.model + ":v1";
+        this.inputUsdPerMillionTokens = Math.max(0, inputUsdPerMillionTokens);
+        this.outputUsdPerMillionTokens = Math.max(0, outputUsdPerMillionTokens);
     }
 
     @Override
@@ -53,6 +71,11 @@ public final class OpenAiCompatibleLlmClient implements LlmClient {
 
     @Override
     public AgentDecision chat(AssembledContext context) {
+        return chatWithUsage(context).decision();
+    }
+
+    @Override
+    public LlmCallResult chatWithUsage(AssembledContext context) {
         Duration requestTimeout = context.decisionContext().remaining().compareTo(timeout) < 0
                 ? context.decisionContext().remaining()
                 : timeout;
@@ -74,13 +97,32 @@ public final class OpenAiCompatibleLlmClient implements LlmClient {
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
                 throw new IllegalStateException("LLM provider returned HTTP " + response.statusCode());
             }
-            return parseDecision(extractContent(readMap(response.body())), context);
+            Map<String, Object> responseBody = readMap(response.body());
+            return new LlmCallResult(
+                    parseDecision(extractContent(responseBody), context),
+                    usage(responseBody));
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("LLM provider call was interrupted", interrupted);
         } catch (IOException error) {
             throw new IllegalStateException("LLM provider call failed", error);
         }
+    }
+
+    private LlmUsage usage(Map<String, Object> response) {
+        Map<String, Object> usage = map(response.get("usage"));
+        if (usage.isEmpty()) {
+            return LlmUsage.UNMEASURED;
+        }
+        long input = longValue(usage.get("prompt_tokens"));
+        long output = longValue(usage.get("completion_tokens"));
+        long total = longValue(usage.get("total_tokens"));
+        if (total == 0) {
+            total = input + output;
+        }
+        long costMicros = Math.round(
+                input * inputUsdPerMillionTokens + output * outputUsdPerMillionTokens);
+        return new LlmUsage(input, output, total, costMicros, true);
     }
 
     private AgentDecision parseDecision(String content, AssembledContext context) {
@@ -177,6 +219,10 @@ public final class OpenAiCompatibleLlmClient implements LlmClient {
 
     private static List<?> list(Object value) {
         return value instanceof List<?> values ? values : List.of();
+    }
+
+    private static long longValue(Object value) {
+        return value instanceof Number number ? Math.max(0, number.longValue()) : 0;
     }
 
     private static String stripFence(String value) {

@@ -15,6 +15,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import io.seekflux.platform.agentruntime.llm.LlmUsage;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -225,6 +226,76 @@ class AgentRuntimeTest {
         assertEquals(AgentTerminalState.FALLBACK_REQUIRED, result.state());
         assertEquals("NO_PROGRESS_DETECTED", result.fallbackReason());
         assertEquals(1, invocations.get());
+    }
+
+    @Test
+    void modelFaultInjectionProducesDeterministicFallback() {
+        AgentToolRegistry registry = new AgentToolRegistry(List.of(tool(
+                context -> AgentToolResult.success(Map.of(), null))));
+        AgentRuntime runtime = new AgentRuntime(
+                registry,
+                new DefaultAgentToolExecutor(registry),
+                executor,
+                AgentRunRecorder.NOOP,
+                Clock.systemUTC(),
+                new AgentCallGuard(1, 1, type -> {
+                    if (type == AgentCallGuard.CallType.MODEL) {
+                        throw new AgentCallGuard.CallRejectedException("INJECTED_MODEL_FAILURE");
+                    }
+                }));
+
+        AgentRunResult result = runtime.run(
+                definition(Duration.ofSeconds(1), 2), request(),
+                ignored -> new AgentDecision.Complete(Map.of()));
+
+        assertEquals(AgentTerminalState.FALLBACK_REQUIRED, result.state());
+        assertEquals("INJECTED_MODEL_FAILURE", result.fallbackReason());
+    }
+
+    @Test
+    void aggregatesMeasuredModelUsageIntoTrace() {
+        AgentToolRegistry registry = new AgentToolRegistry(List.of(tool(
+                context -> AgentToolResult.success(Map.of(), null))));
+        AgentRuntime runtime = new AgentRuntime(
+                registry,
+                new DefaultAgentToolExecutor(registry),
+                executor,
+                AgentRunRecorder.NOOP,
+                Clock.systemUTC());
+
+        AgentRunResult result = runtime.run(
+                definition(Duration.ofSeconds(1), 2), request(), context -> {
+                    context.recordUsage(new LlmUsage(100, 25, 125, 175, true));
+                    return new AgentDecision.Complete(Map.of());
+                });
+
+        assertEquals(125, result.trace().llmUsage().totalTokens());
+        assertEquals(175, result.trace().llmUsage().costMicros());
+        assertTrue(result.trace().llmUsage().measured());
+    }
+
+    @Test
+    void toolFaultInjectionReturnsPartialFailureAsStableFallback() {
+        AgentToolRegistry registry = new AgentToolRegistry(List.of(tool(
+                context -> AgentToolResult.success(Map.of(), null))));
+        AgentRuntime runtime = new AgentRuntime(
+                registry,
+                new DefaultAgentToolExecutor(registry),
+                executor,
+                AgentRunRecorder.NOOP,
+                Clock.systemUTC(),
+                new AgentCallGuard(1, 1, type -> {
+                    if (type == AgentCallGuard.CallType.TOOL) {
+                        throw new AgentCallGuard.CallRejectedException("INJECTED_TOOL_FAILURE");
+                    }
+                }));
+
+        AgentRunResult result = runtime.run(
+                definition(Duration.ofSeconds(1), 2), request(),
+                ignored -> new AgentDecision.CallTool("search_direct", Map.of("query", "露营")));
+
+        assertEquals(AgentTerminalState.FALLBACK_REQUIRED, result.state());
+        assertEquals("INJECTED_TOOL_FAILURE", result.fallbackReason());
     }
 
     private static AgentDefinition definition(Duration timeout, int maxSteps) {

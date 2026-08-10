@@ -11,6 +11,10 @@ topics=(
   content.distribution.changed.v1
   feature.snapshot.updated.v1
   model.version.activated.v1
+  agent.run.completed.v1
+  agent.run.fallback.v1
+  agent.run.cancelled.v1
+  agent.run.failed.v1
 )
 
 for topic in "${topics[@]}"; do

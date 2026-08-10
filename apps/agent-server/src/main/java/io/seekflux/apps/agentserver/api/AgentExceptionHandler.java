@@ -4,6 +4,7 @@ import io.seekflux.apps.agentserver.runtime.AgentSessionBusyException;
 import io.seekflux.apps.agentserver.runtime.DuplicateAgentRequestException;
 import io.seekflux.agent.domain.ConstraintVersionConflictException;
 import io.seekflux.platform.agentruntime.session.AgentSessionStateConflictException;
+import io.seekflux.platform.agentruntime.execution.AgentExecutionFencedException;
 import jakarta.servlet.http.HttpServletRequest;
 import java.time.Instant;
 import java.util.Map;
@@ -34,6 +35,12 @@ public class AgentExceptionHandler {
     @ExceptionHandler({ConstraintVersionConflictException.class, AgentSessionStateConflictException.class})
     public Map<String, Object> constraintConflict(RuntimeException error) {
         return error("AGENT_CONSTRAINT_VERSION_CONFLICT", error.getMessage());
+    }
+
+    @ResponseStatus(HttpStatus.CONFLICT)
+    @ExceptionHandler(AgentExecutionFencedException.class)
+    public Map<String, Object> fenced(AgentExecutionFencedException error) {
+        return error("AGENT_EXECUTION_FENCED", error.getMessage());
     }
 
     @ResponseStatus(HttpStatus.BAD_REQUEST)

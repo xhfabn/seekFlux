@@ -26,6 +26,7 @@ public final class AgentRuntime {
     private final ExecutorService executor;
     private final AgentRunRecorder recorder;
     private final Clock clock;
+    private final AgentCallGuard callGuard;
 
     public AgentRuntime(
             AgentToolRegistry tools,
@@ -33,11 +34,22 @@ public final class AgentRuntime {
             ExecutorService executor,
             AgentRunRecorder recorder,
             Clock clock) {
+        this(tools, toolExecutor, executor, recorder, clock, AgentCallGuard.UNBOUNDED);
+    }
+
+    public AgentRuntime(
+            AgentToolRegistry tools,
+            AgentToolExecutor toolExecutor,
+            ExecutorService executor,
+            AgentRunRecorder recorder,
+            Clock clock,
+            AgentCallGuard callGuard) {
         this.tools = Objects.requireNonNull(tools, "tool registry must not be null");
         this.toolExecutor = Objects.requireNonNull(toolExecutor, "tool executor must not be null");
         this.executor = Objects.requireNonNull(executor, "agent executor must not be null");
         this.recorder = Objects.requireNonNull(recorder, "run recorder must not be null");
         this.clock = Objects.requireNonNull(clock, "clock must not be null");
+        this.callGuard = Objects.requireNonNull(callGuard, "call guard must not be null");
     }
 
     public AgentRunResult run(
@@ -81,8 +93,11 @@ public final class AgentRuntime {
                         request,
                         step,
                         Duration.ofNanos(remainingNanos(deadlineNanos)),
-                        observations);
-                decision = invoke(() -> planner.decide(context), deadlineNanos);
+                        observations,
+                        run::recordUsage);
+                decision = invoke(
+                        () -> callGuard.execute(AgentCallGuard.CallType.MODEL, () -> planner.decide(context)),
+                        deadlineNanos);
             } catch (CallFailure failure) {
                 run.steps.add(new AgentRunTrace.StepTrace(
                         step, "PLAN", "FAILED", null, null, null,
@@ -131,9 +146,12 @@ public final class AgentRuntime {
             toolCalls += calls.size();
             List<PreparedToolCall> prepared;
             try {
-                prepared = calls.stream()
-                        .map(call -> prepare(call, effectiveTools))
-                        .toList();
+                List<PreparedToolCall> preparedCalls = new ArrayList<>();
+                for (int callIndex = 0; callIndex < calls.size(); callIndex++) {
+                    preparedCalls.add(prepare(
+                            calls.get(callIndex), effectiveTools, request, step, callIndex));
+                }
+                prepared = List.copyOf(preparedCalls);
             } catch (IllegalArgumentException invalidArguments) {
                 return finishFailure(run, definition, "TOOL_ARGUMENT_INVALID", null);
             }
@@ -220,6 +238,7 @@ public final class AgentRuntime {
                 state,
                 executionMode,
                 fallbackReason,
+                run.llmUsage,
                 run.steps);
         Map<String, Object> payload = new HashMap<>();
         payload.put("state", state.name());
@@ -284,7 +303,9 @@ public final class AgentRuntime {
                             request,
                             call.arguments(),
                             Duration.ofNanos(remainingNanos(deadlineNanos)));
-                    return toolExecutor.execute(call.tool().name(), call.arguments(), context);
+                    return callGuard.execute(
+                            AgentCallGuard.CallType.TOOL,
+                            () -> toolExecutor.execute(call.tool().name(), call.arguments(), context));
                 });
                 pending.add(new PendingToolCall(call, started, future, null));
             } catch (RejectedExecutionException rejected) {
@@ -313,7 +334,7 @@ public final class AgentRuntime {
                         Thread.currentThread().interrupt();
                         throw new CallFailure("AGENT_CANCELLED", true, interrupted);
                     } catch (ExecutionException failed) {
-                        result = AgentToolResult.failure("AGENT_STEP_FAILED");
+                        result = AgentToolResult.failure(callErrorCode(failed.getCause(), "AGENT_STEP_FAILED"));
                     }
                 }
             }
@@ -330,7 +351,12 @@ public final class AgentRuntime {
         return List.copyOf(observations);
     }
 
-    private PreparedToolCall prepare(AgentDecision.ToolCall call, Set<String> effectiveTools) {
+    private PreparedToolCall prepare(
+            AgentDecision.ToolCall call,
+            Set<String> effectiveTools,
+            AgentRunRequest request,
+            int step,
+            int callIndex) {
         if (!effectiveTools.contains(call.toolName())) {
             throw new IllegalArgumentException("tool is not exposed for this request");
         }
@@ -344,7 +370,11 @@ public final class AgentRuntime {
             tool.schema().validate(arguments);
             repaired = true;
         }
-        return new PreparedToolCall(UUID.randomUUID().toString(), tool, arguments, repaired);
+        String identity = request.requestId() + ":" + step + ":" + callIndex + ":"
+                + tool.name() + ":" + new TreeMap<>(arguments);
+        String toolCallId = UUID.nameUUIDFromBytes(
+                identity.getBytes(java.nio.charset.StandardCharsets.UTF_8)).toString();
+        return new PreparedToolCall(toolCallId, tool, arguments, repaired);
     }
 
     private static List<AgentDecision.ToolCall> toolCalls(AgentDecision decision) {
@@ -391,7 +421,10 @@ public final class AgentRuntime {
             Thread.currentThread().interrupt();
             throw new CallFailure("AGENT_CANCELLED", true, interrupted);
         } catch (ExecutionException execution) {
-            throw new CallFailure("AGENT_STEP_FAILED", false, execution.getCause());
+            throw new CallFailure(
+                    callErrorCode(execution.getCause(), "AGENT_STEP_FAILED"),
+                    false,
+                    execution.getCause());
         }
     }
 
@@ -409,6 +442,13 @@ public final class AgentRuntime {
 
     private static long elapsedMillis(long startedNanos) {
         return TimeUnit.NANOSECONDS.toMillis(Math.max(0, System.nanoTime() - startedNanos));
+    }
+
+    private static String callErrorCode(Throwable error, String fallback) {
+        if (error instanceof AgentCallGuard.CallRejectedException rejected) {
+            return rejected.code();
+        }
+        return fallback;
     }
 
     @FunctionalInterface
@@ -448,6 +488,8 @@ public final class AgentRuntime {
         private final Instant startedAt;
         private final long startedNanos;
         private final List<AgentRunTrace.StepTrace> steps = new ArrayList<>();
+        private io.seekflux.platform.agentruntime.llm.LlmUsage llmUsage =
+                io.seekflux.platform.agentruntime.llm.LlmUsage.UNMEASURED;
         private int sequence;
 
         private RunState(
@@ -474,6 +516,10 @@ public final class AgentRuntime {
                     type,
                     clock.instant(),
                     payload));
+        }
+
+        private void recordUsage(io.seekflux.platform.agentruntime.llm.LlmUsage usage) {
+            llmUsage = llmUsage.plus(usage);
         }
     }
 }

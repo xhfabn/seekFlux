@@ -33,7 +33,11 @@ class OpenAiCompatibleLlmClientTest {
             String decision = "{\"action\":\"call_tool\",\"tool\":\"search_direct\","
                     + "\"arguments\":{\"query\":\"杭州露营\"}}";
             byte[] response = objectMapper.writeValueAsBytes(Map.of(
-                    "choices", List.of(Map.of("message", Map.of("content", decision)))));
+                    "choices", List.of(Map.of("message", Map.of("content", decision))),
+                    "usage", Map.of(
+                            "prompt_tokens", 100,
+                            "completion_tokens", 25,
+                            "total_tokens", 125)));
             exchange.getResponseHeaders().set("Content-Type", "application/json");
             exchange.sendResponseHeaders(200, response.length);
             exchange.getResponseBody().write(response);
@@ -48,7 +52,9 @@ class OpenAiCompatibleLlmClientTest {
                             + "/v1/chat/completions"),
                     "test-key",
                     "test-model",
-                    Duration.ofSeconds(1));
+                    Duration.ofSeconds(1),
+                    2.0,
+                    8.0);
             AgentRunRequest run = new AgentRunRequest(
                     "request-1", "session-1", "turn-1", "杭州露营", Map.of());
             AgentDecisionContext decisionContext = new AgentDecisionContext(
@@ -67,6 +73,15 @@ class OpenAiCompatibleLlmClientTest {
             assertThat(authorization.get()).isEqualTo("Bearer test-key");
             assertThat(requestBody.get()).contains("test-model", "structured prompt", "json_object");
             assertThat(client.version()).isEqualTo("openai-compatible:test-model:v1");
+
+            var measured = client.chatWithUsage(new AssembledContext(
+                    decisionContext,
+                    List.of(new ContextMessage("system", "structured prompt")),
+                    "prompt-spec-1",
+                    12));
+            assertThat(measured.usage().totalTokens()).isEqualTo(125);
+            assertThat(measured.usage().costMicros()).isEqualTo(400);
+            assertThat(measured.usage().measured()).isTrue();
         } finally {
             server.stop(0);
         }

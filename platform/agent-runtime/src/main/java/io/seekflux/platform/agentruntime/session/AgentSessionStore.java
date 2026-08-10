@@ -12,7 +12,7 @@ public interface AgentSessionStore {
 
     AgentSession createIfAbsent(String sessionId, AgentDefinition definition, Instant eventTime);
 
-    IngressCommitResult commitIngress(AgentRunRequest request, Instant eventTime);
+    IngressCommitResult commitIngress(AgentRunRequest request, long fencingToken, Instant eventTime);
 
-    void appendOutcome(String sessionId, AgentRunResult result, Instant eventTime);
+    void appendOutcome(String sessionId, AgentRunResult result, long fencingToken, Instant eventTime);
 }

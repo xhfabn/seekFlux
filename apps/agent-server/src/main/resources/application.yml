@@ -40,6 +40,20 @@ seekflux:
       api-key: ${AGENT_LLM_API_KEY:}
       model: ${AGENT_LLM_MODEL:gpt-4.1-mini}
       timeout-ms: ${AGENT_LLM_TIMEOUT_MS:1800}
+      input-usd-per-million-tokens: ${AGENT_LLM_INPUT_USD_PER_MILLION_TOKENS:0}
+      output-usd-per-million-tokens: ${AGENT_LLM_OUTPUT_USD_PER_MILLION_TOKENS:0}
+    bulkhead:
+      max-concurrent-model-calls: ${AGENT_MODEL_MAX_CONCURRENCY:4}
+      max-concurrent-tool-calls: ${AGENT_TOOL_MAX_CONCURRENCY:8}
+    cancel:
+      signal-ttl-seconds: ${AGENT_CANCEL_SIGNAL_TTL_SECONDS:30}
+      poll-interval-ms: ${AGENT_CANCEL_POLL_INTERVAL_MS:100}
+    shutdown-grace-ms: ${AGENT_SHUTDOWN_GRACE_MS:5000}
+    shadow:
+      enabled: ${AGENT_SHADOW_ENABLED:false}
+      sample-rate: ${AGENT_SHADOW_SAMPLE_RATE:0.0}
+      candidate-version: ${AGENT_SHADOW_CANDIDATE_VERSION:deterministic-shadow-v1}
+      queue-capacity: ${AGENT_SHADOW_QUEUE_CAPACITY:20}
     execution-pool:
       core-size: ${AGENT_EXECUTION_CORE_SIZE:2}
       max-size: ${AGENT_EXECUTION_MAX_SIZE:4}

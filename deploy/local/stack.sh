@@ -447,6 +447,7 @@ create_kafka_topics() {
     interaction.raw.v1 interaction.validated.v1 exposure.logged.v1
     content.submitted.v1 content.profile.ready.v1 content.profile.published.v1
     content.distribution.changed.v1 feature.snapshot.updated.v1 model.version.activated.v1
+    agent.run.completed.v1 agent.run.fallback.v1 agent.run.cancelled.v1 agent.run.failed.v1
   )
   local topic
   for topic in "${topics[@]}"; do
@@ -454,6 +455,21 @@ create_kafka_topics() {
       --create --if-not-exists --topic "${topic}" --partitions 3 --replication-factor 1 >/dev/null
   done
   log "Kafka 业务 Topics 已初始化"
+}
+
+launchd_start() {
+  local key="$1" log_file="$2" label pid
+  shift 2
+  label="$(launchd_label "${key}")"
+  launchctl remove "${label}" >/dev/null 2>&1 || true
+  launchctl submit -l "${label}" -o "${log_file}" -e "${log_file}" -- "$@"
+  for _ in {1..20}; do
+    pid="$(launchd_pid "${label}" || true)"
+    [[ "${pid}" =~ ^[0-9]+$ ]] && break
+    sleep 0.25
+  done
+  [[ "${pid}" =~ ^[0-9]+$ ]] || fail "${key} 未能注册到 launchd"
+  printf '%s\n' "${pid}"
 }
 
 start_kafka() {
@@ -472,10 +488,18 @@ start_kafka() {
     # dynamic-quorum 的 --standalone 参数组合。
     "${KAFKA_HOME}/bin/kafka-storage.sh" format -t "${cluster_id}" -c "${config}" >/dev/null
   fi
-  KAFKA_HEAP_OPTS="-Xms256m -Xmx256m" \
-    nohup "${KAFKA_HOME}/bin/kafka-server-start.sh" "${config}" \
-    >"${LOCAL_DIR}/kafka/logs/server.log" 2>&1 </dev/null &
-  printf '%s\n' "$!" >"${LOCAL_DIR}/kafka/run/kafka.pid"
+  local kafka_pid log_file="${LOCAL_DIR}/kafka/logs/server.log"
+  if [[ "${OS_NAME}" == "Darwin" ]]; then
+    kafka_pid="$(launchd_start kafka "${log_file}" /usr/bin/env \
+      'KAFKA_HEAP_OPTS=-Xms256m -Xmx256m' \
+      "${KAFKA_HOME}/bin/kafka-server-start.sh" "${config}")"
+  else
+    KAFKA_HEAP_OPTS="-Xms256m -Xmx256m" \
+      nohup "${KAFKA_HOME}/bin/kafka-server-start.sh" "${config}" \
+      >"${log_file}" 2>&1 </dev/null &
+    kafka_pid="$!"
+  fi
+  printf '%s\n' "${kafka_pid}" >"${LOCAL_DIR}/kafka/run/kafka.pid"
   wait_port Kafka "${KAFKA_PORT}" 180
   create_kafka_topics
 }
@@ -506,8 +530,15 @@ start_elasticsearch() {
     'ingest.geoip.downloader.enabled: false' >"${yml}"
   mkdir -p "${ELASTICSEARCH_HOME}/config/jvm.options.d"
   printf '%s\n' '-Xms512m' '-Xmx512m' >"${ELASTICSEARCH_HOME}/config/jvm.options.d/seekflux.options"
-  nohup "${ELASTICSEARCH_HOME}/bin/elasticsearch" -p "${LOCAL_DIR}/elasticsearch/run/elasticsearch.pid" \
-    >"${LOCAL_DIR}/elasticsearch/logs/console.log" 2>&1 </dev/null &
+  local elasticsearch_pid log_file="${LOCAL_DIR}/elasticsearch/logs/console.log"
+  if [[ "${OS_NAME}" == "Darwin" ]]; then
+    elasticsearch_pid="$(launchd_start elasticsearch "${log_file}" \
+      "${ELASTICSEARCH_HOME}/bin/elasticsearch")"
+    printf '%s\n' "${elasticsearch_pid}" >"${LOCAL_DIR}/elasticsearch/run/elasticsearch.pid"
+  else
+    nohup "${ELASTICSEARCH_HOME}/bin/elasticsearch" -p "${LOCAL_DIR}/elasticsearch/run/elasticsearch.pid" \
+      >"${log_file}" 2>&1 </dev/null &
+  fi
   wait_http Elasticsearch "http://127.0.0.1:${ELASTICSEARCH_PORT}/" 300
   curl --noproxy '*' -fsS -X PUT \
     "http://127.0.0.1:${ELASTICSEARCH_PORT}/_cluster/settings" \
@@ -520,11 +551,20 @@ start_minio() {
     log "MinIO 已在运行"
     return
   fi
-  MINIO_ROOT_USER="${MINIO_ROOT_USER}" MINIO_ROOT_PASSWORD="${MINIO_ROOT_PASSWORD}" \
-    nohup "${MINIO_HOME}/minio" server "${LOCAL_DIR}/minio/data" \
-      --address "127.0.0.1:${MINIO_API_PORT}" --console-address "127.0.0.1:${MINIO_CONSOLE_PORT}" \
-      >"${LOCAL_DIR}/minio/logs/minio.log" 2>&1 </dev/null &
-  printf '%s\n' "$!" >"${LOCAL_DIR}/minio/run/minio.pid"
+  local minio_pid log_file="${LOCAL_DIR}/minio/logs/minio.log"
+  if [[ "${OS_NAME}" == "Darwin" ]]; then
+    minio_pid="$(launchd_start minio "${log_file}" /usr/bin/env \
+      "MINIO_ROOT_USER=${MINIO_ROOT_USER}" "MINIO_ROOT_PASSWORD=${MINIO_ROOT_PASSWORD}" \
+      "${MINIO_HOME}/minio" server "${LOCAL_DIR}/minio/data" \
+      --address "127.0.0.1:${MINIO_API_PORT}" --console-address "127.0.0.1:${MINIO_CONSOLE_PORT}")"
+  else
+    MINIO_ROOT_USER="${MINIO_ROOT_USER}" MINIO_ROOT_PASSWORD="${MINIO_ROOT_PASSWORD}" \
+      nohup "${MINIO_HOME}/minio" server "${LOCAL_DIR}/minio/data" \
+        --address "127.0.0.1:${MINIO_API_PORT}" --console-address "127.0.0.1:${MINIO_CONSOLE_PORT}" \
+        >"${log_file}" 2>&1 </dev/null &
+    minio_pid="$!"
+  fi
+  printf '%s\n' "${minio_pid}" >"${LOCAL_DIR}/minio/run/minio.pid"
   wait_http MinIO "http://127.0.0.1:${MINIO_API_PORT}/minio/health/live" 90
   MC_CONFIG_DIR="${LOCAL_DIR}/minio/mc-config" "${MINIO_HOME}/mc" alias set seekflux-local \
     "http://127.0.0.1:${MINIO_API_PORT}" "${MINIO_ROOT_USER}" "${MINIO_ROOT_PASSWORD}" >/dev/null
@@ -724,6 +764,13 @@ apps_down() {
 
 infra_down() {
   load_local_env
+  if [[ "${OS_NAME}" == "Darwin" ]]; then
+    local service label
+    for service in minio elasticsearch kafka; do
+      label="$(launchd_label "${service}")"
+      launchctl remove "${label}" >/dev/null 2>&1 || true
+    done
+  fi
   stop_pidfile MinIO "${LOCAL_DIR}/minio/run/minio.pid"
   stop_pidfile Elasticsearch "${LOCAL_DIR}/elasticsearch/run/elasticsearch.pid"
   stop_pidfile Kafka "${LOCAL_DIR}/kafka/run/kafka.pid"

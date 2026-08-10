@@ -37,21 +37,21 @@ public class JdbcAgentRunRecorder implements AgentRunRecorder {
     }
 
     private void startRun(AgentRunEvent event) {
-        int sessionRows = jdbcClient.sql("""
-                        UPDATE agent.sessions
-                        SET last_turn_id = :turnId,
-                            last_agent_run_id = :agentRunId,
-                            updated_at = :eventTime
-                        WHERE session_id = :sessionId
+        jdbcClient.sql("""
+                        UPDATE agent.runs
+                        SET state = 'FAILED',
+                            fallback_reason = 'OWNER_LOST',
+                            completed_at = :completedAt
+                        WHERE request_id = :requestId
+                          AND session_id = :sessionId
+                          AND turn_id = :turnId
+                          AND state = 'RUNNING'
                         """)
+                .param("completedAt", databaseTime(event.eventTime()))
+                .param("requestId", event.requestId())
                 .param("sessionId", event.sessionId())
                 .param("turnId", event.turnId())
-                .param("agentRunId", UUID.fromString(event.agentRunId()))
-                .param("eventTime", databaseTime(event.eventTime()))
                 .update();
-        if (sessionRows != 1) {
-            throw new IllegalStateException("agent session update did not affect exactly one row");
-        }
 
         int runRows = jdbcClient.sql("""
                         INSERT INTO agent.runs (
@@ -121,26 +121,6 @@ public class JdbcAgentRunRecorder implements AgentRunRecorder {
             throw new IllegalStateException("agent run completion did not affect exactly one running row");
         }
 
-        Map<String, Object> snapshot = Map.of(
-                "lastAgentRunId", event.agentRunId(),
-                "lastTurnId", event.turnId(),
-                "state", state,
-                "executionMode", executionMode);
-        int sessionRows = jdbcClient.sql("""
-                        UPDATE agent.sessions
-                        SET snapshot = CAST(:snapshot AS jsonb),
-                            updated_at = :updatedAt
-                        WHERE session_id = :sessionId
-                          AND last_agent_run_id = :agentRunId
-                        """)
-                .param("snapshot", toJson(snapshot))
-                .param("updatedAt", databaseTime(event.eventTime()))
-                .param("sessionId", event.sessionId())
-                .param("agentRunId", UUID.fromString(event.agentRunId()))
-                .update();
-        if (sessionRows != 1) {
-            throw new IllegalStateException("agent session snapshot did not affect the current run");
-        }
     }
 
     private String toJson(Object value) {

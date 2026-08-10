@@ -3,6 +3,7 @@ package io.seekflux.platform.agentruntime;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import io.seekflux.platform.agentruntime.llm.LlmUsage;
 
 public record AgentRunTrace(
         String agentRunId,
@@ -15,9 +16,27 @@ public record AgentRunTrace(
         AgentTerminalState terminalState,
         String executionMode,
         String fallbackReason,
+        LlmUsage llmUsage,
         List<StepTrace> steps) {
 
+    public AgentRunTrace(
+            String agentRunId,
+            String requestId,
+            String sessionId,
+            String turnId,
+            DefinitionSnapshot definition,
+            Instant startedAt,
+            long tookMillis,
+            AgentTerminalState terminalState,
+            String executionMode,
+            String fallbackReason,
+            List<StepTrace> steps) {
+        this(agentRunId, requestId, sessionId, turnId, definition, startedAt, tookMillis,
+                terminalState, executionMode, fallbackReason, LlmUsage.UNMEASURED, steps);
+    }
+
     public AgentRunTrace {
+        llmUsage = llmUsage == null ? LlmUsage.UNMEASURED : llmUsage;
         steps = steps == null ? List.of() : List.copyOf(steps);
         if (tookMillis < 0) {
             throw new IllegalArgumentException("agent timing must not be negative");

@@ -2,7 +2,6 @@ package io.seekflux.apps.agentserver.runtime;
 
 import io.seekflux.platform.agentruntime.execution.ExecutionAuthority;
 import io.seekflux.platform.agentruntime.execution.ExecutionAuthorityStore;
-import java.time.Duration;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -12,6 +11,15 @@ import org.springframework.data.redis.core.script.DefaultRedisScript;
 public final class RedisExecutionAuthorityStore implements ExecutionAuthorityStore {
 
     private static final String KEY_PREFIX = "seekflux:agent:running:";
+    private static final String FENCE_KEY_PREFIX = "seekflux:agent:fence:";
+    private static final DefaultRedisScript<Long> ACQUIRE = new DefaultRedisScript<>("""
+            if redis.call('exists', KEYS[1]) == 1 then
+              return 0
+            end
+            local token = redis.call('incr', KEYS[2])
+            redis.call('psetex', KEYS[1], ARGV[2], ARGV[1] .. '|' .. token)
+            return token
+            """, Long.class);
     private static final DefaultRedisScript<Long> RENEW = new DefaultRedisScript<>("""
             if redis.call('get', KEYS[1]) == ARGV[1] then
               return redis.call('pexpire', KEYS[1], ARGV[2])
@@ -34,10 +42,15 @@ public final class RedisExecutionAuthorityStore implements ExecutionAuthoritySto
     @Override
     public Optional<ExecutionAuthority> acquire(String sessionId, String ownerToken, long ttlMillis) {
         String key = KEY_PREFIX + sessionId;
-        Boolean acquired = redis.opsForValue().setIfAbsent(key, ownerToken, Duration.ofMillis(ttlMillis));
-        return Boolean.TRUE.equals(acquired)
-                ? Optional.of(new RedisAuthority(key, ownerToken))
-                : Optional.empty();
+        Long fencingToken = redis.execute(
+                ACQUIRE,
+                List.of(key, FENCE_KEY_PREFIX + sessionId),
+                ownerToken,
+                Long.toString(ttlMillis));
+        if (fencingToken == null || fencingToken <= 0) {
+            return Optional.empty();
+        }
+        return Optional.of(new RedisAuthority(key, ownerToken + "|" + fencingToken, fencingToken));
     }
 
     @Override
@@ -51,12 +64,19 @@ public final class RedisExecutionAuthorityStore implements ExecutionAuthoritySto
 
     private final class RedisAuthority implements ExecutionAuthority {
         private final String key;
-        private final String ownerToken;
+        private final String storedOwner;
+        private final long fencingToken;
         private final AtomicBoolean closed = new AtomicBoolean();
 
-        private RedisAuthority(String key, String ownerToken) {
+        private RedisAuthority(String key, String storedOwner, long fencingToken) {
             this.key = key;
-            this.ownerToken = ownerToken;
+            this.storedOwner = storedOwner;
+            this.fencingToken = fencingToken;
+        }
+
+        @Override
+        public long fencingToken() {
+            return fencingToken;
         }
 
         @Override
@@ -68,7 +88,7 @@ public final class RedisExecutionAuthorityStore implements ExecutionAuthoritySto
                 Long renewed = redis.execute(
                         RENEW,
                         List.of(key),
-                        ownerToken,
+                        storedOwner,
                         Long.toString(ttlMillis));
                 return renewed != null && renewed == 1;
             } catch (RuntimeException unavailable) {
@@ -82,7 +102,7 @@ public final class RedisExecutionAuthorityStore implements ExecutionAuthoritySto
                 return;
             }
             try {
-                redis.execute(RELEASE, List.of(key), ownerToken);
+                redis.execute(RELEASE, List.of(key), storedOwner);
             } catch (RuntimeException ignored) {
                 // TTL remains the final safety net if Redis is unavailable during release.
             }

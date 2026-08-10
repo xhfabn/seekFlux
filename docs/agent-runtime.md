@@ -6,7 +6,7 @@
 
 SeekFlux 没有依赖 Ark-Leto 二进制或源码。当前实现参考《Ark-Leto 框架内核 与 Agentspark 主链路 原理详解》中的主链路、会话事件和执行权思想，自行实现内部 Runtime。类名相似只代表设计映射，不代表复制或集成了未提供的框架。
 
-Phase 1 已证明业务无关、有界、可追踪、能稳定回退的运行内核；Phase 2 又完成 Query Mode、多轮约束、动态并行 Tool、OpenAI-compatible Provider Adapter 和复杂 Query Eval。真实模型线上基线与多实例恢复仍在后续阶段。
+Phase 1 已证明业务无关、有界、可追踪、能稳定回退的运行内核；Phase 2 完成 Query Mode、多轮约束、动态并行 Tool、OpenAI-compatible Provider Adapter 和复杂 Query Eval；Phase 3 已补齐 fencing、失主接管、跨实例取消、事务 Outbox、故障注入、Shadow 与成本计量边界。
 
 ## 2. 模块职责
 
@@ -59,9 +59,12 @@ sequenceDiagram
         Router-->>Client: 409 AGENT_SESSION_BUSY
     else 获得执行权
         Router->>Store: commitIngress(requestId, UserMessage)
-        alt requestId 已提交
+        alt requestId 已完成或正在由有效 owner 处理
             Store-->>Router: duplicate
             Router-->>Client: 409 DUPLICATE_AGENT_REQUEST
+        else 崩溃中的同 requestId 被更高 fencing token 接管
+            Store-->>Router: recovered
+            Router->>Executor: 强一致恢复并创建新 attempt
         else 新请求
             Router->>Executor: run
             Executor->>Store: restoreFresh
@@ -73,14 +76,15 @@ sequenceDiagram
             Search-->>Tool: SearchResult + SearchTrace
             Loop->>LLM: chat(context + observation)
             LLM-->>Loop: Complete
-            Executor->>Store: appendOutcome
+            Executor->>Authority: final renew / fence check
+            Executor->>Store: appendOutcome + Outbox in one transaction
             Executor->>Authority: release owner
             Loop-->>Client: RESULTS_READY + AgentTrace + SearchTrace
         end
     end
 ```
 
-最重要的位置约束是“先取得执行权，再提交用户消息”。否则两个实例可能先后提交两条都声称可执行的消息，之后再争抢锁已经无法消除双写。释放时先移除本机 CancellationToken，再按 owner 比较释放租约，避免误删新 owner 的执行权。
+最重要的位置约束是“先取得执行权，再提交用户消息”。否则两个实例可能先后提交两条都声称可执行的消息，之后再争抢锁已经无法消除双写。Redis 原子分配单调 fencing token，PostgreSQL 只接受当前 token 的终态；释放时先移除本机 CancellationToken，再按 owner 比较释放租约，避免误删新 owner 的执行权。
 
 ## 4. FeaturePipeline
 
@@ -105,7 +109,7 @@ FeatureNode 不依赖 Spring 扫描顺序，装配层明确传入列表，Pipeli
 | `AgentRunEvent` | PostgreSQL 独立运行表 | 诊断每次 Decision、Tool 和终态，关联版本及 Search Trace ID |
 | `PushEvent` | 请求内 Publisher；当前不持久化 | 客户端过程投影；Phase 1 同步响应内按逻辑顺序缓冲 |
 
-PostgreSQL 的 `agent.sessions` 保存最新版本、状态版本、事件位置和快照，`agent.workspace_events` 以 `(session_id, event_position)` 排序，并以 `(session_id, request_id)` 保证 Ingress 幂等。状态补丁和 UserMessage 在同一事务中提交，旧 `baseVersion` 不能覆盖新目标。`agent.runs` 与 `agent.run_events` 不参与 Workspace 重放。Redis 只保存热投影和执行权，不是 Session 真相源。
+PostgreSQL 的 `agent.sessions` 保存最新版本、状态版本、事件位置、快照和当前 fencing token，`agent.workspace_events` 以 `(session_id, event_position)` 排序，并以 `(session_id, request_id)` 保证 Ingress 幂等。状态补丁和 UserMessage 在同一事务中提交，旧 `baseVersion` 不能覆盖新目标。终态 WorkspaceEvent 与 `outbox.events` 也在同一事务提交，Worker 按确定性 `eventId` 幂等写入 `agent.audit_events`。`agent.runs` 与 `agent.run_events` 记录每个失主/接管 attempt，但不参与 Workspace 重放。Redis 只保存热投影、执行权、取消信号和 Shadow 开关，不是 Session 真相源。
 
 ## 6. 有限步 AgentLoop
 
@@ -119,6 +123,8 @@ PostgreSQL 的 `agent.sessions` 保存最新版本、状态版本、事件位置
 
 Tool 参数校验失败后只做一次不改变业务意图的确定性修复；相同规范化 Tool 指纹再次出现时返回 `NO_PROGRESS_DETECTED`。执行器是命名、有界线程池；超时会取消 Future，队列饱和产生稳定失败原因。Runtime 不使用公共线程池，也不把异步类型暴露到 Port 或 HTTP。
 
+模型和 Tool 还受两个独立 Bulkhead 保护，分别返回 `MODEL_BULKHEAD_FULL` 和 `TOOL_BULKHEAD_FULL`；故障注入只存在于 Runtime 调用边界，不要求业务 Tool 编写测试分支。Tool Call ID 由 request/step/tool/规范化参数确定性生成，Tool 同时声明副作用类型。当前两个 Search Tool 都是只读；尚未为写 Tool 实现持久化副作用账本。
+
 ## 7. Search Agent
 
 当前提供两个 AgentDef：
@@ -128,7 +134,9 @@ Tool 参数校验失败后只做一次不改变业务意图的确定性修复；
 | `search-assistant` | `search-assistant-v2` | 4 | `search_direct@v1`、`search_filtered@v1` |
 | `search-precise` | `search-precise-v2` | 3 | `search_direct@v1`、`search_filtered@v1` |
 
-二者复用同一 Runtime。默认 `DeterministicSearchLlmClient@deterministic-complex-search-decision-v2` 无需 API Key，可以稳定验证“并行 Search Tool → 观察结果 → 选择候选集 → 完成”。`OpenAiCompatibleLlmClient` 已实现真实 Chat Completions 兼容协议和结构化 Decision 解析，可通过配置切换；协议测试不等同于真实模型质量、Token 或成本评测。
+二者复用同一 Runtime。默认 `DeterministicSearchLlmClient@deterministic-complex-search-decision-v2` 无需 API Key，可以稳定验证“并行 Search Tool → 观察结果 → 选择候选集 → 完成”。`OpenAiCompatibleLlmClient` 已实现真实 Chat Completions 兼容协议、结构化 Decision、usage 解析和配置价格换算；协议测试不等同于真实模型质量或付费成本评测，确定性 Provider 的 Trace 会明确 `usageMeasured=false`。
+
+`ShadowingLlmClient` 在独立有界线程池运行候选策略，只同步返回 primary。候选结果、延迟、错误和一致性写入 `agent.shadow_evaluations`；Redis 共享的开关/采样率使任一实例关闭后其他实例下一次请求生效。Shadow 拒绝或失败不会影响主链。
 
 `SearchDirectTool` 和 `SearchFilteredTool` 都只调用 `SearchUseCase`。复杂 Query 同时执行原 Query 宽搜与改写 Query + 派生标签精搜，最终原样复用一个 Search Tool 候选集；Agent 不二次重排。Tool 成功后，Agent Step 中的 `linkedTraceId` 指向权威 Search Trace；模型/全部 Tool/Runtime 无法完成时，Adapter 使用原 SearchGoal 调用同一个 Search Use Case，响应模式为 `AGENT_TO_DIRECT_FALLBACK`。
 
@@ -149,6 +157,8 @@ Agent Server 默认端口为 `8083`，避免与可选 Flink UI 的 `8082` 冲突
 ```http
 POST /v1/agent/search
 POST /v1/agent/sessions/{sessionId}:cancel
+GET  /v1/agent/runtime/shadow
+PUT  /v1/agent/runtime/shadow
 ```
 
 搜索响应同时返回稳定业务状态、`AgentTrace` 和可选的 `SearchTrace`。完整请求/响应 Schema 见 [`contracts/openapi/seekflux-v1.yaml`](../contracts/openapi/seekflux-v1.yaml)。
@@ -156,11 +166,14 @@ POST /v1/agent/sessions/{sessionId}:cancel
 ## 9. 验证和当前边界
 
 ```bash
-mvn -pl platform/agent-runtime,contexts/agent-orchestration-context,apps/agent-server -am test
+mvn -pl platform/agent-runtime,apps/agent-server,apps/worker-runner -am test
 python3 evals/run_agent_search_eval.py
 python3 evals/run_complex_agent_eval.py
+python3 evals/run_agent_reliability_eval.py
 ```
 
 固定 `direct-search-v1` 六 Query 基线上，强制 Agent 与 Direct 的 `Recall@5/MRR@5/nDCG@5` 均为 `1.0`，证明基础复用没有回归。`complex-search-v1` 的六条关键词陷阱 Query 中，Direct `MRR@1/Recall@1=0.0`，Agent `MRR@1/Recall@1=1.0`；Tool 选择、任务完成、简单 Direct 路由和多轮版本测试全部通过。
 
-当前尚未完成真实模型线上质量/成本基线、多副本 fencing 与失主恢复、跨实例取消、事务 Outbox、实时 Push/SSE、HITL、子 Agent、MCP、完整 OTel 和故障注入。这些边界不能因为已经有 Provider Adapter、租约或取消接口就提前标记为完成。
+`agent-reliability-v1` 固定评测证明单写者、fencing 单调、重复请求无额外 Tool 事件、事务 Outbox、幂等审计、Shadow 主结果隔离和快速关闭；12 次样本可用性 `1.0`、P95 `226.402 ms`、Fallback `0.0`。旧 owner、跨实例取消、模型/Tool 故障和 Bulkhead 另有自动化测试。
+
+对照 Ark-Leto 后仍未完成的是 steer 排队、pending Tool Checkpoint、写 Tool 副作用账本、上下文压缩、OutputGuard、实时 Push/SSE、HITL、Handoff、子 Agent、MCP/Skill/Graph 和完整 OTel。真实付费 Provider 基线也需要部署方端点和密钥；当前报告不伪造 Token/成本。完整取舍见 [ADR-006](adr/ADR-006-agent-reliability-fencing-outbox-shadow.md)。

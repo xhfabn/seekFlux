@@ -40,6 +40,11 @@ public final class SearchDirectTool implements AgentTool {
     }
 
     @Override
+    public Effect effect() {
+        return Effect.READ_ONLY;
+    }
+
+    @Override
     public AgentToolResult execute(AgentToolContext context) {
         try {
             SearchResultPage result = search.search(new SearchQuery(

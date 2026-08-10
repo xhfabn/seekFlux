@@ -9,9 +9,9 @@
 
 ## 当前进度
 
-> **当前处于：Step 6 已完成，下一步进入 Step 7「Agent 可靠性与平台化」。**
+> **当前处于：Step 7 已完成，下一步进入 Step 8「曝光与行为闭环」。**
 
-截至 2026-08-08，已经跑通以下真实链路：
+截至 2026-08-10，已经跑通以下真实链路：
 
 - 内容登记 → PostgreSQL/Outbox → Kafka → Worker 生成画像并发布 → Elasticsearch 建索引；
 - 用户画像保存到 Redis → Search/Feed 使用真实后端数据；
@@ -23,10 +23,13 @@
 - 简单 Query 直达 Search、复杂 Query 进入 Agent 的 AUTO Router，结构化 SearchPlan 与版本化多轮 ConstraintPatch；
 - 请求级动态 Tool 集、宽搜/标签精搜并行 fan-out、参数修复、无进展检测、候选复用和复杂 Query Eval；
 - OpenAI-compatible `LlmClient` Adapter 与版本化 Prompt；默认确定性 Provider 保留为无 Key 回归基线；
+- Redis fencing/owner-CAS、失主接管、跨实例取消、优雅停机和旧 owner 提交隔离；
+- Agent 终态事务 Outbox、Kafka 幂等审计消费、模型/Tool Bulkhead 与固定故障注入；
+- 隔离 Shadow、Redis 跨实例快速开关，以及 Token/成本 Trace 与版本化 Metrics；
 - C 端“发现”和 B 端“用户画像／内容工作台”通过同源 Bridge 与后端联调；
 - Spring MVC 普通返回值、JDBC/HikariCP、同步 Redis/Elasticsearch Adapter，以及推荐局部有界并发。
 
-Agent Phase 2 已经完成。真实 Provider 协议 Adapter 已接入并通过本地协议测试，但默认评测仍使用可复现的确定性 Provider；尚未形成真实模型 Token、成本与质量基线。多实例失主接管、fencing、跨实例取消、事务 Outbox、Shadow、HITL、子 Agent、MCP、流式 Push 和完整 OpenTelemetry 仍未完成，不能因已有租约或 SPI 就提前宣称具备这些能力。
+Agent Phase 3 已经完成。真实 Provider 协议 Adapter、usage 解析与价格换算已经通过本地协议测试，但默认评测仍使用可复现的确定性 Provider，所以没有伪造真实付费模型的 Token、成本或质量数据。HITL、Handoff、子 Agent、MCP、Checkpoint 精确恢复、写 Tool 副作用账本、上下文压缩、流式 Push 和完整 OpenTelemetry 仍未完成；Ark-Leto 反向核对矩阵见 [ADR-006](../adr/ADR-006-agent-reliability-fencing-outbox-shadow.md)。
 
 运行模型决策见 [ADR-002：命令式应用运行模型与局部有界并发](../adr/ADR-002-imperative-application-runtime.md)。普通 Search/Feed 保持同步 JSON；未来 Agent 的模型调用和 Tool fan-out 只能在 Agent 边界内使用明确、有界、可观测的并发，不把 `Mono`/`Flux` 重新扩散到业务接口。
 
@@ -45,27 +48,26 @@ Agent 内核决策和参考文档映射见 [ADR-004](../adr/ADR-004-ark-leto-ins
 | Step 4：Agent-ready Direct Search | 完成 Agent Phase 0 | 可复现、可评测、可追踪、可回退的 Direct Search | 已完成 |
 | Step 5：Agent Runtime MVP | Agent Phase 1 | 通用有限步 Runtime、Search Agent、Session 和基础 Eval | 已完成 |
 | Step 6：复杂 Search Agent | Agent Phase 2 | Query Mode Router、多轮约束、动态工具、多路 Tool 和确定性回退 | 已完成 |
-| **Step 7：Agent 可靠性与平台化** | **Agent Phase 3** | **多实例执行权、恢复、故障注入、Shadow 和成本治理** | **下一步** |
-| Step 8：曝光与行为闭环 | Agent Phase 4 可选深化 | 可归因、幂等、可回放的行为事实 | 后置可选 |
+| Step 7：Agent 可靠性与平台化 | Agent Phase 3 | 多实例执行权、恢复、故障注入、Shadow 和成本治理 | 已完成 |
+| **Step 8：曝光与行为闭环** | **Agent Phase 4 可选深化** | **可归因、幂等、可回放的行为事实** | **下一步** |
 | Step 9：实时特征与短期兴趣 | Agent Phase 4 可选深化 | Kafka/Flink 窗口和在线兴趣 | 后置可选 |
 | Step 10：模型排序与推荐实验 | Agent Phase 4 可选深化 | 训练、模型发布、推荐实验和效果闭环 | 后置可选 |
 
-Step 3 提前实现 Feed 是已经发生的项目事实，不需要删除或伪装成未完成；但它不再决定下一阶段。Agent 主线完成到 Step 7 之前，不因追求推荐技术栈完整而优先建设 Flink、行为模型或复杂推荐实验。
+Step 3 提前实现 Feed 是已经发生的项目事实，不需要删除或伪装成未完成。Agent 主线已经完成到 Step 7；后续按行为事实 → 实时兴趣 → 模型实验的依赖顺序推进，不直接跳到 Flink 或复杂推荐模型。
 
-## 下一阶段：Step 7 Agent 可靠性与平台化
+## 下一阶段：Step 8 曝光与行为闭环
 
-Step 6 已经证明简单 Query 可以绕过 Agent，复杂 Query 可以通过结构化约束和并行 Search Tool 获得可复现增量，多轮目标也具备原子版本校验。Step 7 开始验证多副本和故障条件下的一致性、恢复、治理与 SLO。
+Step 7 已经证明 Agent 在租约过期、实例接管、重复请求、跨实例取消、模型/Tool 故障和 Shadow 条件下仍能保护 Session 真相。Step 8 回到 C 端产品闭环：把“发现/搜索返回了什么”和“用户实际做了什么”记录成可归因事实，为后续短期兴趣和推荐实验提供可信输入。
 
 计划范围：
 
-1. 为执行权增加 fencing token，并验证失主实例不能在租约失效后继续提交结果；
-2. 实现实例接管时的强一致恢复、跨实例取消和优雅停机；
-3. 用事务 Outbox 发布 Agent 完成/回退事实，增加幂等评测与审计消费者；
-4. 增加模型/Tool Bulkhead、超时与故障注入，验证部分成功和 Direct Fallback；
-5. 建立 Agent/Prompt/Tool 策略 Shadow、小流量切换与快速回滚；
-6. 记录真实 Provider 的 Token、成本、P95、Fallback 和版本关联，形成容量与 SLO 基线。
+1. 定义并冻结曝光、点击、点赞、收藏、完播等行为契约与幂等键；
+2. C 端发现/搜索返回稳定的 request/trace/position 归因信息，并按真实交互上报；
+3. Interaction API 只做校验与可靠入站，Kafka 消费者建立可回放行为事实；
+4. 对重复、乱序、非法归因和撤回内容建立明确失败/丢弃语义；
+5. 用固定 Runner 验证同一次交互不重复计数、曝光到行为可关联、回放结果一致。
 
-完成门槛：至少双实例下同一 Session 不双写，失主可接管且旧 owner 不能提交；重复请求与重放不产生重复 Tool 副作用；跨实例取消、优雅停机和模型/Tool/Redis 故障注入有自动化证据；Shadow 不影响主结果并可快速关闭；Agent/Direct 的可用性、P95、Fallback、Token 与成本形成版本化报告。
+完成门槛：真实前端联调产生曝光和至少一种主动行为；同一幂等键重复提交只形成一条权威事实；request/trace/content/position/user 能完整关联；Kafka 重放不改变最终结果；契约、自动化测试和固定评测共同支撑后才标记完成。
 
 ## 阅读入口
 
@@ -76,6 +78,7 @@ Step 6 已经证明简单 Query 可以绕过 Agent，复杂 Query 可以通过�
 - [Step 4：Agent-ready Direct Search](step-04-agent-ready-direct-search.md)：理解双路检索、RRF、Deadline、Trace、约束和真实评测。
 - [Step 5：Agent Runtime MVP](step-05-agent-runtime-mvp.md)：理解参考 Ark-Leto 主链路自研的 Runtime、会话执行权、事件分层、Search Tool 和基础 Eval。
 - [Step 6：复杂 Search Agent](step-06-complex-search-agent.md)：理解 Query Mode、多轮目标、动态并行 Tool、候选复用和复杂 Query Eval。
+- [Step 7：Agent 可靠性与平台化](step-07-agent-reliability-platform.md)：理解 fencing、强恢复、分布式取消、事务 Outbox、Shadow、故障与 SLO。
 - [阶段学习文档模板](template.md)：以后每完成一个可运行切片时使用。
 
 ## 完成状态规则
@@ -103,6 +106,7 @@ docs/learning/
 ├── step-04-agent-ready-direct-search.md
 ├── step-05-agent-runtime-mvp.md
 ├── step-06-complex-search-agent.md
+├── step-07-agent-reliability-platform.md
 └── template.md
 ```
 

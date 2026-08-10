@@ -17,6 +17,11 @@ public record AgentTraceView(
         String terminalState,
         String executionMode,
         String fallbackReason,
+        long inputTokens,
+        long outputTokens,
+        long totalTokens,
+        long costMicros,
+        boolean usageMeasured,
         List<StepView> steps) {
 
     public AgentTraceView {
