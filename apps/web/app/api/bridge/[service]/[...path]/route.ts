@@ -1,4 +1,4 @@
-type ServiceName = "content" | "online";
+type ServiceName = "content" | "online" | "agent";
 
 type RouteContext = {
   params: Promise<{ service: string; path: string[] }>;
@@ -7,11 +7,12 @@ type RouteContext = {
 const SERVICE_BASES: Record<ServiceName, string> = {
   content: process.env.SEEKFLUX_CONTENT_API_BASE ?? "http://127.0.0.1:8081",
   online: process.env.SEEKFLUX_ONLINE_API_BASE ?? "http://127.0.0.1:8080",
+  agent: process.env.SEEKFLUX_AGENT_API_BASE ?? "http://127.0.0.1:8083",
 };
 
 async function proxy(request: Request, context: RouteContext): Promise<Response> {
   const { service, path } = await context.params;
-  if (service !== "content" && service !== "online") {
+  if (service !== "content" && service !== "online" && service !== "agent") {
     return Response.json({ message: "未知的 SeekFlux 服务" }, { status: 404 });
   }
 
@@ -27,7 +28,7 @@ async function proxy(request: Request, context: RouteContext): Promise<Response>
   }
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 12_000);
+  const timeout = setTimeout(() => controller.abort(), service === "agent" ? 45_000 : 12_000);
   try {
     const response = await fetch(target, {
       method: request.method,

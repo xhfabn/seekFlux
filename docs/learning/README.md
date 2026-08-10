@@ -26,10 +26,10 @@
 - Redis fencing/owner-CAS、失主接管、跨实例取消、优雅停机和旧 owner 提交隔离；
 - Agent 终态事务 Outbox、Kafka 幂等审计消费、模型/Tool Bulkhead 与固定故障注入；
 - 隔离 Shadow、Redis 跨实例快速开关，以及 Token/成本 Trace 与版本化 Metrics；
-- C 端“发现”和 B 端“用户画像／内容工作台”通过同源 Bridge 与后端联调；
+- C 端“发现”已通过同源 Bridge 接通推荐、关键词搜索和任务型多轮 AI 搜索；AI 搜索保存 Session/Goal 版本、支持追问与取消，并复用 Search Tool 的真实候选，B 端“用户画像／内容工作台”保持后端联调；
 - Spring MVC 普通返回值、JDBC/HikariCP、同步 Redis/Elasticsearch Adapter，以及推荐局部有界并发。
 
-Agent Phase 3 已经完成。真实 Provider 协议 Adapter、usage 解析与价格换算已经通过本地协议测试，但默认评测仍使用可复现的确定性 Provider，所以没有伪造真实付费模型的 Token、成本或质量数据。HITL、Handoff、子 Agent、MCP、Checkpoint 精确恢复、写 Tool 副作用账本、上下文压缩、流式 Push 和完整 OpenTelemetry 仍未完成；Ark-Leto 反向核对矩阵见 [ADR-006](../adr/ADR-006-agent-reliability-fencing-outbox-shadow.md)。
+Agent Phase 3 已经完成。OpenAI-compatible Adapter 现兼容标准 `message.content` 与 LongCat 的 `message.reasoning_content`；本地已用 LongCat-2.0 跑通一次模型 → Agent → Search Tool → Web 的真实功能验收，并观测到 Provider 返回的 Token usage。默认固定评测仍使用可复现的确定性 Provider，这次验收不冒充质量或成本基线。HITL、Handoff、子 Agent、MCP、Checkpoint 精确恢复、写 Tool 副作用账本、上下文压缩、流式 Push 和完整 OpenTelemetry 仍未完成；Ark-Leto 反向核对矩阵见 [ADR-006](../adr/ADR-006-agent-reliability-fencing-outbox-shadow.md)。
 
 运行模型决策见 [ADR-002：命令式应用运行模型与局部有界并发](../adr/ADR-002-imperative-application-runtime.md)。普通 Search/Feed 保持同步 JSON；未来 Agent 的模型调用和 Tool fan-out 只能在 Agent 边界内使用明确、有界、可观测的并发，不把 `Mono`/`Flux` 重新扩散到业务接口。
 

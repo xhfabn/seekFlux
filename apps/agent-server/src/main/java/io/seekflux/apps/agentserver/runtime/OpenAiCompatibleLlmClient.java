@@ -185,7 +185,12 @@ public final class OpenAiCompatibleLlmClient implements LlmClient {
         }
         Map<String, Object> first = map(choices.getFirst());
         Map<String, Object> message = map(first.get("message"));
-        return requireText(String.valueOf(message.get("content")), "LLM response content");
+        String content = text(message.get("content"));
+        if (!content.isBlank()) {
+            return content;
+        }
+        String reasoningContent = text(message.get("reasoning_content"));
+        return requireText(reasoningContent, "LLM response content");
     }
 
     private String writeJson(Object value) {
@@ -223,6 +228,10 @@ public final class OpenAiCompatibleLlmClient implements LlmClient {
 
     private static long longValue(Object value) {
         return value instanceof Number number ? Math.max(0, number.longValue()) : 0;
+    }
+
+    private static String text(Object value) {
+        return value instanceof String text ? text.trim() : "";
     }
 
     private static String stripFence(String value) {

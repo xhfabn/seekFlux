@@ -134,4 +134,45 @@ class OpenAiCompatibleLlmClientTest {
             server.stop(0);
         }
     }
+
+    @Test
+    void acceptsStructuredDecisionFromReasoningContentWhenContentIsAbsent() throws Exception {
+        ObjectMapper objectMapper = new ObjectMapper();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/chat/completions", exchange -> {
+            String decision = "{\"action\":\"clarify\",\"question\":\"请补充主题\"}";
+            byte[] response = objectMapper.writeValueAsBytes(Map.of(
+                    "choices", List.of(Map.of("message", Map.of(
+                            "role", "assistant",
+                            "reasoning_content", decision))),
+                    "usage", Map.of("prompt_tokens", 20, "completion_tokens", 12, "total_tokens", 32)));
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        server.start();
+        try {
+            OpenAiCompatibleLlmClient client = new OpenAiCompatibleLlmClient(
+                    HttpClient.newHttpClient(), objectMapper,
+                    java.net.URI.create("http://127.0.0.1:" + server.getAddress().getPort()
+                            + "/v1/chat/completions"),
+                    "", "longcat-compatible-model", Duration.ofSeconds(1));
+            AgentRunRequest run = new AgentRunRequest(
+                    "request-3", "session-3", "turn-3", "帮我找内容", Map.of());
+            AgentDecisionContext decisionContext = new AgentDecisionContext(
+                    run, 1, Duration.ofSeconds(1), List.of());
+
+            var result = client.chatWithUsage(new AssembledContext(
+                    decisionContext,
+                    List.of(new ContextMessage("user", "帮我找内容")),
+                    "prompt-spec-3",
+                    12));
+
+            assertThat(result.decision()).isEqualTo(new AgentDecision.Clarify("请补充主题"));
+            assertThat(result.usage().totalTokens()).isEqualTo(32);
+            assertThat(result.usage().measured()).isTrue();
+        } finally {
+            server.stop(0);
+        }
+    }
 }

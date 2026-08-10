@@ -26,6 +26,8 @@ Phase 2 证明了 Agent 的编排增量，但租约过期、实例退出、重�
 - 模型、Tool、失主、跨实例取消及 Bulkhead 故障测试；
 - OpenAI-compatible usage 解析、价格换算、Trace 字段和版本化 Micrometer 指标；
 - 隔离执行器中的 Shadow、PostgreSQL 对比记录、Redis 跨实例开关和管理 API；
+- OpenAI-compatible 响应兼容标准 `message.content` 与 LongCat `message.reasoning_content`，两种结构都保留真实 usage；
+- C 端新增任务型 AI 搜索界面，通过同源 Bridge 直连 Agent Server，支持多轮 Goal 版本、追问、取消、降级提示和真实 Search 候选展示；
 - macOS 中间件改由 launchd 托管，解决启动命令结束后 Kafka/ES/MinIO 退出的问题；
 - 自带样本发布、索引等待、清理和数据库断言的可靠性 Eval。
 
@@ -59,6 +61,8 @@ Phase 2 证明了 Agent 的编排增量，但租约过期、实例退出、重�
 - 单写者、fencing 单调、重复请求无额外 Run/Tool 事件、终态 Outbox、幂等审计消费、Shadow 主结果不变和快速关闭全部为 `true`；
 - 固定单测证明旧 owner 不能提交、另一个实例写取消能停止 Loop、模型/Tool 故障稳定回退、Bulkhead 饱和快速拒绝；
 - OpenAI-compatible 本地协议测试验证 usage 解析和价格换算；默认确定性 Provider 明确记录 `providerUsageMeasured=false`、Token/成本为 0，没有伪造付费模型数据；
+- LongCat-2.0 本地功能验收得到 `RESULTS_READY / AGENT`，模型调用 Search Tool 后返回 1 条已发布内容，`providerUsageMeasured=true` 且 Web 展示同一真实候选；该单次验收只证明协议与链路可用，不作为质量或成本基线；
+- Web `npm test` 的构建及 3 个渲染/桥接测试通过；浏览器验收确认 AI 搜索入口、会话 Composer、真实结果与稳定降级结果都由后端响应驱动，并修复首屏 Feed 晚返回夺取 AI 模式及顶部栏遮挡首条消息的问题；
 - `./seekflux.sh status` 验收 PostgreSQL、Redis、Kafka、Elasticsearch、MinIO、三个 Server、Worker 与 Web 全部在线。
 
 ## Ark-Leto 对照后的剩余边界
@@ -67,12 +71,14 @@ Phase 2 证明了 Agent 的编排增量，但租约过期、实例退出、重�
 
 仍未实现的能力包括：steer 排队语义、pending Tool Checkpoint、写 Tool 的持久副作用账本、上下文压缩、OutputGuard 修复、HITL、Handoff、子 Agent、MCP、Chained/Graph Agent 和实时 Push。它们不是 Step 7 完成条件；其中 Checkpoint/副作用账本会在引入任何 `MUTATING` Tool 前升级为硬门槛。
 
-真实付费 Provider 的 Token/成本/质量基线也没有在没有端点和密钥的本地环境中伪造。仓库已经具备计量、定价、Trace、Metrics 与报告字段；接入具体 Provider 时应另生成一个带 `providerUsageMeasured=true` 的运行环境基线。
+真实 Provider 已做单次本地功能联调，但 Token/成本/质量基线仍未建立。仓库已经具备计量、定价、Trace、Metrics 与报告字段；后续必须用固定数据集、固定 Provider/模型/Prompt 版本另生成可复现的运行环境基线，不能用一次成功请求替代评测。
 
 ## 如何验证
 
 ```bash
 mvn -pl platform/agent-runtime,apps/agent-server,apps/worker-runner -am test
+npm --prefix apps/web test
+npm --prefix apps/web run lint
 python3 -m py_compile evals/run_agent_reliability_eval.py
 bash -n deploy/local/stack.sh
 ./seekflux.sh up

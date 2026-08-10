@@ -7,7 +7,7 @@ SeekFlux 是一个面向短视频内容平台的搜索、推荐与 Search Agent 
 ## 产品能力
 
 - 内容登记经 PostgreSQL、事务 Outbox、Kafka、Worker 和 Elasticsearch 形成可搜索的内容画像；
-- C 端发现页支持画像驱动的内容发现、关键词搜索、热门/兴趣/相似内容召回和规则排序；
+- C 端发现页支持画像驱动的内容发现、关键词搜索、热门/兴趣/相似内容召回、规则排序，以及由 Agent Server 驱动的多轮 AI 搜索；
 - B 端用户画像与内容工作台通过真实后端接口管理兴趣约束和内容标签；
 - Direct Search 使用 BM25/kNN 双路召回、RRF 融合、结构化过滤、共同 Deadline、单路降级和 Search Trace；
 - Search Agent 支持简单/复杂 Query 路由、SearchPlan、多轮 ConstraintPatch、动态工具集、并行宽搜/精搜、候选复用、追问与 Direct Fallback；
@@ -28,7 +28,7 @@ SeekFlux 是一个面向短视频内容平台的搜索、推荐与 Search Agent 
 
 ```text
 Web
- ├─ C 端发现 / 搜索
+ ├─ C 端发现 / 关键词搜索 / 多轮 AI 搜索
  └─ B 端用户画像 / 内容工作台
 
 Content Server → PostgreSQL + Outbox → Kafka → Worker → Elasticsearch

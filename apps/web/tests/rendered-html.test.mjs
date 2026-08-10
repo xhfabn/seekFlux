@@ -36,3 +36,15 @@ test("keeps operator workspaces task-oriented", async () => {
   assert.match(source, /校准并发布画像/);
   assert.doesNotMatch(source, /理解用户，|把一条视频，|PRODUCT SHELL|preview_/);
 });
+
+test("exposes task-oriented Agent search through the backend bridge", async () => {
+  const source = await readFile(new URL("../app/SeekFluxApp.tsx", import.meta.url), "utf8");
+  const bridge = await readFile(new URL("../app/api/bridge/[service]/[...path]/route.ts", import.meta.url), "utf8");
+  assert.match(source, /AI 搜索/);
+  assert.match(source, /多轮筛选内容/);
+  assert.match(source, /\/api\/bridge\/agent\/v1\/agent\/search/);
+  assert.match(source, /constraintPatch/);
+  assert.match(source, /cancelAgentSearch/);
+  assert.match(bridge, /SEEKFLUX_AGENT_API_BASE/);
+  assert.doesNotMatch(source, /api\.longcat\.ai|AGENT_LLM_API_KEY|ak_[A-Za-z0-9]+/);
+});

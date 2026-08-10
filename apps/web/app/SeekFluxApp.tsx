@@ -1,9 +1,9 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 type Workspace = "discover" | "audience" | "studio";
-type DiscoverMode = "feed" | "search";
+type DiscoverMode = "feed" | "search" | "agent";
 type HealthState = "checking" | "online" | "offline";
 type EventType = "EXPOSURE" | "PLAY_START" | "LIKE" | "NOT_INTERESTED";
 
@@ -70,6 +70,49 @@ type FeedResponse = {
   unavailableSources: string[];
 };
 
+type AgentSearchResponse = {
+  requestId: string;
+  agentRunId: string | null;
+  sessionId: string;
+  turnId: string;
+  state: "RESULTS_READY" | "NEED_CLARIFICATION" | "FALLBACK_RESULTS" | "CANCELLED" | "FAILED";
+  executionMode: "DIRECT" | "AGENT" | "AGENT_TO_DIRECT_FALLBACK";
+  goalVersion: number;
+  routeReason: "SIMPLE_QUERY" | "COMPLEX_QUERY" | "MULTI_TURN_PATCH" | "EXPLICIT_DIRECT" | "EXPLICIT_AGENT";
+  searchPlan: {
+    originalQuery: string;
+    rewrittenQuery: string;
+    derivedRequiredTags: string[];
+    complex: boolean;
+    reasons: string[];
+  };
+  appliedConstraints: { page: number; size: number; requiredTags: string[] };
+  clarification: string | null;
+  total: number;
+  page: number;
+  size: number;
+  items: ContentItem[];
+  agentTrace: {
+    tookMillis: number;
+    totalTokens: number;
+    usageMeasured: boolean;
+    decisionProviderVersion: string;
+  } | null;
+  selectedTool: string | null;
+  successfulToolCount: number;
+  candidateSetReused: boolean;
+  degraded: boolean;
+  fallbackReason: string | null;
+};
+
+type AgentTurn = {
+  id: string;
+  query: string;
+  status: "loading" | "ready" | "error" | "cancelled";
+  response?: AgentSearchResponse;
+  error?: string;
+};
+
 type UserInterestResponse = {
   userId: string;
   topics: string[];
@@ -123,8 +166,8 @@ async function api<T>(url: string, options?: RequestInit): Promise<T> {
       ...options?.headers,
     },
   });
-  const payload = (await response.json().catch(() => ({}))) as { message?: string } & T;
-  if (!response.ok) throw new Error(payload.message || `${response.status} ${response.statusText}`);
+  const payload = (await response.json().catch(() => ({}))) as { message?: string; detail?: string; title?: string } & T;
+  if (!response.ok) throw new Error(payload.message || payload.detail || payload.title || `${response.status} ${response.statusText}`);
   return payload;
 }
 
@@ -136,12 +179,21 @@ function formatEventTime(value: string): string {
   return new Intl.DateTimeFormat("zh-CN", { hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(new Date(value));
 }
 
+function agentReply(response: AgentSearchResponse): string {
+  if (response.state === "NEED_CLARIFICATION") return response.clarification || "还需要一个条件才能继续筛选。";
+  if (response.state === "CANCELLED") return "这次搜索已停止。";
+  if (response.state === "FAILED") return "这次搜索没有完成，请换一种说法再试。";
+  if (!response.items.length) return "没有找到同时满足这些条件的内容。你可以放宽一个条件继续找。";
+  if (response.state === "FALLBACK_RESULTS") return `智能规划暂时降级，已用稳定搜索返回 ${response.total} 条结果。`;
+  return `找到了 ${response.total} 条符合条件的内容。你可以继续补充主题、标签或数量。`;
+}
+
 export function SeekFluxApp() {
   const [workspace, setWorkspace] = useState<Workspace>("discover");
   const [discoverMode, setDiscoverMode] = useState<DiscoverMode>("feed");
   const [busy, setBusy] = useState<string | null>(null);
   const [toast, setToast] = useState<{ text: string; error?: boolean } | null>(null);
-  const [health, setHealth] = useState<Record<"content" | "online", HealthState>>({ content: "checking", online: "checking" });
+  const [health, setHealth] = useState<Record<"content" | "online" | "agent", HealthState>>({ content: "checking", online: "checking", agent: "checking" });
 
   const [creatorId, setCreatorId] = useState(sampleContent.creatorId);
   const [title, setTitle] = useState(sampleContent.title);
@@ -169,6 +221,11 @@ export function SeekFluxApp() {
   const [feedData, setFeedData] = useState<FeedResponse | null>(null);
   const [feedItems, setFeedItems] = useState<ContentItem[]>([]);
   const [discoverError, setDiscoverError] = useState("");
+  const [agentQuery, setAgentQuery] = useState("");
+  const [agentSessionId, setAgentSessionId] = useState("");
+  const [agentGoalVersion, setAgentGoalVersion] = useState(0);
+  const [agentTurns, setAgentTurns] = useState<AgentTurn[]>([]);
+  const agentAbortRef = useRef<AbortController | null>(null);
 
   const [events, setEvents] = useState<InteractionEvent[]>([]);
   const [queueHydrated, setQueueHydrated] = useState(false);
@@ -183,25 +240,32 @@ export function SeekFluxApp() {
   }, [toast]);
 
   useEffect(() => {
-    const rawEvents = window.localStorage.getItem("seekflux.interactions");
-    if (rawEvents) {
-      try { setEvents(JSON.parse(rawEvents) as InteractionEvent[]); } catch { window.localStorage.removeItem("seekflux.interactions"); }
-    }
-    const rawProfile = window.localStorage.getItem("seekflux.viewer-profile");
-    if (rawProfile) {
-      try {
-        const saved = JSON.parse(rawProfile) as { userId?: string; interests?: string; savedAt?: string };
-        if (saved.userId) { setUserId(saved.userId); setSavedUserId(saved.userId); }
-        if (saved.interests) setInterests(saved.interests);
-        if (saved.savedAt) setProfileSavedAt(saved.savedAt);
-      } catch { window.localStorage.removeItem("seekflux.viewer-profile"); }
-    }
-    setQueueHydrated(true);
-    setProfileHydrated(true);
+    let active = true;
+    queueMicrotask(() => {
+      if (!active) return;
+      const rawEvents = window.localStorage.getItem("seekflux.interactions");
+      if (rawEvents) {
+        try { setEvents(JSON.parse(rawEvents) as InteractionEvent[]); } catch { window.localStorage.removeItem("seekflux.interactions"); }
+      }
+      const rawProfile = window.localStorage.getItem("seekflux.viewer-profile");
+      if (rawProfile) {
+        try {
+          const saved = JSON.parse(rawProfile) as { userId?: string; interests?: string; savedAt?: string };
+          if (saved.userId) { setUserId(saved.userId); setSavedUserId(saved.userId); }
+          if (saved.interests) setInterests(saved.interests);
+          if (saved.savedAt) setProfileSavedAt(saved.savedAt);
+        } catch { window.localStorage.removeItem("seekflux.viewer-profile"); }
+      }
+      setQueueHydrated(true);
+      setProfileHydrated(true);
+    });
+    return () => { active = false; };
   }, []);
 
   useEffect(() => {
-    if (profileHydrated) void runFeed();
+    if (profileHydrated) void runFeed(null, false, savedUserId, feedSeed, false);
+    // Initial feed hydration intentionally runs once after browser profile restoration.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profileHydrated]);
 
   useEffect(() => {
@@ -210,7 +274,7 @@ export function SeekFluxApp() {
 
   useEffect(() => {
     let cancelled = false;
-    async function check(service: "content" | "online") {
+    async function check(service: "content" | "online" | "agent") {
       try {
         await api(`/api/bridge/${service}/actuator/health`);
         if (!cancelled) setHealth((current) => ({ ...current, [service]: "online" }));
@@ -220,6 +284,7 @@ export function SeekFluxApp() {
     }
     void check("content");
     void check("online");
+    void check("agent");
     return () => { cancelled = true; };
   }, []);
 
@@ -372,7 +437,7 @@ export function SeekFluxApp() {
     } finally { setBusy(null); }
   }
 
-  async function runFeed(cursor?: string | null, append = false, targetUserId = savedUserId, targetSeed = feedSeed) {
+  async function runFeed(cursor?: string | null, append = false, targetUserId = savedUserId, targetSeed = feedSeed, activate = true) {
     setBusy("feed");
     setDiscoverError("");
     try {
@@ -383,7 +448,7 @@ export function SeekFluxApp() {
       const startPosition = append ? feedItems.length : 0;
       setFeedData(data);
       setFeedItems((current) => append ? [...current, ...data.items] : data.items);
-      setDiscoverMode("feed");
+      if (activate) setDiscoverMode("feed");
       setHealth((current) => ({ ...current, online: "online" }));
       appendExposureEvents(data.items, data.requestId, startPosition);
       if (!data.items.length) showToast("当前画像暂无匹配内容");
@@ -412,6 +477,95 @@ export function SeekFluxApp() {
       setDiscoverError(message);
       showToast(message, true);
     } finally { setBusy(null); }
+  }
+
+  async function runAgentSearch(targetQuery = agentQuery) {
+    const cleanQuery = targetQuery.trim();
+    if (!cleanQuery) return showToast("请描述你想找的内容", true);
+    if (busy === "agent-search") return;
+
+    const sessionId = agentSessionId || `session_${createEventId()}`;
+    const turnId = `turn_${createEventId()}`;
+    const turn: AgentTurn = { id: turnId, query: cleanQuery, status: "loading" };
+    const controller = new AbortController();
+    agentAbortRef.current = controller;
+    setAgentSessionId(sessionId);
+    setAgentQuery("");
+    setAgentTurns((current) => [...current, turn]);
+    setDiscoverMode("agent");
+    setDiscoverError("");
+    setBusy("agent-search");
+
+    try {
+      const response = await api<AgentSearchResponse>("/api/bridge/agent/v1/agent/search", {
+        method: "POST",
+        signal: controller.signal,
+        body: JSON.stringify({
+          requestId: `request_${createEventId()}`,
+          sessionId,
+          turnId,
+          agentId: "search-assistant",
+          mode: "AGENT",
+          query: cleanQuery,
+          page: 0,
+          size: 12,
+          requiredTags: [],
+          ...(agentGoalVersion > 0 ? {
+            constraintPatch: {
+              baseVersion: agentGoalVersion,
+              replacementQuery: cleanQuery,
+              page: 0,
+              size: 12,
+              addRequiredTags: [],
+              removeRequiredTags: [],
+            },
+          } : {}),
+          options: { allowClarification: true },
+        }),
+      });
+      setAgentGoalVersion(response.goalVersion);
+      setAgentTurns((current) => current.map((item) => item.id === turnId
+        ? { ...item, status: response.state === "CANCELLED" ? "cancelled" : "ready", response }
+        : item));
+      setHealth((current) => ({ ...current, agent: "online" }));
+      if (response.items.length) appendExposureEvents(response.items, response.requestId);
+      if (response.degraded) showToast("智能搜索已降级，但保留了可用结果");
+    } catch (error) {
+      const cancelled = error instanceof DOMException && error.name === "AbortError";
+      const message = cancelled ? "这次搜索已停止。" : error instanceof Error ? error.message : "AI 搜索失败";
+      setAgentTurns((current) => current.map((item) => item.id === turnId
+        ? { ...item, status: cancelled ? "cancelled" : "error", error: message }
+        : item));
+      if (!cancelled) {
+        setHealth((current) => ({ ...current, agent: "offline" }));
+        showToast(message, true);
+      }
+    } finally {
+      if (agentAbortRef.current === controller) agentAbortRef.current = null;
+      setBusy((current) => current === "agent-search" ? null : current);
+    }
+  }
+
+  async function cancelAgentSearch() {
+    if (!agentSessionId || !agentAbortRef.current) return;
+    const controller = agentAbortRef.current;
+    try {
+      await api(`/api/bridge/agent/v1/agent/sessions/${encodeURIComponent(agentSessionId)}:cancel`, { method: "POST" });
+    } catch {
+      // Aborting the browser request still restores an interactive UI if the cancel signal cannot be delivered.
+    } finally {
+      controller.abort();
+    }
+  }
+
+  function startNewAgentSession() {
+    if (busy === "agent-search") return;
+    setAgentSessionId("");
+    setAgentGoalVersion(0);
+    setAgentTurns([]);
+    setAgentQuery("");
+    setDiscoverMode("agent");
+    window.setTimeout(() => document.getElementById("agent-search-input")?.focus(), 0);
   }
 
   async function saveViewerProfile() {
@@ -503,7 +657,7 @@ export function SeekFluxApp() {
       {workspace === "discover" ? (
         <div className="consumer-mobile-header">
           <button className="consumer-mobile-brand" onClick={() => navigate("discover")}><span className="consumer-brand-mark">S</span><strong>SeekFlux</strong></button>
-          <div><button onClick={() => navigate("audience")}>画像</button><button onClick={() => navigate("studio")}>投稿</button></div>
+          <div><button onClick={() => setDiscoverMode("agent")}>AI 搜索</button><button onClick={() => navigate("audience")}>画像</button><button onClick={() => navigate("studio")}>投稿</button></div>
         </div>
       ) : (
         <div className="mobile-header">
@@ -518,7 +672,7 @@ export function SeekFluxApp() {
         {workspace !== "discover" && (
           <header className="topbar">
             <div><span className="surface-badge">B 端</span><span className="topbar-path">SeekFlux / <strong>{navItems.find((item) => item.key === workspace)?.title}</strong></span></div>
-            <div className="service-cluster" aria-label="后端服务状态"><ServicePill name="Content" state={health.content} /><ServicePill name="Online" state={health.online} /></div>
+            <div className="service-cluster" aria-label="后端服务状态"><ServicePill name="Content" state={health.content} /><ServicePill name="Online" state={health.online} /><ServicePill name="Agent" state={health.agent} /></div>
           </header>
         )}
 
@@ -529,6 +683,9 @@ export function SeekFluxApp() {
             runFeed={runFeed} runSimilar={runSimilar} feedData={feedData} items={consumerItems}
             error={discoverError} busy={busy}
             requestId={activeRequestId} addInteraction={addInteraction} goProfile={() => navigate("audience")}
+            agentQuery={agentQuery} setAgentQuery={setAgentQuery} agentTurns={agentTurns}
+            runAgentSearch={runAgentSearch} cancelAgentSearch={cancelAgentSearch}
+            startNewAgentSession={startNewAgentSession} agentHealth={health.agent}
           />
         )}
 
@@ -581,6 +738,7 @@ function ConsumerSidebar({ mode, setMode, runFeed, navigate, userId, busy }: {
       <nav className="consumer-side-nav" aria-label="发现页导航">
         <button className={mode === "feed" ? "active" : ""} onClick={() => void runFeed()} disabled={busy === "feed"}><Icon name="play" /><span>推荐</span></button>
         <button className={mode === "search" ? "active" : ""} onClick={focusSearch}><Icon name="search" /><span>搜索</span></button>
+        <button className={mode === "agent" ? "active" : ""} onClick={() => setMode("agent")}><Icon name="spark" /><span>AI 搜索</span></button>
         <div className="consumer-nav-divider" />
         <button onClick={() => navigate("audience")}><Icon name="pulse" /><span>用户画像</span></button>
         <button onClick={() => navigate("studio")}><Icon name="upload" /><span>内容工作台</span></button>
@@ -605,9 +763,15 @@ type DiscoverProps = {
   error: string; busy: string | null; requestId: string;
   addInteraction: (type: EventType, item: ContentItem, position: number, requestId: string) => void;
   goProfile: () => void;
+  agentQuery: string; setAgentQuery: (value: string) => void; agentTurns: AgentTurn[];
+  runAgentSearch: (query?: string) => Promise<void>; cancelAgentSearch: () => Promise<void>;
+  startNewAgentSession: () => void; agentHealth: HealthState;
 };
 
 function DiscoverWorkspace(props: DiscoverProps) {
+  if (props.mode === "agent") {
+    return <AgentSearchWorkspace {...props} />;
+  }
   const resultMeta = props.mode === "search" && props.searchData
     ? `${props.searchData.total} 条结果 · ${props.searchData.tookMillis} ms`
     : props.feedData ? `${props.feedData.items.length} 条推荐` : "为你推荐";
@@ -681,6 +845,117 @@ function DiscoverWorkspace(props: DiscoverProps) {
   );
 }
 
+function AgentSearchWorkspace(props: DiscoverProps) {
+  const examples = [
+    "帮我找适合亲子周末的杭州露营内容",
+    "只看咖啡和摄影相关的内容",
+    "我想看科技类视频，最好和 AI 有关",
+  ];
+  const running = props.busy === "agent-search";
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    void props.runAgentSearch();
+  }
+
+  return (
+    <div className="consumer-home agent-search-home">
+      <header className="agent-search-header">
+        <div className="agent-search-title">
+          <span className="agent-orb"><Icon name="spark" /></span>
+          <span><strong>AI 搜索</strong><small>多轮筛选内容</small></span>
+          <i className={`agent-health ${props.agentHealth}`} title={`Agent ${props.agentHealth}`} />
+        </div>
+        <div className="agent-header-actions">
+          <button onClick={props.startNewAgentSession} disabled={running}><Icon name="refresh" /> 新对话</button>
+          <button className="consumer-profile-button" onClick={props.goProfile}><span className="avatar">{props.userId.slice(0, 1).toUpperCase() || "U"}</span><span>我的</span></button>
+        </div>
+      </header>
+
+      <section className={`agent-conversation ${props.agentTurns.length ? "has-turns" : ""}`} aria-label="AI 搜索对话">
+        {!props.agentTurns.length && (
+          <div className="agent-welcome">
+            <span className="agent-welcome-mark"><Icon name="spark" /></span>
+            <h1>想找什么内容？</h1>
+            <p>描述主题和条件，我会调用真实搜索能力筛选已发布内容。</p>
+            <div className="agent-example-list">
+              {examples.map((example) => <button key={example} onClick={() => void props.runAgentSearch(example)}>{example}<Icon name="arrow" /></button>)}
+            </div>
+          </div>
+        )}
+
+        {props.agentTurns.map((turn) => (
+          <div className="agent-turn" key={turn.id}>
+            <div className="agent-user-row"><div className="agent-user-bubble">{turn.query}</div><span className="avatar">{props.userId.slice(0, 1).toUpperCase() || "U"}</span></div>
+            <div className="agent-assistant-row">
+              <span className="agent-message-mark"><Icon name="spark" /></span>
+              <div className="agent-assistant-body">
+                {turn.status === "loading" && (
+                  <div className="agent-thinking"><span /><span /><span /><em>正在理解条件并检索内容</em></div>
+                )}
+                {turn.status === "cancelled" && <p className="agent-reply">这次搜索已停止。</p>}
+                {turn.status === "error" && (
+                  <div className="agent-error"><p>{turn.error}</p><button onClick={() => props.setAgentQuery(turn.query)}>重新编辑</button></div>
+                )}
+                {turn.status === "ready" && turn.response && (
+                  <>
+                    <p className="agent-reply">{agentReply(turn.response)}</p>
+                    <div className="agent-result-meta">
+                      <span>{turn.response.executionMode === "AGENT" ? "Agent 检索" : "稳定搜索"}</span>
+                      {turn.response.appliedConstraints.requiredTags.map((tag) => <span key={tag}>#{tag}</span>)}
+                      {turn.response.agentTrace && <span>{turn.response.agentTrace.tookMillis} ms</span>}
+                      {turn.response.agentTrace?.usageMeasured && <span>{turn.response.agentTrace.totalTokens} tokens</span>}
+                    </div>
+                    {turn.response.items.length > 0 && (
+                      <section className="consumer-card-grid agent-result-grid" aria-label="AI 搜索结果">
+                        {turn.response.items.map((item, index) => (
+                          <ConsumerContentCard
+                            key={`${turn.id}-${item.contentId}-${index}`}
+                            item={item}
+                            index={index}
+                            requestId={turn.response?.requestId ?? "agent_pending"}
+                            addInteraction={props.addInteraction}
+                            runSimilar={props.runSimilar}
+                          />
+                        ))}
+                      </section>
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+        ))}
+      </section>
+
+      <div className="agent-composer-shell">
+        <form className="agent-composer" onSubmit={submit}>
+          <Icon name="spark" />
+          <textarea
+            id="agent-search-input"
+            rows={1}
+            value={props.agentQuery}
+            onChange={(event) => props.setAgentQuery(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && !event.shiftKey) {
+                event.preventDefault();
+                if (!running) void props.runAgentSearch();
+              }
+            }}
+            placeholder={props.agentTurns.length ? "继续补充条件…" : "描述你想找的视频或图文…"}
+            aria-label="描述搜索需求"
+            maxLength={500}
+          />
+          {running
+            ? <button type="button" className="agent-stop" onClick={() => void props.cancelAgentSearch()} aria-label="停止搜索"><span /></button>
+            : <button className="agent-send" disabled={!props.agentQuery.trim()} aria-label="发送搜索需求"><Icon name="arrow" /></button>}
+        </form>
+        <small>Enter 发送 · Shift + Enter 换行</small>
+      </div>
+    </div>
+  );
+}
+
 function ConsumerContentCard({ item, index, requestId, addInteraction, runSimilar }: {
   item: ContentItem; index: number; requestId: string;
   addInteraction: DiscoverProps["addInteraction"]; runSimilar: (contentId: string) => Promise<void>;
@@ -694,6 +969,8 @@ function ConsumerContentCard({ item, index, requestId, addInteraction, runSimila
     <article className="consumer-content-card">
       <div className={`consumer-card-cover palette-${index % 5}`}>
         {canPlay ? (
+          // Remote creator media does not yet expose a captions track in the content contract.
+          // eslint-disable-next-line jsx-a11y/media-has-caption
           <video src={item.mediaUri} controls playsInline preload="metadata" onError={() => setMediaError(true)} onPlay={() => addInteraction("PLAY_START", item, index + 1, requestId)} />
         ) : (
           <div className={`consumer-poster poster-${index % 9}`}>
