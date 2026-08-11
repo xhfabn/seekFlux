@@ -9,6 +9,7 @@ SeekFlux 是一个面向短视频内容平台的搜索、推荐与 Search Agent 
 - 内容登记经 PostgreSQL、事务 Outbox、Kafka、Worker 和 Elasticsearch 形成可搜索的内容画像；
 - C 端发现页支持画像驱动的内容发现、关键词搜索、热门/兴趣/相似内容召回、规则排序，以及由 Agent Server 驱动的多轮 AI 搜索；
 - C 端曝光、点击、播放、点赞、收藏、完播和负反馈通过 Interaction API 可靠入站，以真实 request/trace/content/position/surface 完整归因，并经事务 Outbox、Kafka 和幂等 Worker 形成行为事实；
+- 行为事件经 `realtime-window-v1` 生成 30 分钟短期兴趣与 5 分钟内容热度快照，写入 Redis 后由 Search/Feed 消费；过期或不可用时保留现有规则结果并明确降级；
 - B 端用户画像与内容工作台通过真实后端接口管理兴趣约束和内容标签；
 - Direct Search 使用 BM25/kNN 双路召回、RRF 融合、结构化过滤、共同 Deadline、单路降级和 Search Trace；
 - Search Agent 支持简单/复杂 Query 路由、SearchPlan、多轮 ConstraintPatch、动态工具集、并行宽搜/精搜、候选复用、追问与 Direct Fallback；
@@ -35,6 +36,7 @@ Web
 Content Server → PostgreSQL + Outbox → Kafka → Worker → Elasticsearch
 Online Server  → Direct Search / Feed / Interaction API
 Agent Server   → AgentOrchestration → Agent Runtime → Search Tools → Direct Search
+Interaction Topics → Flink（生产）/ Worker 参考投影（本地）→ Redis → Search / Feed
 ```
 
 工程保持模块化单体与独立 Agent Server 的组合：业务语义在 `contexts/`，通用基础能力在 `platform/`，应用装配在 `apps/`。HTTP 接口采用 Spring MVC 同步 JSON；JDBC/HikariCP、Redis 与 Elasticsearch 使用同步 Adapter。Agent 内部的模型调用和 Tool fan-out 只在命名、有界、可观测的执行器中并发，不向领域 Port 或 HTTP 扩散 `Mono`/`Flux`。
@@ -74,6 +76,7 @@ python3 evals/run_agent_search_eval.py
 python3 evals/run_complex_agent_eval.py
 python3 evals/run_agent_reliability_eval.py
 python3 evals/run_interaction_loop_eval.py
+python3 evals/run_realtime_feature_eval.py
 ```
 
 - [学习路线与阶段验收](docs/learning/README.md)

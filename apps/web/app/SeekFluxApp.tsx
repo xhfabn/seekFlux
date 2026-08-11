@@ -66,6 +66,9 @@ type SearchResponse = {
     tookMillis: number;
     degraded: boolean;
     unavailableSources: string[];
+    realtimeFeatureStatus: string;
+    realtimeFeatureVersion: string | null;
+    realtimeFeatureComputedAt: string | null;
   };
 };
 
@@ -75,6 +78,9 @@ type FeedResponse = {
   nextCursor: string | null;
   degraded: boolean;
   unavailableSources: string[];
+  realtimeFeatureStatus: string;
+  realtimeFeatureVersion: string | null;
+  realtimeFeatureComputedAt: string | null;
 };
 
 type AgentSearchResponse = {
@@ -124,6 +130,16 @@ type UserInterestResponse = {
   userId: string;
   topics: string[];
   updatedAt: string;
+};
+
+type ShortTermInterestFeatureResponse = {
+  userId: string;
+  status: "FRESH" | "MISSING" | "STALE" | "UNAVAILABLE";
+  topics: Array<{ topic: string; score: number }>;
+  windowStart: string | null;
+  windowEnd: string | null;
+  computedAt: string | null;
+  featureVersion: string | null;
 };
 
 type InteractionEvent = {
@@ -245,6 +261,7 @@ export function SeekFluxApp() {
   const [savedUserId, setSavedUserId] = useState("demo-user");
   const [interests, setInterests] = useState("露营, 亲子");
   const [profileSavedAt, setProfileSavedAt] = useState("");
+  const [realtimeInterest, setRealtimeInterest] = useState<ShortTermInterestFeatureResponse | null>(null);
   const [profileHydrated, setProfileHydrated] = useState(false);
   const [query, setQuery] = useState("杭州 周末 露营");
   const [searchPage, setSearchPage] = useState(0);
@@ -302,6 +319,12 @@ export function SeekFluxApp() {
     // Initial feed hydration intentionally runs once after browser profile restoration.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profileHydrated]);
+
+  useEffect(() => {
+    if (workspace === "audience") void loadRealtimeInterest(savedUserId);
+    // The audience workspace refreshes the server snapshot when opened.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspace, savedUserId]);
 
   useEffect(() => {
     if (queueHydrated) window.localStorage.setItem("seekflux.interactions", JSON.stringify(events));
@@ -456,7 +479,9 @@ export function SeekFluxApp() {
     setDiscoverError("");
     try {
       const params = new URLSearchParams({ q: cleanQuery, page: String(targetPage), size: "12" });
-      const data = await api<SearchResponse>(`/api/bridge/online/v1/search?${params}`);
+      const data = await api<SearchResponse>(`/api/bridge/online/v1/search?${params}`, {
+        headers: { "X-User-Id": savedUserId || "anonymous" },
+      });
       setQuery(cleanQuery);
       setSearchPage(targetPage);
       setSearchData(data);
@@ -650,11 +675,29 @@ export function SeekFluxApp() {
       setEvents([]);
       setSyncMessage(`已回传 ${count} 个事件：接收 ${receipt.acceptedCount}，重复 ${receipt.duplicateCount}，拒绝 ${receipt.rejectedCount}。`);
       showToast(`${receipt.acceptedCount} 个行为事实已进入可靠链路`);
+      for (let attempt = 0; attempt < 12; attempt += 1) {
+        const snapshot = await loadRealtimeInterest(savedUserId || "anonymous", true);
+        if (snapshot?.status === "FRESH") break;
+        await new Promise((resolve) => window.setTimeout(resolve, 300));
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : "回传失败";
       setSyncMessage(`回传失败：${message}。事件仍保留在本地。`);
       showToast("行为回传失败，队列已保留", true);
     } finally { setBusy(null); }
+  }
+
+  async function loadRealtimeInterest(targetUserId = savedUserId, silent = false) {
+    try {
+      const snapshot = await api<ShortTermInterestFeatureResponse>(
+        `/api/bridge/online/v1/features/users/${encodeURIComponent(targetUserId || "anonymous")}/short-term-interest`,
+      );
+      setRealtimeInterest(snapshot);
+      return snapshot;
+    } catch (error) {
+      if (!silent) showToast(error instanceof Error ? error.message : "短期兴趣读取失败", true);
+      return null;
+    }
   }
 
   const displayedItems = discoverMode === "search" ? searchData?.hits ?? [] : feedItems;
@@ -739,6 +782,7 @@ export function SeekFluxApp() {
             userId={userId} setUserId={setUserId} interests={interests} setInterests={setInterests}
             profileSavedAt={profileSavedAt} saveViewerProfile={saveViewerProfile} events={events}
             eventCounts={eventCounts} syncMessage={syncMessage} syncInteractions={syncInteractions}
+            realtimeInterest={realtimeInterest} refreshRealtimeInterest={() => loadRealtimeInterest(savedUserId)}
             clearEvents={() => { setEvents([]); setSyncMessage("本地反馈队列已清空。"); }}
             busy={busy} goDiscover={() => navigate("discover")}
           />
@@ -1050,6 +1094,7 @@ type AudienceProps = {
   userId: string; setUserId: (value: string) => void; interests: string; setInterests: (value: string) => void;
   profileSavedAt: string; saveViewerProfile: () => Promise<void>; events: InteractionEvent[];
   eventCounts: { exposures: number; actions: number }; syncMessage: string; syncInteractions: () => Promise<void>;
+  realtimeInterest: ShortTermInterestFeatureResponse | null; refreshRealtimeInterest: () => Promise<ShortTermInterestFeatureResponse | null>;
   clearEvents: () => void; busy: string | null; goDiscover: () => void;
 };
 
@@ -1089,10 +1134,12 @@ function AudienceWorkspace(props: AudienceProps) {
         </article>
 
         <article className="signal-card">
-          <div className="signal-head"><div><div className="panel-kicker">步骤 2</div><h2>行为信号</h2></div><Icon name="pulse" /></div>
+          <div className="signal-head"><div><div className="panel-kicker">步骤 2</div><h2>行为信号</h2></div><button className="icon-button" title="刷新短期兴趣" onClick={() => void props.refreshRealtimeInterest()}><Icon name="refresh" /></button></div>
           <div className="signal-stats"><div><strong>{props.eventCounts.exposures}</strong><span>曝光</span></div><div><strong>{props.eventCounts.actions}</strong><span>主动行为</span></div><div><strong>{new Set(props.events.map((event) => event.contentId)).size}</strong><span>内容数</span></div></div>
-          <div className="signal-map"><span>曝光</span><i /><span>互动</span><i /><span className="planned">兴趣</span><i /><span className="planned">推荐</span></div>
-          <p>{hasEvents ? "已有可回传信号，请在下方检查事件队列。" : "去发现页浏览、查看相似内容或减少不感兴趣内容。"}</p>
+          <div className="signal-map"><span>曝光</span><i /><span>互动</span><i /><span className={props.realtimeInterest?.status === "FRESH" ? "" : "planned"}>兴趣</span><i /><span className={props.realtimeInterest?.status === "FRESH" ? "" : "planned"}>推荐</span></div>
+          {props.realtimeInterest?.status === "FRESH" ? (
+            <div className="realtime-interest"><div><strong>短期兴趣</strong><small>{props.realtimeInterest.featureVersion} · {props.realtimeInterest.computedAt ? formatEventTime(props.realtimeInterest.computedAt) : ""}</small></div><div>{props.realtimeInterest.topics.length ? props.realtimeInterest.topics.map((topic) => <span key={topic.topic}>{topic.topic} {topic.score.toFixed(2)}</span>) : <span>暂无正向主题</span>}</div></div>
+          ) : <p>{hasEvents ? "已有可回传信号，请在下方检查事件队列。" : "去发现页浏览、查看相似内容或减少不感兴趣内容。"}</p>}
         </article>
 
         <article className="panel queue-console">

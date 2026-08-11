@@ -1,0 +1,66 @@
+{
+  "evaluationVersion": "realtime-features-v1",
+  "datasetVersion": "realtime-features-v1",
+  "generatedAt": "2026-08-11T03:26:53.031610+00:00",
+  "comparison": {
+    "versionedFreshSnapshot": true,
+    "shortTermTopicDerived": true,
+    "contentHeatDerived": true,
+    "feedConsumesRealtimeFeatures": true,
+    "searchConsumesRealtimeFeatures": true,
+    "kafkaReplayStable": true,
+    "allowedOutOfOrderApplied": true,
+    "beyondWatermarkDropped": true,
+    "staleSnapshotFallsBack": true,
+    "featureFailureFallsBack": true
+  },
+  "evidence": {
+    "userId": "realtime-eval-faf3be5c0c614a1a9fddf8cfa4af9d99",
+    "shortTermTopics": [
+      {
+        "topic": "realtime-eval-v1",
+        "score": 4.0
+      },
+      {
+        "topic": "周末生活",
+        "score": 4.0
+      },
+      {
+        "topic": "咖啡",
+        "score": 4.0
+      }
+    ],
+    "featureComputedAt": "2026-08-11T03:26:49.746833Z",
+    "coffeeContentId": "5dc8030e-3a36-4a16-86a8-17b28fb25d69",
+    "contentHeat": 4.05,
+    "feedFirstContentId": "5dc8030e-3a36-4a16-86a8-17b28fb25d69",
+    "searchFirstContentId": "5dc8030e-3a36-4a16-86a8-17b28fb25d69",
+    "feedItems": [
+      {
+        "contentId": "5dc8030e-3a36-4a16-86a8-17b28fb25d69",
+        "score": 4.872174010282654,
+        "reason": "匹配兴趣「咖啡、周末生活、realtime-eval-v1」，来自热门、兴趣召回，结合实时热度"
+      },
+      {
+        "contentId": "404c93a1-abf4-4497-8e67-2f7104fd2750",
+        "score": 4.687096774193549,
+        "reason": "匹配兴趣「露营、周末生活、realtime-eval-v1」，来自热门、兴趣召回"
+      },
+      {
+        "contentId": "06cd8e83-5b30-4922-9261-28c126c16039",
+        "score": 3.716711229946524,
+        "reason": "匹配兴趣「咖啡」，来自热门、兴趣召回"
+      }
+    ],
+    "searchHits": [
+      {
+        "contentId": "5dc8030e-3a36-4a16-86a8-17b28fb25d69",
+        "score": 0.03491281416394929
+      },
+      {
+        "contentId": "404c93a1-abf4-4497-8e67-2f7104fd2750",
+        "score": 0.03406345848757271
+      }
+    ]
+  }
+}

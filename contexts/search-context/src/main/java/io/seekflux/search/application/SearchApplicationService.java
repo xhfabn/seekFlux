@@ -1,5 +1,10 @@
 package io.seekflux.search.application;
 
+import io.seekflux.feature.domain.ContentHeatSnapshot;
+import io.seekflux.feature.domain.FeatureRead;
+import io.seekflux.feature.domain.FeatureReadStatus;
+import io.seekflux.feature.domain.ShortTermInterestSnapshot;
+import io.seekflux.feature.port.in.RealtimeFeatureUseCase;
 import io.seekflux.search.port.in.SearchChannelTrace;
 import io.seekflux.search.port.in.SearchHitView;
 import io.seekflux.search.port.in.SearchQuery;
@@ -24,6 +29,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.util.Optional;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
@@ -44,6 +50,7 @@ public final class SearchApplicationService implements SearchUseCase {
     private final Duration requestDeadline;
     private final String policyVersion;
     private final Set<String> blockedTags;
+    private final RealtimeFeatureUseCase realtimeFeatures;
 
     public SearchApplicationService(
             SearchRetriever retriever,
@@ -51,11 +58,23 @@ public final class SearchApplicationService implements SearchUseCase {
             Duration requestDeadline,
             String policyVersion,
             Set<String> blockedTags) {
+        this(retriever, retrievalExecutor, requestDeadline, policyVersion, blockedTags,
+                new MissingRealtimeFeatures());
+    }
+
+    public SearchApplicationService(
+            SearchRetriever retriever,
+            ExecutorService retrievalExecutor,
+            Duration requestDeadline,
+            String policyVersion,
+            Set<String> blockedTags,
+            RealtimeFeatureUseCase realtimeFeatures) {
         this.retriever = Objects.requireNonNull(retriever, "retriever must not be null");
         this.retrievalExecutor = Objects.requireNonNull(retrievalExecutor, "retrievalExecutor must not be null");
         this.requestDeadline = Objects.requireNonNull(requestDeadline, "requestDeadline must not be null");
         this.policyVersion = requireText(policyVersion, "policyVersion");
         this.blockedTags = normalizeTags(blockedTags);
+        this.realtimeFeatures = Objects.requireNonNull(realtimeFeatures, "realtimeFeatures must not be null");
         if (requestDeadline.isNegative() || requestDeadline.isZero()) {
             throw new IllegalArgumentException("search request deadline must be positive");
         }
@@ -95,10 +114,15 @@ public final class SearchApplicationService implements SearchUseCase {
             throw new SearchUnavailableException();
         }
 
-        List<FusedCandidate> fused = fuse(successful).stream()
+        FeatureRead<ShortTermInterestSnapshot> shortInterest = realtimeFeatures.shortTermInterest(query.userId());
+        List<FusedCandidate> eligible = fuse(successful).stream()
                 .filter(candidate -> isEligible(candidate.candidate()))
                 .limit(CANDIDATE_LIMIT)
                 .toList();
+        Map<UUID, FeatureRead<ContentHeatSnapshot>> heat = realtimeFeatures.contentHeat(
+                eligible.stream().map(candidate -> parseUuid(candidate.candidate().contentId()))
+                        .filter(Objects::nonNull).toList());
+        List<FusedCandidate> fused = personalize(eligible, shortInterest, heat);
         int fromIndex = Math.min(query.page() * query.size(), fused.size());
         int toIndex = Math.min(fromIndex + query.size(), fused.size());
         List<SearchHitView> hits = fused.subList(fromIndex, toIndex).stream()
@@ -106,10 +130,15 @@ public final class SearchApplicationService implements SearchUseCase {
                 .toList();
 
         long tookMillis = elapsedMillis(startedAt);
-        List<String> unavailable = outcomes.stream()
+        List<String> unavailable = new ArrayList<>(outcomes.stream()
                 .filter(outcome -> !outcome.successful())
                 .map(outcome -> outcome.source().name())
-                .toList();
+                .toList());
+        if (shortInterest.status() == FeatureReadStatus.STALE
+                || shortInterest.status() == FeatureReadStatus.UNAVAILABLE
+                || heat.values().stream().anyMatch(read -> read.status() == FeatureReadStatus.UNAVAILABLE)) {
+            unavailable.add("REALTIME_FEATURES");
+        }
         String executionMode = executionMode(successful);
         String indexVersion = successful.getFirst().result().indexVersion();
         List<SearchChannelTrace> channels = outcomes.stream().map(ChannelOutcome::toTrace).toList();
@@ -121,7 +150,10 @@ public final class SearchApplicationService implements SearchUseCase {
                 tookMillis,
                 !unavailable.isEmpty(),
                 unavailable,
-                channels);
+                channels,
+                shortInterest.status().name(),
+                shortInterest.value().map(ShortTermInterestSnapshot::featureVersion).orElse(null),
+                shortInterest.value().map(ShortTermInterestSnapshot::computedAt).orElse(null));
         return new SearchResultPage(
                 query.text(),
                 fused.size(),
@@ -175,6 +207,44 @@ public final class SearchApplicationService implements SearchUseCase {
                         .thenComparing(FusedCandidate::publishedAt, Comparator.reverseOrder())
                         .thenComparing(candidate -> candidate.candidate().contentId()))
                 .toList();
+    }
+
+    private static List<FusedCandidate> personalize(
+            List<FusedCandidate> candidates,
+            FeatureRead<ShortTermInterestSnapshot> shortInterest,
+            Map<UUID, FeatureRead<ContentHeatSnapshot>> heat) {
+        Map<String, Double> topicScores = shortInterest.value().stream()
+                .flatMap(snapshot -> snapshot.topics().stream())
+                .collect(java.util.stream.Collectors.toMap(
+                        topic -> topic.topic(), topic -> topic.score(), Math::max));
+        double maxTopicScore = topicScores.values().stream().mapToDouble(Double::doubleValue).max().orElse(1.0);
+        return candidates.stream()
+                .map(candidate -> {
+                    double topicBoost = candidate.candidate().tags().stream()
+                            .map(SearchApplicationService::normalizeTag)
+                            .mapToDouble(tag -> topicScores.getOrDefault(tag, 0.0) / maxTopicScore)
+                            .max().orElse(0.0) * 0.004;
+                    UUID contentId = parseUuid(candidate.candidate().contentId());
+                    double heatBoost = Optional.ofNullable(contentId)
+                            .map(heat::get)
+                            .flatMap(read -> read == null ? Optional.empty() : read.value())
+                            .map(snapshot -> Math.log1p(Math.max(0, snapshot.score())) * 0.0005)
+                            .orElse(0.0);
+                    return new FusedCandidate(
+                            candidate.candidate(), candidate.score() + topicBoost + heatBoost, candidate.sources());
+                })
+                .sorted(Comparator.comparingDouble(FusedCandidate::score).reversed()
+                        .thenComparing(FusedCandidate::publishedAt, Comparator.reverseOrder())
+                        .thenComparing(candidate -> candidate.candidate().contentId()))
+                .toList();
+    }
+
+    private static UUID parseUuid(String value) {
+        try {
+            return UUID.fromString(value);
+        } catch (IllegalArgumentException invalid) {
+            return null;
+        }
     }
 
     private boolean isEligible(SearchCandidate candidate) {
@@ -302,6 +372,18 @@ public final class SearchApplicationService implements SearchUseCase {
 
         private java.time.Instant publishedAt() {
             return candidate.publishedAt();
+        }
+    }
+
+    private static final class MissingRealtimeFeatures implements RealtimeFeatureUseCase {
+        @Override
+        public FeatureRead<ShortTermInterestSnapshot> shortTermInterest(String userId) {
+            return FeatureRead.empty(FeatureReadStatus.MISSING);
+        }
+
+        @Override
+        public Map<UUID, FeatureRead<ContentHeatSnapshot>> contentHeat(Iterable<UUID> contentIds) {
+            return Map.of();
         }
     }
 }

@@ -6,6 +6,12 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.seekflux.search.port.in.SearchQuery;
+import io.seekflux.feature.application.RealtimeFeaturePolicy;
+import io.seekflux.feature.domain.ContentHeatSnapshot;
+import io.seekflux.feature.domain.FeatureRead;
+import io.seekflux.feature.domain.FeatureTopicScore;
+import io.seekflux.feature.domain.ShortTermInterestSnapshot;
+import io.seekflux.feature.port.in.RealtimeFeatureUseCase;
 import io.seekflux.search.port.in.SearchUnavailableException;
 import io.seekflux.search.port.out.SearchCandidate;
 import io.seekflux.search.port.out.SearchRetrievalResult;
@@ -15,6 +21,8 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Set;
+import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import org.junit.jupiter.api.AfterEach;
@@ -112,6 +120,38 @@ class SearchApplicationServiceTest {
                 "露营", 0, 10, java.util.stream.IntStream.range(0, 11)
                         .mapToObj(index -> "tag-" + index)
                         .toList()));
+    }
+
+    @Test
+    void boostsFreshShortTermInterestAndExposesSnapshotTrace() {
+        SearchCandidate coffee = candidate(
+                "00000000-0000-0000-0000-000000000001", "咖啡", List.of("咖啡"));
+        SearchCandidate camping = candidate(
+                "00000000-0000-0000-0000-000000000002", "露营", List.of("露营"));
+        SearchRetriever retriever = request -> result(
+                request.source(), List.of(coffee, camping), "v1", 1);
+        Instant now = Instant.parse("2026-08-11T10:00:00Z");
+        RealtimeFeatureUseCase features = new RealtimeFeatureUseCase() {
+            @Override
+            public FeatureRead<ShortTermInterestSnapshot> shortTermInterest(String userId) {
+                return FeatureRead.fresh(new ShortTermInterestSnapshot(
+                        userId, List.of(new FeatureTopicScore("露营", 3)),
+                        now.minusSeconds(1800), now, now, RealtimeFeaturePolicy.FEATURE_VERSION));
+            }
+
+            @Override
+            public Map<UUID, FeatureRead<ContentHeatSnapshot>> contentHeat(Iterable<UUID> contentIds) {
+                return Map.of();
+            }
+        };
+        var service = new SearchApplicationService(
+                retriever, executor, Duration.ofMillis(200), "direct-hybrid-v1", Set.of(), features);
+
+        var page = service.search(new SearchQuery("生活", 0, 10, List.of(), "user-1"));
+
+        assertEquals(camping.contentId(), page.hits().getFirst().contentId());
+        assertEquals("FRESH", page.trace().realtimeFeatureStatus());
+        assertEquals(RealtimeFeaturePolicy.FEATURE_VERSION, page.trace().realtimeFeatureVersion());
     }
 
     private SearchApplicationService service(SearchRetriever retriever, Duration deadline) {

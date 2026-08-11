@@ -12,7 +12,7 @@ domain -> JDK only
 
 `contexts` 之间不得共享数据库 Entity 或直接访问对方存储。跨上下文协作使用输入 Port、版本化 DTO 或领域事件。
 
-当前仓库有十个业务 Context，`AgentOrchestration` 是第十个；`platform/agent-runtime` 是横向执行基础设施，不是业务 Context。Step 5 已经实现二者，但后续新增 Agent 能力仍必须保持这一业务语义与运行机制的分离。
+当前仓库有十个业务 Context，`AgentOrchestration` 是第十个；`platform/agent-runtime` 是横向执行基础设施，不是业务 Context。`feature-context` 是既有 Feature Context 在 Step 9 的具体实现，不新增第十一个 Context。Step 5 已经实现 Agent 业务语义与运行机制的分离，后续新增能力仍必须保持这一边界。
 
 ## Context 内部目录
 
@@ -59,7 +59,7 @@ AgentOrchestration 决定搜索目标、约束修正、追问和业务回退；R
 | content-server | Content、Moderation、Feature/Model 控制面 |
 | worker-runner | 内容理解、索引发布、行为事实写入、特征写入、Outbox Relay 与 Agent 终态幂等审计消费 |
 | agent-server | Agent API、AgentOrchestration、Agent Runtime 与 Tool 装配；端口 `8083`，独立线程池和故障边界 |
-| realtime-features（Step 9 可选） | Flink 行为清洗、会话化、窗口聚合、短期兴趣 |
+| realtime-features | 生产 Flink 事件时间窗口、短期兴趣、内容热度与迟到事件输出；本地统一启动由 Worker JDBC 参考投影器执行同一策略 |
 | training-runner（Step 10 可选） | 样本生成、基线训练、离线评测、模型注册 |
 
 ## 拆分触发条件

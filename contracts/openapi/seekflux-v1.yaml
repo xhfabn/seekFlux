@@ -120,12 +120,27 @@ paths:
                 $ref: "#/components/schemas/UserInterestProfile"
         "400":
           $ref: "#/components/responses/BadRequest"
+  /v1/features/users/{userId}/short-term-interest:
+    get:
+      operationId: getShortTermInterestFeature
+      summary: Read the freshness-protected realtime short-term interest snapshot
+      tags: [RealtimeFeature]
+      parameters:
+        - $ref: "#/components/parameters/UserIdPath"
+      responses:
+        "200":
+          description: Feature read status and snapshot; stale or unavailable reads omit snapshot values
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShortTermInterestFeature"
   /v1/search:
     get:
       operationId: searchByQueryParameter
       summary: Search published content profiles
       tags: [Search]
       parameters:
+        - $ref: "#/components/parameters/UserIdHeader"
         - name: q
           in: query
           required: true
@@ -158,6 +173,8 @@ paths:
       operationId: search
       summary: Search published content profiles
       tags: [Search]
+      parameters:
+        - $ref: "#/components/parameters/UserIdHeader"
       requestBody:
         required: true
         content:
@@ -743,6 +760,7 @@ components:
         - degraded
         - unavailableSources
         - channels
+        - realtimeFeatureStatus
       properties:
         requestId: {type: string}
         executionMode:
@@ -757,11 +775,18 @@ components:
           uniqueItems: true
           items:
             type: string
-            enum: [KEYWORD, SEMANTIC]
+            enum: [KEYWORD, SEMANTIC, REALTIME_FEATURES]
         channels:
           type: array
           items:
             $ref: "#/components/schemas/SearchChannelTrace"
+        realtimeFeatureStatus:
+          $ref: "#/components/schemas/RealtimeFeatureStatus"
+        realtimeFeatureVersion:
+          type: [string, "null"]
+        realtimeFeatureComputedAt:
+          type: [string, "null"]
+          format: date-time
     RecommendationItem:
       type: object
       required:
@@ -799,7 +824,7 @@ components:
         reason: {type: string}
     RecommendationPage:
       type: object
-      required: [requestId, items, nextCursor, degraded, unavailableSources]
+      required: [requestId, items, nextCursor, degraded, unavailableSources, realtimeFeatureStatus]
       properties:
         requestId: {type: string}
         items:
@@ -815,7 +840,46 @@ components:
           type: array
           items:
             type: string
-            enum: [TRENDING, INTEREST, SIMILAR]
+            enum: [TRENDING, INTEREST, SIMILAR, REALTIME_FEATURES]
+        realtimeFeatureStatus:
+          $ref: "#/components/schemas/RealtimeFeatureStatus"
+        realtimeFeatureVersion:
+          type: [string, "null"]
+        realtimeFeatureComputedAt:
+          type: [string, "null"]
+          format: date-time
+    RealtimeFeatureStatus:
+      type: string
+      enum: [FRESH, MISSING, STALE, UNAVAILABLE]
+    FeatureTopicScore:
+      type: object
+      required: [topic, score]
+      properties:
+        topic: {type: string, minLength: 1, maxLength: 64}
+        score: {type: number, format: double}
+    ShortTermInterestFeature:
+      type: object
+      required: [userId, status, topics]
+      properties:
+        userId: {type: string}
+        status:
+          $ref: "#/components/schemas/RealtimeFeatureStatus"
+        topics:
+          type: array
+          maxItems: 10
+          items:
+            $ref: "#/components/schemas/FeatureTopicScore"
+        windowStart:
+          type: [string, "null"]
+          format: date-time
+        windowEnd:
+          type: [string, "null"]
+          format: date-time
+        computedAt:
+          type: [string, "null"]
+          format: date-time
+        featureVersion:
+          type: [string, "null"]
     SubmitContentRequest:
       type: object
       required: [creatorId, mediaUri, title]

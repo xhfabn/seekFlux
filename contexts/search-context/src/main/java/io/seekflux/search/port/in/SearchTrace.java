@@ -11,7 +11,23 @@ public record SearchTrace(
         long tookMillis,
         boolean degraded,
         List<String> unavailableSources,
-        List<SearchChannelTrace> channels) {
+        List<SearchChannelTrace> channels,
+        String realtimeFeatureStatus,
+        String realtimeFeatureVersion,
+        java.time.Instant realtimeFeatureComputedAt) {
+
+    public SearchTrace(
+            String requestId,
+            String executionMode,
+            String indexVersion,
+            String policyVersion,
+            long tookMillis,
+            boolean degraded,
+            List<String> unavailableSources,
+            List<SearchChannelTrace> channels) {
+        this(requestId, executionMode, indexVersion, policyVersion, tookMillis, degraded,
+                unavailableSources, channels, "MISSING", null, null);
+    }
 
     public SearchTrace {
         Objects.requireNonNull(requestId, "request id must not be null");
@@ -23,5 +39,6 @@ public record SearchTrace(
         }
         unavailableSources = unavailableSources == null ? List.of() : List.copyOf(unavailableSources);
         channels = channels == null ? List.of() : List.copyOf(channels);
+        realtimeFeatureStatus = realtimeFeatureStatus == null ? "MISSING" : realtimeFeatureStatus;
     }
 }

@@ -10,7 +10,7 @@ SeekFlux 的唯一前端工程，按产品角色组织为三个区域：
 
 推荐 Feed 与 AI 搜索都不在前端模拟匹配。Feed 由 Online Server 使用 Redis 用户画像召回；AI 搜索由 Agent Server 保存会话目标、调用模型与 Search Tool，并把真实候选返回给同一套内容卡片。六类联调样例通过真实内容提交、Worker 画像生成和索引发布链路创建：
 
-发现页会按后端返回的 request/trace/position 记录 `FEED`、`SEARCH`、`AGENT` 曝光与主动行为；用户画像页通过真实 `POST /v1/interactions:batch` 回传。服务端负责幂等、曝光归因、Outbox/Kafka 和最终行为事实，前端不写死匹配或计数逻辑。
+发现页会按后端返回的 request/trace/position 记录 `FEED`、`SEARCH`、`AGENT` 曝光与主动行为；用户画像页通过真实 `POST /v1/interactions:batch` 回传。服务端负责幂等、曝光归因、Outbox/Kafka、实时窗口和最终行为事实，前端不写死匹配或计数逻辑。用户画像页还会读取 `GET /v1/features/users/{userId}/short-term-interest`，展示后端计算的短期主题、特征版本和计算时间；发现页的排序仍完全以 Search/Feed 返回为准。
 
 ```bash
 ./seekflux.sh seed-demo

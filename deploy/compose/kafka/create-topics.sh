@@ -10,6 +10,14 @@ topics=(
   content.profile.published.v1
   content.distribution.changed.v1
   feature.snapshot.updated.v1
+  feature.interaction-late.v1
+  interaction.exposure.v1
+  interaction.click.v1
+  interaction.play-start.v1
+  interaction.like.v1
+  interaction.save.v1
+  interaction.play-complete.v1
+  interaction.not-interested.v1
   model.version.activated.v1
   agent.run.completed.v1
   agent.run.fallback.v1

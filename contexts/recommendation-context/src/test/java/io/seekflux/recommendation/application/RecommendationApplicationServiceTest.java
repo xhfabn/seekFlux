@@ -1,12 +1,19 @@
 package io.seekflux.recommendation.application;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.seekflux.ranking.application.RuleRankingService;
+import io.seekflux.feature.application.RealtimeFeaturePolicy;
+import io.seekflux.feature.domain.ContentHeatSnapshot;
+import io.seekflux.feature.domain.FeatureRead;
+import io.seekflux.feature.domain.FeatureTopicScore;
+import io.seekflux.feature.domain.ShortTermInterestSnapshot;
+import io.seekflux.feature.port.in.RealtimeFeatureUseCase;
 import io.seekflux.ranking.domain.RankingCandidate;
 import io.seekflux.ranking.domain.RetrievalSource;
 import io.seekflux.recommendation.port.in.FeedRequest;
@@ -20,6 +27,8 @@ import java.time.Instant;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
+import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -101,6 +110,35 @@ class RecommendationApplicationServiceTest {
         var page = service.feed(new FeedRequest("user-1", List.of(), null, null, 10));
         assertFalse(page.items().isEmpty());
         assertTrue(page.items().stream().allMatch(item -> item.tags().contains("咖啡")));
+    }
+
+    @Test
+    void mergesFreshShortTermTopicsAndReportsFeatureVersion() {
+        RealtimeFeatureUseCase features = new RealtimeFeatureUseCase() {
+            @Override
+            public FeatureRead<ShortTermInterestSnapshot> shortTermInterest(String userId) {
+                return FeatureRead.fresh(new ShortTermInterestSnapshot(
+                        userId, List.of(new FeatureTopicScore("露营", 3.0)),
+                        NOW.minusSeconds(1800), NOW, NOW, RealtimeFeaturePolicy.FEATURE_VERSION));
+            }
+
+            @Override
+            public Map<UUID, FeatureRead<ContentHeatSnapshot>> contentHeat(Iterable<UUID> contentIds) {
+                return Map.of();
+            }
+        };
+        var service = new RecommendationApplicationService(
+                new StubRetriever(false),
+                new ExplicitInterestService(CLOCK, new EmptyInterestRepository()),
+                new RuleRankingService(),
+                new SignedRecommendationCursorCodec("test-secret-at-least-16-characters"),
+                CLOCK, Duration.ofMillis(100), Runnable::run, features);
+
+        var page = service.feed(new FeedRequest("user-1", List.of("咖啡"), null, null, 10));
+
+        assertTrue(page.items().stream().anyMatch(item -> item.tags().contains("露营")));
+        assertEquals("FRESH", page.realtimeFeatureStatus());
+        assertEquals(RealtimeFeaturePolicy.FEATURE_VERSION, page.realtimeFeatureVersion());
     }
 
     @Test

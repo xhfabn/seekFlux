@@ -13,6 +13,7 @@ import org.springframework.validation.annotation.Validated;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -30,19 +31,23 @@ public class SearchController {
 
     @GetMapping
     public SearchResultPage search(
+            @RequestHeader(value = "X-User-Id", defaultValue = "anonymous") @Size(max = 128) String userId,
             @RequestParam("q") @NotBlank @Size(max = 500) String query,
             @RequestParam(value = "page", defaultValue = "0") @Min(0) int page,
             @RequestParam(value = "size", defaultValue = "12") @Min(1) @Max(50) int size,
             @RequestParam(value = "required_tags", required = false) List<String> requiredTags) {
-        return searchUseCase.search(new SearchQuery(query, page, size, requiredTags));
+        return searchUseCase.search(new SearchQuery(query, page, size, requiredTags, userId));
     }
 
     @PostMapping
-    public SearchResultPage search(@Valid @RequestBody SearchRequest request) {
+    public SearchResultPage search(
+            @RequestHeader(value = "X-User-Id", defaultValue = "anonymous") @Size(max = 128) String userId,
+            @Valid @RequestBody SearchRequest request) {
         return searchUseCase.search(new SearchQuery(
                 request.query(),
                 request.page() == null ? 0 : request.page(),
                 request.size() == null ? 12 : request.size(),
-                request.requiredTags()));
+                request.requiredTags(),
+                userId));
     }
 }

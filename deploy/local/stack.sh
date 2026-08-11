@@ -450,7 +450,7 @@ create_kafka_topics() {
     agent.run.completed.v1 agent.run.fallback.v1 agent.run.cancelled.v1 agent.run.failed.v1
     interaction.exposure.v1 interaction.click.v1 interaction.play-start.v1
     interaction.like.v1 interaction.save.v1 interaction.play-complete.v1
-    interaction.not-interested.v1
+    interaction.not-interested.v1 feature.interaction-late.v1
   )
   local topic
   for topic in "${topics[@]}"; do

@@ -1,6 +1,7 @@
 package io.seekflux.apps.onlineserver;
 
 import io.seekflux.ranking.application.RuleRankingService;
+import io.seekflux.feature.port.in.RealtimeFeatureUseCase;
 import io.seekflux.ranking.port.in.RankingUseCase;
 import io.seekflux.recommendation.application.RecommendationApplicationService;
 import io.seekflux.recommendation.application.SignedRecommendationCursorCodec;
@@ -69,7 +70,8 @@ class RecommendationConfiguration {
             SignedRecommendationCursorCodec cursorCodec,
             Clock recommendationClock,
             @Value("${seekflux.recommendation.source-timeout-ms:1500}") long sourceTimeoutMillis,
-            @Qualifier("recommendationRecallExecutor") Executor recallExecutor) {
+            @Qualifier("recommendationRecallExecutor") Executor recallExecutor,
+            RealtimeFeatureUseCase realtimeFeatures) {
         return new RecommendationApplicationService(
                 retriever,
                 userInterest,
@@ -77,6 +79,7 @@ class RecommendationConfiguration {
                 cursorCodec,
                 recommendationClock,
                 Duration.ofMillis(sourceTimeoutMillis),
-                recallExecutor);
+                recallExecutor,
+                realtimeFeatures);
     }
 }

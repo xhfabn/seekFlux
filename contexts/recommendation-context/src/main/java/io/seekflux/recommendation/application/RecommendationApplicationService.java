@@ -1,5 +1,10 @@
 package io.seekflux.recommendation.application;
 
+import io.seekflux.feature.domain.FeatureRead;
+import io.seekflux.feature.domain.FeatureReadStatus;
+import io.seekflux.feature.domain.ShortTermInterestSnapshot;
+import io.seekflux.feature.domain.ContentHeatSnapshot;
+import io.seekflux.feature.port.in.RealtimeFeatureUseCase;
 import io.seekflux.ranking.domain.RankedCandidate;
 import io.seekflux.ranking.domain.RankingCandidate;
 import io.seekflux.ranking.domain.RankingRequest;
@@ -18,6 +23,10 @@ import java.time.Clock;
 import java.time.Duration;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.ArrayList;
+import java.util.LinkedHashSet;
+import java.util.Map;
+import java.util.Optional;
 import java.util.Locale;
 import java.util.Objects;
 import java.util.UUID;
@@ -37,6 +46,7 @@ public final class RecommendationApplicationService implements RecommendationUse
     private final Clock clock;
     private final Duration sourceTimeout;
     private final Executor recallExecutor;
+    private final RealtimeFeatureUseCase realtimeFeatures;
 
     public RecommendationApplicationService(
             RecommendationRetriever retriever,
@@ -46,6 +56,19 @@ public final class RecommendationApplicationService implements RecommendationUse
             Clock clock,
             Duration sourceTimeout,
             Executor recallExecutor) {
+        this(retriever, userInterest, ranking, cursorCodec, clock, sourceTimeout, recallExecutor,
+                new MissingRealtimeFeatures());
+    }
+
+    public RecommendationApplicationService(
+            RecommendationRetriever retriever,
+            UserInterestUseCase userInterest,
+            RankingUseCase ranking,
+            SignedRecommendationCursorCodec cursorCodec,
+            Clock clock,
+            Duration sourceTimeout,
+            Executor recallExecutor,
+            RealtimeFeatureUseCase realtimeFeatures) {
         this.retriever = Objects.requireNonNull(retriever, "retriever must not be null");
         this.userInterest = Objects.requireNonNull(userInterest, "userInterest must not be null");
         this.ranking = Objects.requireNonNull(ranking, "ranking must not be null");
@@ -53,6 +76,7 @@ public final class RecommendationApplicationService implements RecommendationUse
         this.clock = Objects.requireNonNull(clock, "clock must not be null");
         this.sourceTimeout = Objects.requireNonNull(sourceTimeout, "sourceTimeout must not be null");
         this.recallExecutor = Objects.requireNonNull(recallExecutor, "recallExecutor must not be null");
+        this.realtimeFeatures = Objects.requireNonNull(realtimeFeatures, "realtimeFeatures must not be null");
         if (sourceTimeout.isNegative() || sourceTimeout.isZero()) {
             throw new IllegalArgumentException("source timeout must be positive");
         }
@@ -61,11 +85,13 @@ public final class RecommendationApplicationService implements RecommendationUse
     @Override
     public RecommendationPage feed(FeedRequest request) {
         Objects.requireNonNull(request, "feed request must not be null");
-        InterestProfile profile = userInterest.resolve(request.userId(), request.explicitInterests());
+        InterestProfile explicit = userInterest.resolve(request.userId(), request.explicitInterests());
+        FeatureRead<ShortTermInterestSnapshot> realtime = realtimeFeatures.shortTermInterest(request.userId());
+        InterestProfile profile = merge(explicit, realtime);
         String fingerprint = fingerprint("feed", request.userId(), profile.topics(), request.seedContentId());
         int offset = cursorCodec.decode(request.cursor(), fingerprint, clock.instant());
         if (profile.topics().isEmpty()) {
-            return page(List.of(), profile, fingerprint, offset, request.pageSize());
+            return page(List.of(), profile, realtime, fingerprint, offset, request.pageSize());
         }
 
         CompletableFuture<SourceResult> trending = retrieve(
@@ -79,6 +105,7 @@ public final class RecommendationApplicationService implements RecommendationUse
         return page(
                 List.of(trending.join(), interests.join(), similar.join()),
                 profile,
+                realtime,
                 fingerprint,
                 offset,
                 request.pageSize());
@@ -87,11 +114,13 @@ public final class RecommendationApplicationService implements RecommendationUse
     @Override
     public RecommendationPage similar(SimilarContentRequest request) {
         Objects.requireNonNull(request, "similar content request must not be null");
-        InterestProfile profile = userInterest.resolve(request.userId(), request.explicitInterests());
+        InterestProfile explicit = userInterest.resolve(request.userId(), request.explicitInterests());
+        FeatureRead<ShortTermInterestSnapshot> realtime = realtimeFeatures.shortTermInterest(request.userId());
+        InterestProfile profile = merge(explicit, realtime);
         String fingerprint = fingerprint("similar", request.userId(), profile.topics(), request.contentId());
         int offset = cursorCodec.decode(request.cursor(), fingerprint, clock.instant());
         if (profile.topics().isEmpty()) {
-            return page(List.of(), profile, fingerprint, offset, request.pageSize());
+            return page(List.of(), profile, realtime, fingerprint, offset, request.pageSize());
         }
 
         CompletableFuture<SourceResult> similar = retrieve(
@@ -103,7 +132,7 @@ public final class RecommendationApplicationService implements RecommendationUse
         List<SourceResult> selected = primary.candidates().isEmpty()
                 ? List.of(primary, trending)
                 : List.of(primary);
-        return page(selected, profile, fingerprint, offset, request.pageSize());
+        return page(selected, profile, realtime, fingerprint, offset, request.pageSize());
     }
 
     private CompletableFuture<SourceResult> retrieve(
@@ -121,6 +150,7 @@ public final class RecommendationApplicationService implements RecommendationUse
     private RecommendationPage page(
             List<SourceResult> sources,
             InterestProfile profile,
+            FeatureRead<ShortTermInterestSnapshot> realtime,
             String fingerprint,
             int offset,
             int pageSize) {
@@ -128,9 +158,17 @@ public final class RecommendationApplicationService implements RecommendationUse
                 .flatMap(source -> source.candidates().stream())
                 .filter(candidate -> matchesProfile(candidate, profile))
                 .toList();
+        Map<UUID, FeatureRead<ContentHeatSnapshot>> heatReads = realtimeFeatures.contentHeat(
+                candidates.stream().map(candidate -> parseUuid(candidate.contentId()))
+                        .filter(Objects::nonNull).toList());
+        Map<String, Double> heat = heatReads.entrySet().stream()
+                .flatMap(entry -> entry.getValue().value().stream()
+                        .map(snapshot -> Map.entry(entry.getKey().toString(), snapshot.score())))
+                .collect(java.util.stream.Collectors.toUnmodifiableMap(
+                        Map.Entry::getKey, Map.Entry::getValue, Math::max));
         List<RankedCandidate> ranked = ranking.rank(
                 candidates,
-                new RankingRequest(profile.topics(), CANDIDATE_LIMIT, clock.instant()));
+                new RankingRequest(profile.topics(), CANDIDATE_LIMIT, clock.instant(), heat));
         int fromIndex = Math.min(offset, ranked.size());
         int toIndex = Math.min(fromIndex + pageSize, ranked.size());
         List<RecommendationItemView> items = ranked.subList(fromIndex, toIndex).stream()
@@ -139,16 +177,41 @@ public final class RecommendationApplicationService implements RecommendationUse
         String nextCursor = toIndex < ranked.size()
                 ? cursorCodec.encode(toIndex, fingerprint, clock.instant().plus(CURSOR_TTL))
                 : null;
-        List<String> unavailable = sources.stream()
+        List<String> unavailable = new ArrayList<>(sources.stream()
                 .filter(SourceResult::failed)
                 .map(SourceResult::source)
-                .toList();
+                .toList());
+        if (realtime.status() == FeatureReadStatus.STALE
+                || realtime.status() == FeatureReadStatus.UNAVAILABLE
+                || heatReads.values().stream().anyMatch(read -> read.status() == FeatureReadStatus.UNAVAILABLE)) {
+            unavailable.add("REALTIME_FEATURES");
+        }
+        Optional<ShortTermInterestSnapshot> snapshot = realtime.value();
         return new RecommendationPage(
                 "req_" + UUID.randomUUID(),
                 items,
                 nextCursor,
                 !unavailable.isEmpty(),
-                unavailable);
+                unavailable,
+                realtime.status().name(),
+                snapshot.map(ShortTermInterestSnapshot::featureVersion).orElse(null),
+                snapshot.map(ShortTermInterestSnapshot::computedAt).orElse(null));
+    }
+
+    private InterestProfile merge(
+            InterestProfile explicit,
+            FeatureRead<ShortTermInterestSnapshot> realtime) {
+        if (realtime.status() != FeatureReadStatus.FRESH || realtime.value().isEmpty()) {
+            return explicit;
+        }
+        LinkedHashSet<String> topics = new LinkedHashSet<>(explicit.topics());
+        realtime.value().orElseThrow().topics().forEach(topic -> topics.add(topic.topic()));
+        return new InterestProfile(
+                explicit.userId(),
+                topics.stream().limit(20).toList(),
+                realtime.value().orElseThrow().computedAt().isAfter(explicit.updatedAt())
+                        ? realtime.value().orElseThrow().computedAt()
+                        : explicit.updatedAt());
     }
 
     private static boolean matchesProfile(RankingCandidate candidate, InterestProfile profile) {
@@ -169,6 +232,14 @@ public final class RecommendationApplicationService implements RecommendationUse
                 item.reason());
     }
 
+    private static UUID parseUuid(String value) {
+        try {
+            return UUID.fromString(value);
+        } catch (IllegalArgumentException invalid) {
+            return null;
+        }
+    }
+
     private static String fingerprint(String scenario, String userId, List<String> topics, String seed) {
         try {
             MessageDigest digest = MessageDigest.getInstance("SHA-256");
@@ -186,6 +257,19 @@ public final class RecommendationApplicationService implements RecommendationUse
 
         private static SourceResult empty(String source) {
             return new SourceResult(source, List.of(), false);
+        }
+    }
+
+    private static final class MissingRealtimeFeatures implements RealtimeFeatureUseCase {
+        @Override
+        public FeatureRead<ShortTermInterestSnapshot> shortTermInterest(String userId) {
+            return FeatureRead.empty(FeatureReadStatus.MISSING);
+        }
+
+        @Override
+        public Map<java.util.UUID, FeatureRead<io.seekflux.feature.domain.ContentHeatSnapshot>> contentHeat(
+                Iterable<java.util.UUID> contentIds) {
+            return Map.of();
         }
     }
 }

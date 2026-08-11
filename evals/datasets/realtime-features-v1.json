@@ -1,0 +1,21 @@
+{
+  "datasetVersion": "realtime-features-v1",
+  "documents": [
+    {
+      "key": "realtime-camping",
+      "creatorId": "seekflux-realtime-eval",
+      "mediaUri": "s3://seekflux-eval/realtime-camping.mp4",
+      "title": "周末生活露营路线",
+      "description": "用于实时特征验收的露营内容。",
+      "tags": ["露营", "周末生活", "realtime-eval-v1"]
+    },
+    {
+      "key": "realtime-coffee",
+      "creatorId": "seekflux-realtime-eval",
+      "mediaUri": "s3://seekflux-eval/realtime-coffee.mp4",
+      "title": "周末生活咖啡练习",
+      "description": "用于实时特征验收的咖啡内容。",
+      "tags": ["咖啡", "周末生活", "realtime-eval-v1"]
+    }
+  ]
+}

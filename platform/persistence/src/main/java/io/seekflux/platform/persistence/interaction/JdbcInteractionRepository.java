@@ -1,6 +1,7 @@
 package io.seekflux.platform.persistence.interaction;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import io.seekflux.interaction.application.InteractionIdempotencyConflictException;
 import io.seekflux.interaction.application.InteractionTopics;
@@ -110,16 +111,19 @@ public class JdbcInteractionRepository implements InteractionRepository {
         if (exists(event.eventId())) {
             return new InteractionEventReceipt(event.eventId(), InteractionDisposition.DUPLICATE, "EVENT_ALREADY_RECORDED");
         }
-        Optional<String> contentStatus = jdbcClient.sql("""
-                        SELECT status FROM content.contents WHERE content_id = :contentId
+        Optional<ContentEligibility> content = jdbcClient.sql("""
+                        SELECT status, COALESCE(profile_tags, source_tags, '[]'::jsonb)::text AS tags
+                        FROM content.contents
+                        WHERE content_id = :contentId
                         """)
                 .param("contentId", event.contentId())
-                .query(String.class)
+                .query((row, rowNumber) -> new ContentEligibility(
+                        row.getString("status"), parseTags(row.getString("tags"))))
                 .optional();
-        if (contentStatus.isEmpty()) {
+        if (content.isEmpty()) {
             return reject(batch, event, "CONTENT_NOT_FOUND");
         }
-        if (!"PUBLISHED".equals(contentStatus.get())) {
+        if (!"PUBLISHED".equals(content.get().status())) {
             return reject(batch, event, "CONTENT_NOT_PUBLISHED");
         }
         if (event.eventType().requiresExposure()) {
@@ -133,7 +137,7 @@ public class JdbcInteractionRepository implements InteractionRepository {
         if (!insertIngress(batch, event, InteractionDisposition.ACCEPTED, null)) {
             return new InteractionEventReceipt(event.eventId(), InteractionDisposition.DUPLICATE, "EVENT_ALREADY_RECORDED");
         }
-        insertOutbox(batch.userId(), event);
+        insertOutbox(batch.userId(), event, content.get().tags());
         return new InteractionEventReceipt(event.eventId(), InteractionDisposition.ACCEPTED, null);
     }
 
@@ -215,7 +219,7 @@ public class JdbcInteractionRepository implements InteractionRepository {
                 .single();
     }
 
-    private void insertOutbox(String userId, InteractionSignal event) {
+    private void insertOutbox(String userId, InteractionSignal event, List<String> contentTags) {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("event_id", event.eventId().toString());
         payload.put("user_id", userId);
@@ -226,6 +230,7 @@ public class JdbcInteractionRepository implements InteractionRepository {
         payload.put("position", event.position());
         payload.put("surface", event.surface().name());
         payload.put("event_time", event.eventTime().toString());
+        payload.put("content_tags", contentTags);
         int inserted = jdbcClient.sql("""
                         INSERT INTO outbox.events (
                             event_id, aggregate_type, aggregate_id, event_type,
@@ -267,6 +272,14 @@ public class JdbcInteractionRepository implements InteractionRepository {
         }
     }
 
+    private List<String> parseTags(String value) {
+        try {
+            return objectMapper.readValue(value, new TypeReference<>() { });
+        } catch (JsonProcessingException invalid) {
+            throw new IllegalStateException("failed to deserialize content tags for interaction", invalid);
+        }
+    }
+
     private static OffsetDateTime databaseTime(Instant value) {
         return value.atOffset(ZoneOffset.UTC);
     }
@@ -278,5 +291,11 @@ public class JdbcInteractionRepository implements InteractionRepository {
     }
 
     private record ExistingBatch(String requestHash, String response) {
+    }
+
+    private record ContentEligibility(String status, List<String> tags) {
+        private ContentEligibility {
+            tags = tags == null ? List.of() : List.copyOf(tags);
+        }
     }
 }

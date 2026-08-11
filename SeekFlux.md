@@ -9,9 +9,9 @@
 | 核心定位 | 在确定性搜索内核之上自研可复用 Agent Runtime，以短视频复杂搜索作为首个参考应用；推荐与实时反馈作为后续共享能力演进 |
 | 首要交付 | Agent Runtime、Direct/Agent 双路径、复杂 Search Agent、结构化执行轨迹和专项评测 |
 | 支撑基线 | 6 条固定画像验证 BM25、ANN、融合排序和确定性降级；12 条对抗内容验证复杂 Agent 增量；1 万条作为后续容量基线 |
-| 后续演进 | 曝光与行为闭环；按需要扩展 Feed、实时兴趣和更大规模模型 |
+| 后续演进 | 曝光、行为闭环与实时兴趣已完成；下一步按需要扩展模型排序和更大规模实验 |
 
-> 截至 2026-08-11，Phase 0～3 已由代码、测试、真实链路和版本化 Eval 完成，Phase 4 的曝光与行为事实前置也已完成；当前下一步是实时特征与短期兴趣。OpenAI-compatible Provider Adapter 已支持 usage 与价格计量，但默认效果/可靠性评测仍使用可复现的确定性 Provider，不代表真实付费模型质量、Token 或成本已经完成验证。唯一开发进度以 [`docs/learning/README.md`](docs/learning/README.md) 为准。
+> 截至 2026-08-11，Phase 0～3 已由代码、测试、真实链路和版本化 Eval 完成，Phase 4 的行为事实与实时特征切片也已完成；当前下一步是模型排序与推荐实验。OpenAI-compatible Provider Adapter 已支持 usage 与价格计量，但默认效果/可靠性评测仍使用可复现的确定性 Provider，不代表真实付费模型质量、Token 或成本已经完成验证。唯一开发进度以 [`docs/learning/README.md`](docs/learning/README.md) 为准。
 
 ## 目录
 
@@ -1187,7 +1187,7 @@ Trace 默认只保存特征名、版本和必要数值，不保存不必要的�
 
 ## 12. 用户兴趣与特征平台
 
-本章属于搜索个性化和推荐的共享演进能力。Agent Runtime 首期只要求通过 `UserContextPort` 读取可用的简化兴趣快照；完整实时/离线 Feature Store 不作为 Runtime MVP 的前置条件。
+本章属于搜索个性化和推荐的共享演进能力。Agent Runtime 首期只要求通过 `UserContextPort` 读取可用的简化兴趣快照；Step 9 已实现版本化实时窗口、Redis 在线快照和 Search/Feed 消费，但完整离线 Feature Store 仍不是 Runtime MVP 的前置条件。
 
 ### 12.1 特征分类
 
@@ -1239,7 +1239,7 @@ weight(event) = action_weight × watch_quality × exp(-decay × age)
 
 ## 13. 实时行为数据平台
 
-实时行为平台用于后续兴趣更新、推荐和在线实验。Agent Runtime 首期只生产结构化运行事件与搜索曝光关联，不要求先完成 Flink 全链路；启用实时兴趣后再按本章建设 Kafka/Flink 状态计算。
+实时行为平台用于兴趣更新、推荐和在线实验。Agent Runtime 首期不依赖该平台；Step 8 已完成可归因行为事实，Step 9 已完成生产 Flink DataStream Job 与本地 JDBC 参考投影两种运行形态，二者共享同一特征策略和快照契约。
 
 ### 13.1 事件主题
 
@@ -1254,7 +1254,8 @@ weight(event) = action_weight × watch_quality × exp(-decay × age)
 | `interaction.not-interested.v1` | Interaction API/Outbox | 行为事实 Worker；后续实时特征 Job | `user_id` |
 | `content.profile.published.v1` | Content Pipeline | 索引、特征、候选池 | `content_id` |
 | `content.distribution.changed.v1` | Moderation | 在线过滤与缓存失效 | `content_id` |
-| `feature.snapshot.updated.v1` | Flink/Batch | Online Feature Writer | `entity_id` |
+| `feature.snapshot.updated.v1` | Flink/本地参考投影 Outbox | Online Feature Writer | `entity_id` |
+| `feature.interaction-late.v1` | Flink | 补偿/审计消费者 | `event_id` |
 | `model.version.activated.v1` | Model Registry | Ranking Service | `model_name` |
 
 ### 13.2 事件时间与乱序
@@ -2043,9 +2044,10 @@ token_cost_per_second ≈ Q_agent × (Token_in + Token_out)
 ### Phase 4：可选的搜索推荐深化
 
 - 已完成曝光与主动行为的批量幂等入站、完整归因、事务 Outbox、Kafka 重放和权威行为事实；
+- 已完成 `realtime-window-v1`、Flink 事件时间/Watermark/迟到输出、本地参考投影、Redis 在线快照、Search/Feed 消费与新鲜度回退；
 - 真实 ASR/OCR/Vision 和 Query–Video 表征学习；
 - LightGBM/XGBoost 或深度精排、行为召回与个性化搜索；
-- Kafka + Flink 实时兴趣、Feed 和推荐实验；
+- 推荐模型训练、注册发布和受控实验；
 - 大规模分片、Point-in-Time 特征、模型灰度和成本治理；
 - 仅在存在真实业务需求时增加深度搜索 SSE、HITL、子 Agent、Handoff 或 MCP。
 
@@ -2070,7 +2072,7 @@ token_cost_per_second ≈ Q_agent × (Token_in + Token_out)
 | 稳定性 | Resilience4j 或等价组件 | Deadline、Bulkhead、熔断、有界重试和限流 |
 | 可观测 | OpenTelemetry、Prometheus、Grafana、集中日志 | 串联 Agent、LLM、Tool、检索、排序和成本 |
 | 可选检索模型 | Python/PyTorch、ONNX Runtime | 仅在实际训练/部署 Query Embedding 或多模态检索模型时启用 |
-| 后续推荐/实时平台 | LightGBM/XGBoost、Flink、对象存储 | Phase 4 可选能力，不进入首期主技术栈 |
+| 推荐/实时平台 | Flink DataStream 已用于 Step 9；LightGBM/XGBoost 与对象存储留待 Step 10 | 按独立业务验收逐项启用，不进入 Agent Runtime 首期前置 |
 | 部署 | Container、Kubernetes；本地 Compose | Agent/Search 隔离扩缩和可复现实验环境 |
 
 技术选型依赖接口、数据契约和基准测试，不依赖中间件品牌。若独立实现 Agent Runtime，`Ark-Leto` 不列入主技术栈；只有实际以其为运行时依赖时才保留，并把项目口径改成“基于 Ark-Leto 扩展”。Python/PyTorch、LightGBM 和 Flink 同样只在代码、测试和评测确实使用时列入项目技术栈。
@@ -2283,4 +2285,4 @@ Direct Search 可复现基线
 
 每个切片完成时，学习文档必须同步说明业务目标、架构位置、核心流程、关键代码入口、设计取舍、验证方式和练习；架构决策进入 `docs/adr/`，API/事件变化进入 `contracts/`，Agent/检索效果进入 `evals/`。建议另建 `docs/agent-runtime.md` 保存 Runtime 内核详细设计，本文只维护系统定位、边界和跨模块决策。
 
-学习文档和 README 只能把已由代码、测试、真实链路和评测 Artifact 证明的能力标记为完成；当前 Phase 0～3 已完成，Phase 4 按业务价值逐项启动。简历中的“自研”“多实例恢复”和效果指标必须遵循同一完成口径。
+学习文档和 README 只能把已由代码、测试、真实链路和评测 Artifact 证明的能力标记为完成；当前 Phase 0～3 已完成，Phase 4 已完成行为事实与实时特征两个切片，模型实验仍是下一步。简历中的“自研”“多实例恢复”和效果指标必须遵循同一完成口径。

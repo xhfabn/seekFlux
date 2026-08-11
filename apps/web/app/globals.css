@@ -283,6 +283,13 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .signal-map i { height: 1px; flex: 1; background: #4b5048; }
 .signal-map .planned { color: #777c74; }
 .signal-card > p { margin: 16px 0 0; color: #93988f; font-size: 10px; line-height: 1.55; }
+.signal-head .icon-button { width: 35px; height: 35px; border-color: #4b5048; background: transparent; color: var(--mint); }
+.realtime-interest { margin-top: 16px; padding-top: 14px; border-top: 1px solid rgba(255,255,255,.1); }
+.realtime-interest > div:first-child { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.realtime-interest strong { font-size: 10px; }
+.realtime-interest small { color: #777c74; font-size: 8px; }
+.realtime-interest > div:last-child { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 9px; }
+.realtime-interest span { padding: 5px 7px; border: 1px solid rgba(112,215,178,.28); border-radius: 7px; color: var(--mint); font-size: 9px; }
 .queue-console { grid-column: 1 / -1; }
 .queue-list { max-height: 380px; overflow-y: auto; }
 .queue-item { display: grid; grid-template-columns: 120px minmax(0,1fr) 40px 72px; align-items: center; gap: 10px; min-height: 45px; padding: 0 23px; border-bottom: 1px solid var(--line); }

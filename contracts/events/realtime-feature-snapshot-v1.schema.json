@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://seekflux.local/contracts/events/realtime-feature-snapshot-v1.schema.json",
+  "title": "SeekFlux realtime feature snapshot envelope v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "event_id",
+    "event_type",
+    "schema_version",
+    "event_time",
+    "ingested_at",
+    "producer",
+    "payload"
+  ],
+  "properties": {
+    "event_id": {"type": "string", "format": "uuid"},
+    "event_type": {"const": "feature.snapshot.updated.v1"},
+    "schema_version": {"const": 1},
+    "event_time": {"type": "string", "format": "date-time"},
+    "ingested_at": {"type": "string", "format": "date-time"},
+    "producer": {"type": "string", "minLength": 1},
+    "payload": {
+      "oneOf": [
+        {"$ref": "#/$defs/shortTermInterest"},
+        {"$ref": "#/$defs/contentHeat"}
+      ]
+    }
+  },
+  "$defs": {
+    "window": {
+      "type": "object",
+      "required": ["snapshot_type", "entity_id", "window_start", "window_end", "computed_at", "feature_version"],
+      "properties": {
+        "snapshot_type": {"enum": ["SHORT_TERM_INTEREST", "CONTENT_HEAT"]},
+        "entity_id": {"type": "string", "minLength": 1},
+        "window_start": {"type": "string", "format": "date-time"},
+        "window_end": {"type": "string", "format": "date-time"},
+        "computed_at": {"type": "string", "format": "date-time"},
+        "feature_version": {"const": "realtime-window-v1"}
+      }
+    },
+    "topicScore": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["topic", "score"],
+      "properties": {
+        "topic": {"type": "string", "minLength": 1, "maxLength": 64},
+        "score": {"type": "number"}
+      }
+    },
+    "shortTermInterest": {
+      "allOf": [
+        {"$ref": "#/$defs/window"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["snapshot_type", "entity_id", "topics", "window_start", "window_end", "computed_at", "feature_version"],
+          "properties": {
+            "snapshot_type": {"const": "SHORT_TERM_INTEREST"},
+            "entity_id": {"type": "string", "minLength": 1, "maxLength": 128},
+            "topics": {
+              "type": "array",
+              "maxItems": 10,
+              "items": {"$ref": "#/$defs/topicScore"}
+            },
+            "window_start": {"type": "string", "format": "date-time"},
+            "window_end": {"type": "string", "format": "date-time"},
+            "computed_at": {"type": "string", "format": "date-time"},
+            "feature_version": {"const": "realtime-window-v1"}
+          }
+        }
+      ]
+    },
+    "contentHeat": {
+      "allOf": [
+        {"$ref": "#/$defs/window"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["snapshot_type", "entity_id", "score", "event_count", "window_start", "window_end", "computed_at", "feature_version"],
+          "properties": {
+            "snapshot_type": {"const": "CONTENT_HEAT"},
+            "entity_id": {"type": "string", "format": "uuid"},
+            "score": {"type": "number"},
+            "event_count": {"type": "integer", "minimum": 0},
+            "window_start": {"type": "string", "format": "date-time"},
+            "window_end": {"type": "string", "format": "date-time"},
+            "computed_at": {"type": "string", "format": "date-time"},
+            "feature_version": {"const": "realtime-window-v1"}
+          }
+        }
+      ]
+    }
+  }
+}

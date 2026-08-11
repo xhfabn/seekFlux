@@ -1,6 +1,7 @@
 package io.seekflux.apps.onlineserver;
 
 import io.seekflux.search.application.SearchApplicationService;
+import io.seekflux.feature.port.in.RealtimeFeatureUseCase;
 import io.seekflux.search.port.in.SearchUseCase;
 import io.seekflux.search.port.out.SearchRetriever;
 import java.time.Duration;
@@ -48,6 +49,7 @@ class SearchConfiguration {
     SearchUseCase searchUseCase(
             SearchRetriever retriever,
             @Qualifier("searchRetrievalExecutor") ExecutorService retrievalExecutor,
+            RealtimeFeatureUseCase realtimeFeatures,
             @Value("${seekflux.search.request-deadline-ms:1200}") long requestDeadlineMillis,
             @Value("${seekflux.search.policy-version:direct-hybrid-v1}") String policyVersion,
             @Value("${seekflux.search.blocked-tags:moderation:blocked,distribution:blocked,违规,下架}")
@@ -61,6 +63,7 @@ class SearchConfiguration {
                 retrievalExecutor,
                 Duration.ofMillis(requestDeadlineMillis),
                 policyVersion,
-                blocked);
+                blocked,
+                realtimeFeatures);
     }
 }

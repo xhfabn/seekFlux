@@ -55,7 +55,8 @@ public final class RuleRankingService implements RankingUseCase {
         double freshness = Math.max(0.0, 1.0 - ageDays / 30.0);
         double score = merged.rrfScore * 100.0
                 + matchedInterests.size() * 0.35
-                + freshness * 0.25;
+                + freshness * 0.25
+                + Math.log1p(Math.max(0, request.contentHeat().getOrDefault(candidate.contentId(), 0.0))) * 0.08;
 
         String sourceReason = merged.sources.stream()
                 .sorted()
@@ -64,6 +65,9 @@ public final class RuleRankingService implements RankingUseCase {
         String reason = matchedInterests.isEmpty()
                 ? "来自" + sourceReason + "召回"
                 : "匹配兴趣「" + String.join("、", matchedInterests) + "」，来自" + sourceReason + "召回";
+        if (request.contentHeat().getOrDefault(candidate.contentId(), 0.0) > 0) {
+            reason += "，结合实时热度";
+        }
         return new ScoredCandidate(candidate, score, Set.copyOf(merged.sources), reason);
     }
 

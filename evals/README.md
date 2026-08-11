@@ -49,3 +49,11 @@ python3 evals/run_interaction_loop_eval.py
 ```
 
 Runner 校验新批次接入、同键同体重放、同键异体冲突、事件级去重、曝光到主动行为的完整归因、非法归因与乱序拒绝、撤回内容拒绝，以及 Kafka 重放不增加最终事实。默认结果写入 `evals/results/interaction-loop-v1-baseline.json`，临时内容与行为记录会在结束时清理。
+
+Step 9 实时特征使用固定内容与固定事件时间序列，贯穿 Interaction API、Outbox、Kafka、窗口投影、Redis、Search 和 Feed：
+
+```bash
+python3 evals/run_realtime_feature_eval.py
+```
+
+Runner 在调用排序前等待内容发布、Elasticsearch 可见和在线热度快照三道屏障，避免把异步索引延迟误判为排序失败。它校验版本化新鲜快照、短期兴趣和内容热度、Search/Feed 实际消费、Kafka 重放幂等、允许乱序、超界迟到、过期快照与 Redis 损坏时的确定性回退。默认结果写入 `evals/results/realtime-features-v1-baseline.json`，临时内容、行为、快照和 Redis Key 会在结束时清理。
