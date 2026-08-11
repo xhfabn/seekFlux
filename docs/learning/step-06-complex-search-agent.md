@@ -127,4 +127,4 @@ mvn -pl apps/agent-server -am -Dtest=OpenAiCompatibleLlmClientTest -Dsurefire.fa
 
 ## 下一步
 
-Step 7 是 Agent 可靠性与平台化：补齐 fencing、多实例失主接管、跨实例取消、事务 Outbox、故障注入、Shadow、成本与 SLO 证据。当前唯一进度与完成门槛始终以[学习路线首页](README.md)为准。
+本阶段完成时的下一步是 Step 7“Agent 可靠性与平台化”，该切片及 Step 8 现在均已完成。当前唯一进度与完成门槛始终以[学习路线首页](README.md)为准。

@@ -6,9 +6,11 @@ SeekFlux 的唯一前端工程，按产品角色组织为三个区域：
 - 用户画像（B 端）：把冷启动兴趣保存到 Online Server，并查看曝光与互动事件；
 - 内容工作台（B 端）：登记媒体、查询处理状态、校准并发布画像。
 
-对象存储上传和 Interaction API 尚未完成，因此文件选择与实时回流会显示明确占位；不会伪报服务端成功。
+对象存储二进制上传尚未完成，因此文件选择仍显示明确占位；内容登记、画像发布和行为回流都只在真实后端成功后显示成功状态。
 
 推荐 Feed 与 AI 搜索都不在前端模拟匹配。Feed 由 Online Server 使用 Redis 用户画像召回；AI 搜索由 Agent Server 保存会话目标、调用模型与 Search Tool，并把真实候选返回给同一套内容卡片。六类联调样例通过真实内容提交、Worker 画像生成和索引发布链路创建：
+
+发现页会按后端返回的 request/trace/position 记录 `FEED`、`SEARCH`、`AGENT` 曝光与主动行为；用户画像页通过真实 `POST /v1/interactions:batch` 回传。服务端负责幂等、曝光归因、Outbox/Kafka 和最终行为事实，前端不写死匹配或计数逻辑。
 
 ```bash
 ./seekflux.sh seed-demo

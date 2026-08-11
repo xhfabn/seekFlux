@@ -322,10 +322,35 @@ paths:
         - name: Idempotency-Key
           in: header
           required: true
-          schema: {type: string}
+          schema: {type: string, minLength: 1, maxLength: 128}
+        - name: X-User-Id
+          in: header
+          required: true
+          description: Gateway-authenticated user identity; a trusted local header is used in the development baseline.
+          schema: {type: string, minLength: 1, maxLength: 128}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InteractionBatchRequest"
       responses:
         "202":
-          description: Events accepted
+          description: A new batch was durably evaluated; individual events can be accepted, duplicated, or rejected.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InteractionBatchReceipt"
+        "200":
+          description: The same idempotency key and body were replayed; the original receipt is returned.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/InteractionBatchReceipt"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/Conflict"
 components:
   parameters:
     ContentId:
@@ -364,6 +389,52 @@ components:
       description: Optional request-scoped override. When omitted, the persisted user profile is used.
       schema: {type: string, maxLength: 1300}
   schemas:
+    InteractionBatchRequest:
+      type: object
+      required: [events]
+      properties:
+        events:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/InteractionEvent"
+    InteractionEvent:
+      type: object
+      required: [eventId, eventType, requestId, traceId, contentId, position, surface, eventTime]
+      properties:
+        eventId: {type: string, format: uuid}
+        eventType:
+          type: string
+          enum: [EXPOSURE, CLICK, PLAY_START, LIKE, SAVE, PLAY_COMPLETE, NOT_INTERESTED]
+        requestId: {type: string, minLength: 1, maxLength: 128}
+        traceId: {type: string, minLength: 1, maxLength: 128}
+        contentId: {type: string, format: uuid}
+        position: {type: integer, minimum: 1, maximum: 10000}
+        surface: {type: string, enum: [FEED, SEARCH, AGENT]}
+        eventTime: {type: string, format: date-time}
+    InteractionEventReceipt:
+      type: object
+      required: [eventId, disposition]
+      properties:
+        eventId: {type: string, format: uuid}
+        disposition: {type: string, enum: [ACCEPTED, DUPLICATE, REJECTED]}
+        reason:
+          type: [string, "null"]
+          enum: [EVENT_ALREADY_RECORDED, CONTENT_NOT_FOUND, CONTENT_NOT_PUBLISHED, ATTRIBUTION_NOT_FOUND, EVENT_BEFORE_EXPOSURE, null]
+    InteractionBatchReceipt:
+      type: object
+      required: [batchId, replayed, acceptedCount, duplicateCount, rejectedCount, events]
+      properties:
+        batchId: {type: string, format: uuid}
+        replayed: {type: boolean}
+        acceptedCount: {type: integer, minimum: 0}
+        duplicateCount: {type: integer, minimum: 0}
+        rejectedCount: {type: integer, minimum: 0}
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/InteractionEventReceipt"
     AgentSearchOptions:
       type: object
       properties:

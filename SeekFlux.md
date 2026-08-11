@@ -11,7 +11,7 @@
 | 支撑基线 | 6 条固定画像验证 BM25、ANN、融合排序和确定性降级；12 条对抗内容验证复杂 Agent 增量；1 万条作为后续容量基线 |
 | 后续演进 | 曝光与行为闭环；按需要扩展 Feed、实时兴趣和更大规模模型 |
 
-> 截至 2026-08-10，Phase 0～3 已由代码、测试、真实链路和版本化 Eval 完成；当前下一步是曝光与行为闭环。OpenAI-compatible Provider Adapter 已支持 usage 与价格计量，但默认效果/可靠性评测仍使用可复现的确定性 Provider，不代表真实付费模型质量、Token 或成本已经完成验证。唯一开发进度以 [`docs/learning/README.md`](docs/learning/README.md) 为准。
+> 截至 2026-08-11，Phase 0～3 已由代码、测试、真实链路和版本化 Eval 完成，Phase 4 的曝光与行为事实前置也已完成；当前下一步是实时特征与短期兴趣。OpenAI-compatible Provider Adapter 已支持 usage 与价格计量，但默认效果/可靠性评测仍使用可复现的确定性 Provider，不代表真实付费模型质量、Token 或成本已经完成验证。唯一开发进度以 [`docs/learning/README.md`](docs/learning/README.md) 为准。
 
 ## 目录
 
@@ -543,25 +543,18 @@ Search Tool Adapter
 
 ```json
 {
-  "eventId": "evt_uuid",
-  "eventType": "WATCH_PROGRESS",
-  "userId": "u_90001",
-  "anonymousId": null,
-  "sessionId": "s_70001",
+  "eventId": "3dd21d52-b75c-4682-83a3-8d87e95ab17f",
+  "eventType": "LIKE",
   "requestId": "req_80001",
-  "contentId": "v_10001",
+  "traceId": "trace_80001",
+  "contentId": "0ed59030-c906-4198-9a99-122ef1841101",
   "position": 4,
-  "watchMs": 21000,
-  "contentDurationMs": 42000,
-  "eventTime": "2026-08-02T10:21:12.230Z",
-  "clientTime": "2026-08-02T10:21:12.100Z",
-  "rankingPolicyVersion": "feed-rank-v12",
-  "experimentAssignments": ["home_rank_exp:A"],
-  "schemaVersion": 2
+  "surface": "SEARCH",
+  "eventTime": "2026-08-11T10:21:12.230Z"
 }
 ```
 
-所有行为必须尽量关联 `requestId + contentId + position`，否则无法还原曝光上下文和排序偏差。
+客户端批量接口通过 `X-User-Id` 绑定用户。主动行为必须严格关联一条时间不晚于它的已接受曝光，并完整匹配 `userId + requestId + traceId + contentId + position + surface`；否则不能进入权威行为事实。
 
 ### 7.5 SearchGoal 与 QueryConstraintSet
 
@@ -1252,9 +1245,13 @@ weight(event) = action_weight × watch_quality × exp(-decay × age)
 
 | Topic | Producer | Consumer | 分区键 |
 | --- | --- | --- | --- |
-| `interaction.raw.v1` | Interaction API | 清洗与会话化 Job | `user_id` 或 `anonymous_id` |
-| `interaction.validated.v1` | 清洗 Job | 特征、分析、样本 Job | `user_id` |
-| `exposure.logged.v1` | Search/Feed Service | 归因与训练样本 Job | `request_id` |
+| `interaction.exposure.v1` | Interaction API/Outbox | 行为事实 Worker；后续实时特征 Job | `user_id` |
+| `interaction.click.v1` | Interaction API/Outbox | 行为事实 Worker；后续实时特征 Job | `user_id` |
+| `interaction.play-start.v1` | Interaction API/Outbox | 行为事实 Worker；后续实时特征 Job | `user_id` |
+| `interaction.like.v1` | Interaction API/Outbox | 行为事实 Worker；后续实时特征 Job | `user_id` |
+| `interaction.save.v1` | Interaction API/Outbox | 行为事实 Worker；后续实时特征 Job | `user_id` |
+| `interaction.play-complete.v1` | Interaction API/Outbox | 行为事实 Worker；后续实时特征 Job | `user_id` |
+| `interaction.not-interested.v1` | Interaction API/Outbox | 行为事实 Worker；后续实时特征 Job | `user_id` |
 | `content.profile.published.v1` | Content Pipeline | 索引、特征、候选池 | `content_id` |
 | `content.distribution.changed.v1` | Moderation | 在线过滤与缓存失效 | `content_id` |
 | `feature.snapshot.updated.v1` | Flink/Batch | Online Feature Writer | `entity_id` |
@@ -2045,6 +2042,7 @@ token_cost_per_second ≈ Q_agent × (Token_in + Token_out)
 
 ### Phase 4：可选的搜索推荐深化
 
+- 已完成曝光与主动行为的批量幂等入站、完整归因、事务 Outbox、Kafka 重放和权威行为事实；
 - 真实 ASR/OCR/Vision 和 Query–Video 表征学习；
 - LightGBM/XGBoost 或深度精排、行为召回与个性化搜索；
 - Kafka + Flink 实时兴趣、Feed 和推荐实验；
@@ -2083,7 +2081,7 @@ token_cost_per_second ≈ Q_agent × (Token_in + Token_out)
 SeekFlux/
 ├── apps/
 │   ├── agent-server/              # Agent API、Runtime 与 AgentOrchestration 组装
-│   ├── online-server/             # Direct Search；后续可选 Feed/Interaction
+│   ├── online-server/             # Direct Search、Feed、UserInterest、Interaction API
 │   ├── content-server/            # 内容控制面与处理任务
 │   ├── worker-runner/             # Enrichment/Index/Feature Worker
 │   └── training-runner/           # 可选检索模型训练与注册入口

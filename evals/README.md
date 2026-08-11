@@ -41,3 +41,11 @@ python3 evals/run_agent_reliability_eval.py
 Runner 会自行发布样本、等待 Kafka/Worker/Elasticsearch 链路完成并在退出时清理；它校验单会话并发写、fencing token 单调、重复请求无额外 Run/Tool 事件、事务 Outbox、幂等审计消费、Shadow 主结果隔离/快速关闭，以及可用性、P95 和 Fallback。默认结果写入 `evals/results/agent-reliability-v1-baseline.json`。确定性 Provider 不报告 usage 时，报告必须保留 `providerUsageMeasured=false`，不能把 0 Token/成本解释成真实模型免费。
 
 运行前需要 PostgreSQL、Redis、Kafka、Elasticsearch、Content Server、Worker Runner、Online Server 均健康；Agent 对照评测还需要 Agent Server。若只想保留临时内容用于排查，可增加 `--keep-fixtures`。
+
+Step 8 行为闭环使用固定内容和真实 Interaction API → Outbox → Kafka → Worker → PostgreSQL 事实链路：
+
+```bash
+python3 evals/run_interaction_loop_eval.py
+```
+
+Runner 校验新批次接入、同键同体重放、同键异体冲突、事件级去重、曝光到主动行为的完整归因、非法归因与乱序拒绝、撤回内容拒绝，以及 Kafka 重放不增加最终事实。默认结果写入 `evals/results/interaction-loop-v1-baseline.json`，临时内容与行为记录会在结束时清理。

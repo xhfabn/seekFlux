@@ -1,0 +1,11 @@
+{
+  "datasetVersion": "interaction-loop-v1",
+  "document": {
+    "key": "interaction-camping-guide",
+    "creatorId": "seekflux-interaction-eval",
+    "mediaUri": "s3://seekflux-eval/interaction-camping-guide.mp4",
+    "title": "亲子露营行为闭环验收",
+    "description": "用于验证曝光、点赞归因、幂等与 Kafka 回放的一条固定内容。",
+    "tags": ["亲子", "露营", "interaction-eval-v1"]
+  }
+}

@@ -164,4 +164,4 @@ curl -X POST http://localhost:8083/v1/agent/search \
 
 ## 下一步
 
-本阶段完成时的下一步是 Step 6“复杂 Search Agent”，该切片现在已经完成。当前下一步是 Step 7“Agent 可靠性与平台化”，具体范围和门槛始终以[学习路线首页](README.md)为准。
+本阶段完成时的下一步是 Step 6“复杂 Search Agent”，该切片及后续 Step 7～8 现在均已完成。当前下一步和完成门槛始终以[学习路线首页](README.md)为准。

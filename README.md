@@ -8,6 +8,7 @@ SeekFlux 是一个面向短视频内容平台的搜索、推荐与 Search Agent 
 
 - 内容登记经 PostgreSQL、事务 Outbox、Kafka、Worker 和 Elasticsearch 形成可搜索的内容画像；
 - C 端发现页支持画像驱动的内容发现、关键词搜索、热门/兴趣/相似内容召回、规则排序，以及由 Agent Server 驱动的多轮 AI 搜索；
+- C 端曝光、点击、播放、点赞、收藏、完播和负反馈通过 Interaction API 可靠入站，以真实 request/trace/content/position/surface 完整归因，并经事务 Outbox、Kafka 和幂等 Worker 形成行为事实；
 - B 端用户画像与内容工作台通过真实后端接口管理兴趣约束和内容标签；
 - Direct Search 使用 BM25/kNN 双路召回、RRF 融合、结构化过滤、共同 Deadline、单路降级和 Search Trace；
 - Search Agent 支持简单/复杂 Query 路由、SearchPlan、多轮 ConstraintPatch、动态工具集、并行宽搜/精搜、候选复用、追问与 Direct Fallback；
@@ -72,6 +73,7 @@ mvn -pl platform/agent-runtime,apps/agent-server,apps/worker-runner -am test
 python3 evals/run_agent_search_eval.py
 python3 evals/run_complex_agent_eval.py
 python3 evals/run_agent_reliability_eval.py
+python3 evals/run_interaction_loop_eval.py
 ```
 
 - [学习路线与阶段验收](docs/learning/README.md)

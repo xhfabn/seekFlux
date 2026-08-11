@@ -5,7 +5,14 @@ import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "re
 type Workspace = "discover" | "audience" | "studio";
 type DiscoverMode = "feed" | "search" | "agent";
 type HealthState = "checking" | "online" | "offline";
-type EventType = "EXPOSURE" | "PLAY_START" | "LIKE" | "NOT_INTERESTED";
+type EventType = "EXPOSURE" | "CLICK" | "PLAY_START" | "LIKE" | "SAVE" | "PLAY_COMPLETE" | "NOT_INTERESTED";
+type InteractionSurface = "FEED" | "SEARCH" | "AGENT";
+
+type InteractionAttribution = {
+  requestId: string;
+  traceId: string;
+  surface: InteractionSurface;
+};
 
 type ContentProfile = {
   version: number;
@@ -123,9 +130,18 @@ type InteractionEvent = {
   eventId: string;
   eventType: EventType;
   requestId: string;
+  traceId: string;
   contentId: string;
   position: number;
+  surface: InteractionSurface;
   eventTime: string;
+};
+
+type InteractionBatchReceipt = {
+  replayed: boolean;
+  acceptedCount: number;
+  duplicateCount: number;
+  rejectedCount: number;
 };
 
 const sampleContent = {
@@ -154,8 +170,24 @@ function splitTags(value: string): string[] {
 }
 
 function createEventId(): string {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return `evt_${crypto.randomUUID()}`;
-  return `evt_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (character) => {
+    const value = Math.floor(Math.random() * 16);
+    return (character === "x" ? value : (value & 0x3) | 0x8).toString(16);
+  });
+}
+
+function isInteractionEvent(value: unknown): value is InteractionEvent {
+  if (!value || typeof value !== "object") return false;
+  const event = value as Partial<InteractionEvent>;
+  return typeof event.eventId === "string"
+    && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(event.eventId)
+    && typeof event.requestId === "string"
+    && typeof event.traceId === "string"
+    && (event.surface === "FEED" || event.surface === "SEARCH" || event.surface === "AGENT")
+    && typeof event.contentId === "string"
+    && typeof event.position === "number"
+    && typeof event.eventTime === "string";
 }
 
 async function api<T>(url: string, options?: RequestInit): Promise<T> {
@@ -245,7 +277,10 @@ export function SeekFluxApp() {
       if (!active) return;
       const rawEvents = window.localStorage.getItem("seekflux.interactions");
       if (rawEvents) {
-        try { setEvents(JSON.parse(rawEvents) as InteractionEvent[]); } catch { window.localStorage.removeItem("seekflux.interactions"); }
+        try {
+          const restored = JSON.parse(rawEvents) as unknown;
+          setEvents(Array.isArray(restored) ? restored.filter(isInteractionEvent) : []);
+        } catch { window.localStorage.removeItem("seekflux.interactions"); }
       }
       const rawProfile = window.localStorage.getItem("seekflux.viewer-profile");
       if (rawProfile) {
@@ -394,20 +429,20 @@ export function SeekFluxApp() {
     } finally { setBusy(null); }
   }
 
-  const appendExposureEvents = useCallback((items: ContentItem[], requestId: string, startPosition = 0) => {
+  const appendExposureEvents = useCallback((items: ContentItem[], attribution: InteractionAttribution, startPosition = 0) => {
     const now = new Date().toISOString();
     setEvents((current) => {
       const next = items.map((item, index) => ({
-        eventId: createEventId(), eventType: "EXPOSURE" as const, requestId,
+        eventId: createEventId(), eventType: "EXPOSURE" as const, ...attribution,
         contentId: item.contentId, position: startPosition + index + 1, eventTime: now,
       }));
       return [...next, ...current].slice(0, 200);
     });
   }, []);
 
-  const addInteraction = useCallback((eventType: EventType, item: ContentItem, position: number, requestId: string) => {
+  const addInteraction = useCallback((eventType: EventType, item: ContentItem, position: number, attribution: InteractionAttribution) => {
     const nextEvent: InteractionEvent = {
-      eventId: createEventId(), eventType, requestId, contentId: item.contentId,
+      eventId: createEventId(), eventType, ...attribution, contentId: item.contentId,
       position, eventTime: new Date().toISOString(),
     };
     setEvents((current) => [nextEvent, ...current].slice(0, 200));
@@ -427,7 +462,11 @@ export function SeekFluxApp() {
       setSearchData(data);
       setDiscoverMode("search");
       setHealth((current) => ({ ...current, online: "online" }));
-      appendExposureEvents(data.hits, `search_${createEventId()}`);
+      appendExposureEvents(data.hits, {
+        requestId: data.trace.requestId,
+        traceId: data.trace.requestId,
+        surface: "SEARCH",
+      });
       if (!data.hits.length) showToast("没有匹配结果");
     } catch (error) {
       const message = error instanceof Error ? error.message : "搜索失败";
@@ -450,7 +489,7 @@ export function SeekFluxApp() {
       setFeedItems((current) => append ? [...current, ...data.items] : data.items);
       if (activate) setDiscoverMode("feed");
       setHealth((current) => ({ ...current, online: "online" }));
-      appendExposureEvents(data.items, data.requestId, startPosition);
+      appendExposureEvents(data.items, { requestId: data.requestId, traceId: data.requestId, surface: "FEED" }, startPosition);
       if (!data.items.length) showToast("当前画像暂无匹配内容");
     } catch (error) {
       const message = error instanceof Error ? error.message : "Feed 生成失败";
@@ -470,7 +509,7 @@ export function SeekFluxApp() {
       setFeedData(data);
       setFeedItems(data.items);
       setDiscoverMode("feed");
-      appendExposureEvents(data.items, data.requestId);
+      appendExposureEvents(data.items, { requestId: data.requestId, traceId: data.requestId, surface: "FEED" });
       showToast("已切换为相似内容 Feed");
     } catch (error) {
       const message = error instanceof Error ? error.message : "相似内容召回失败";
@@ -528,7 +567,11 @@ export function SeekFluxApp() {
         ? { ...item, status: response.state === "CANCELLED" ? "cancelled" : "ready", response }
         : item));
       setHealth((current) => ({ ...current, agent: "online" }));
-      if (response.items.length) appendExposureEvents(response.items, response.requestId);
+      if (response.items.length) appendExposureEvents(response.items, {
+        requestId: response.requestId,
+        traceId: response.agentRunId ?? response.requestId,
+        surface: "AGENT",
+      });
       if (response.degraded) showToast("智能搜索已降级，但保留了可用结果");
     } catch (error) {
       const cancelled = error instanceof DOMException && error.name === "AbortError";
@@ -598,25 +641,27 @@ export function SeekFluxApp() {
     setBusy("sync");
     setSyncMessage("正在尝试提交 Interaction API…");
     try {
-      await api("/api/bridge/online/v1/interactions:batch", {
+      const receipt = await api<InteractionBatchReceipt>("/api/bridge/online/v1/interactions:batch", {
         method: "POST",
-        headers: { "Idempotency-Key": `batch_${createEventId()}` },
+        headers: { "Idempotency-Key": `web-${createEventId()}`, "X-User-Id": savedUserId || "anonymous" },
         body: JSON.stringify({ events: [...events].reverse() }),
       });
       const count = events.length;
       setEvents([]);
-      setSyncMessage(`已成功回传 ${count} 个事件，等待实时特征链路消费。`);
-      showToast(`${count} 个反馈事件已回传`);
+      setSyncMessage(`已回传 ${count} 个事件：接收 ${receipt.acceptedCount}，重复 ${receipt.duplicateCount}，拒绝 ${receipt.rejectedCount}。`);
+      showToast(`${receipt.acceptedCount} 个行为事实已进入可靠链路`);
     } catch (error) {
       const message = error instanceof Error ? error.message : "回传失败";
-      setSyncMessage(`后端尚未接通：${message}。事件仍保留在本地。`);
-      showToast("Interaction API 尚未可用，队列已保留", true);
+      setSyncMessage(`回传失败：${message}。事件仍保留在本地。`);
+      showToast("行为回传失败，队列已保留", true);
     } finally { setBusy(null); }
   }
 
   const displayedItems = discoverMode === "search" ? searchData?.hits ?? [] : feedItems;
   const consumerItems = displayedItems;
-  const activeRequestId = discoverMode === "feed" ? feedData?.requestId ?? "feed_pending" : "search_frontend";
+  const activeAttribution: InteractionAttribution = discoverMode === "feed"
+    ? { requestId: feedData?.requestId ?? "feed_pending", traceId: feedData?.requestId ?? "feed_pending", surface: "FEED" }
+    : { requestId: searchData?.trace.requestId ?? "search_pending", traceId: searchData?.trace.requestId ?? "search_pending", surface: "SEARCH" };
   const currentStage = content ? statusIndex[content.status] : 0;
   const eventCounts = useMemo(() => {
     const exposures = events.filter((event) => event.eventType === "EXPOSURE").length;
@@ -682,7 +727,7 @@ export function SeekFluxApp() {
             query={query} setQuery={setQuery} runSearch={runSearch} searchPage={searchPage} searchData={searchData}
             runFeed={runFeed} runSimilar={runSimilar} feedData={feedData} items={consumerItems}
             error={discoverError} busy={busy}
-            requestId={activeRequestId} addInteraction={addInteraction} goProfile={() => navigate("audience")}
+            attribution={activeAttribution} addInteraction={addInteraction} goProfile={() => navigate("audience")}
             agentQuery={agentQuery} setAgentQuery={setAgentQuery} agentTurns={agentTurns}
             runAgentSearch={runAgentSearch} cancelAgentSearch={cancelAgentSearch}
             startNewAgentSession={startNewAgentSession} agentHealth={health.agent}
@@ -760,8 +805,8 @@ type DiscoverProps = {
   query: string; setQuery: (value: string) => void; runSearch: (page?: number, query?: string) => Promise<void>;
   searchPage: number; searchData: SearchResponse | null; runFeed: (cursor?: string | null, append?: boolean) => Promise<void>;
   runSimilar: (contentId: string) => Promise<void>; feedData: FeedResponse | null; items: ContentItem[];
-  error: string; busy: string | null; requestId: string;
-  addInteraction: (type: EventType, item: ContentItem, position: number, requestId: string) => void;
+  error: string; busy: string | null; attribution: InteractionAttribution;
+  addInteraction: (type: EventType, item: ContentItem, position: number, attribution: InteractionAttribution) => void;
   goProfile: () => void;
   agentQuery: string; setAgentQuery: (value: string) => void; agentTurns: AgentTurn[];
   runAgentSearch: (query?: string) => Promise<void>; cancelAgentSearch: () => Promise<void>;
@@ -819,7 +864,7 @@ function DiscoverWorkspace(props: DiscoverProps) {
 
       <section className="consumer-card-grid" aria-label={props.mode === "search" ? "搜索结果" : "推荐内容"}>
         {props.items.map((item, index) => (
-          <ConsumerContentCard key={`${item.contentId}-${index}`} item={item} index={index} requestId={props.requestId} addInteraction={props.addInteraction} runSimilar={props.runSimilar} />
+          <ConsumerContentCard key={`${item.contentId}-${index}`} item={item} index={index} attribution={props.attribution} addInteraction={props.addInteraction} runSimilar={props.runSimilar} />
         ))}
       </section>
       {!props.items.length && !props.busy && (
@@ -913,7 +958,11 @@ function AgentSearchWorkspace(props: DiscoverProps) {
                             key={`${turn.id}-${item.contentId}-${index}`}
                             item={item}
                             index={index}
-                            requestId={turn.response?.requestId ?? "agent_pending"}
+                            attribution={{
+                              requestId: turn.response?.requestId ?? "agent_pending",
+                              traceId: turn.response?.agentRunId ?? turn.response?.requestId ?? "agent_pending",
+                              surface: "AGENT",
+                            }}
                             addInteraction={props.addInteraction}
                             runSimilar={props.runSimilar}
                           />
@@ -956,8 +1005,8 @@ function AgentSearchWorkspace(props: DiscoverProps) {
   );
 }
 
-function ConsumerContentCard({ item, index, requestId, addInteraction, runSimilar }: {
-  item: ContentItem; index: number; requestId: string;
+function ConsumerContentCard({ item, index, attribution, addInteraction, runSimilar }: {
+  item: ContentItem; index: number; attribution: InteractionAttribution;
   addInteraction: DiscoverProps["addInteraction"]; runSimilar: (contentId: string) => Promise<void>;
 }) {
   const [mediaError, setMediaError] = useState(false);
@@ -971,7 +1020,7 @@ function ConsumerContentCard({ item, index, requestId, addInteraction, runSimila
         {canPlay ? (
           // Remote creator media does not yet expose a captions track in the content contract.
           // eslint-disable-next-line jsx-a11y/media-has-caption
-          <video src={item.mediaUri} controls playsInline preload="metadata" onError={() => setMediaError(true)} onPlay={() => addInteraction("PLAY_START", item, index + 1, requestId)} />
+          <video src={item.mediaUri} controls playsInline preload="metadata" onError={() => setMediaError(true)} onPlay={() => addInteraction("PLAY_START", item, index + 1, attribution)} />
         ) : (
           <div className={`consumer-poster poster-${index % 9}`}>
             <span className="poster-kicker">SEEKFLUX PICKS</span>
@@ -980,7 +1029,7 @@ function ConsumerContentCard({ item, index, requestId, addInteraction, runSimila
           </div>
         )}
         <div className="consumer-cover-label">{item.sources?.[0] === "INTEREST" ? "猜你喜欢" : item.tags[0] || "推荐"}</div>
-        <div className="consumer-cover-meta"><button title="喜欢" onClick={() => addInteraction("LIKE", item, index + 1, requestId)}><Icon name="heart" /> {likes[index % likes.length]}</button><span>{durations[index % durations.length]}</span></div>
+        <div className="consumer-cover-meta"><button title="喜欢" onClick={() => addInteraction("LIKE", item, index + 1, attribution)}><Icon name="heart" /> {likes[index % likes.length]}</button><span>{durations[index % durations.length]}</span></div>
       </div>
       <div className="consumer-card-copy">
         <h2>{item.title}</h2>
@@ -989,7 +1038,7 @@ function ConsumerContentCard({ item, index, requestId, addInteraction, runSimila
           <span>@{item.creatorId} · {index % 3 === 0 ? "3天前" : index % 3 === 1 ? "6小时前" : "昨天"}</span>
           <div>
             <button title="查看相似内容" onClick={() => void runSimilar(item.contentId)}><Icon name="layers" /></button>
-            <button title="减少此类内容" onClick={() => addInteraction("NOT_INTERESTED", item, index + 1, requestId)}><Icon name="hide" /></button>
+            <button title="减少此类内容" onClick={() => addInteraction("NOT_INTERESTED", item, index + 1, attribution)}><Icon name="hide" /></button>
           </div>
         </div>
       </div>
@@ -1008,7 +1057,7 @@ function AudienceWorkspace(props: AudienceProps) {
   const interestList = splitTags(props.interests);
   const quickInterests = ["露营", "亲子", "咖啡", "摄影", "旅行", "科技"];
   const hasEvents = props.events.length > 0;
-  const eventsSynced = props.syncMessage.startsWith("已成功回传");
+  const eventsSynced = props.syncMessage.startsWith("已回传");
   const tasks: TaskGuideItem[] = [
     { title: "设置兴趣", detail: props.profileSavedAt ? "冷启动画像已保存" : "填写用户 ID 并选择兴趣", state: props.profileSavedAt ? "done" : "active" },
     { title: "采集行为", detail: eventsSynced ? "行为已采集并回传" : hasEvents ? `已记录 ${props.events.length} 条事件` : "去发现页浏览并产生互动", state: eventsSynced || hasEvents ? "done" : props.profileSavedAt ? "active" : "pending" },

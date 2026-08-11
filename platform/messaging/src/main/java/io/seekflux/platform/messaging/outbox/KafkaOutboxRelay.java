@@ -14,12 +14,14 @@ import java.util.concurrent.TimeUnit;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.kafka.core.KafkaTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 @Component
+@ConditionalOnProperty(name = "seekflux.outbox.enabled", havingValue = "true", matchIfMissing = true)
 public final class KafkaOutboxRelay {
 
     private static final Logger logger = LoggerFactory.getLogger(KafkaOutboxRelay.class);

@@ -1,0 +1,25 @@
+{
+  "evaluationVersion": "interaction-loop-v1",
+  "datasetVersion": "interaction-loop-v1",
+  "generatedAt": "2026-08-11T02:26:25.041056+00:00",
+  "comparison": {
+    "newBatchAccepted": true,
+    "sameKeyReplayStable": true,
+    "changedBodyConflict": true,
+    "duplicateEventNotCounted": true,
+    "exposureActionLinked": true,
+    "invalidAttributionRejected": true,
+    "outOfOrderRejected": true,
+    "withdrawnContentRejected": true,
+    "kafkaReplayIdempotent": true
+  },
+  "evidence": {
+    "firstBatchId": "b3b29063-53c8-476f-b901-d106202ca3e5",
+    "acceptedEventIds": [
+      "be6024d0-3fd8-4fa4-80fb-385f900512c8",
+      "83ff2d0c-afab-45df-9d6b-01a1b412bae7"
+    ],
+    "attribution": "interaction-eval-8cdd56a99a144707b58f587102dd6571|request-b09381390d3944b7ab1b92f8b267e5d8|trace-b523d98cb20e45cfa49ad72b34607d5e|73dd073e-e961-418e-bc67-29ffa4428a37|1|SEARCH",
+    "factCountAfterKafkaReplay": 2
+  }
+}

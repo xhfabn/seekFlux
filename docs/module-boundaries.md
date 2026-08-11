@@ -57,7 +57,7 @@ AgentOrchestration 决定搜索目标、约束修正、追问和业务回退；R
 | --- | --- |
 | online-server | Search、Recommendation、Interaction、UserInterest、Ranking、Experiment、Moderation |
 | content-server | Content、Moderation、Feature/Model 控制面 |
-| worker-runner | 内容理解、索引发布、特征写入、Outbox Relay 与 Agent 终态幂等审计消费 |
+| worker-runner | 内容理解、索引发布、行为事实写入、特征写入、Outbox Relay 与 Agent 终态幂等审计消费 |
 | agent-server | Agent API、AgentOrchestration、Agent Runtime 与 Tool 装配；端口 `8083`，独立线程池和故障边界 |
 | realtime-features（Step 9 可选） | Flink 行为清洗、会话化、窗口聚合、短期兴趣 |
 | training-runner（Step 10 可选） | 样本生成、基线训练、离线评测、模型注册 |

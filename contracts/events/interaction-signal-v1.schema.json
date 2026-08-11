@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://seekflux.local/contracts/events/interaction-signal-v1.schema.json",
+  "title": "SeekFlux Interaction Signal v1 payload",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "event_id",
+    "user_id",
+    "event_type",
+    "request_id",
+    "trace_id",
+    "content_id",
+    "position",
+    "surface",
+    "event_time"
+  ],
+  "properties": {
+    "event_id": {"type": "string", "format": "uuid"},
+    "user_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "event_type": {
+      "type": "string",
+      "enum": ["EXPOSURE", "CLICK", "PLAY_START", "LIKE", "SAVE", "PLAY_COMPLETE", "NOT_INTERESTED"]
+    },
+    "request_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "trace_id": {"type": "string", "minLength": 1, "maxLength": 128},
+    "content_id": {"type": "string", "format": "uuid"},
+    "position": {"type": "integer", "minimum": 1, "maximum": 10000},
+    "surface": {"type": "string", "enum": ["FEED", "SEARCH", "AGENT"]},
+    "event_time": {"type": "string", "format": "date-time"}
+  }
+}

@@ -125,7 +125,7 @@ curl --get http://localhost:8080/v1/contents/{contentId}/similar \
 
 自动化测试覆盖兴趣规范化、跨源去重、RRF 与兴趣提升、同作者限额、主题多样性、单路故障降级、Cursor 生成与请求绑定。
 
-## 8. 当前边界及其与 Agent 主线的关系
+## 8. 本阶段完成时的边界及其与 Agent 主线的关系
 
 - 还没有曝光和互动事实，`requestId` 暂时只返回给客户端，没有进入事件表；
 - `TRENDING` 是发布时间代理，不代表真实人气；
@@ -136,7 +136,7 @@ curl --get http://localhost:8080/v1/contents/{contentId}/similar \
 
 Feed 是已经完成并继续保留的历史切片，但不是 Agent 的前置条件，也不应被包装成 Agent Tool 的默认行为。未来只有当用户明确提出“按我的画像推荐”或复杂探索目标时，Agent 才可以通过稳定的 Recommendation Use Case 使用它；Runtime 不能直接访问召回源或画像存储。
 
-搜索主线随后已经完成 [Step 4“Agent-ready Direct Search”](step-04-agent-ready-direct-search.md)。曝光、播放、观看时长、互动和负反馈的幂等批量上报仍后置到可选 Step 8；当前真实下一步以[学习路线首页](README.md)为准。
+搜索主线随后已经完成 [Step 4“Agent-ready Direct Search”](step-04-agent-ready-direct-search.md)，曝光与行为批量上报也已在 [Step 8](step-08-interaction-loop.md) 完成。本文保留的是 Step 3 当时的边界；当前真实下一步以[学习路线首页](README.md)为准。
 
 ## 9. 练习
 
@@ -144,4 +144,4 @@ Feed 是已经完成并继续保留的历史切片，但不是 Agent 的前置�
 2. 连续发布同一作者的三条内容，验证一页最多保留两条。
 3. 将 `RECOMMENDATION_SOURCE_TIMEOUT_MS` 调得很小，观察 `degraded` 和 `unavailableSources`。
 4. 获取第一页 Cursor，改变兴趣后复用它，确认服务拒绝跨上下文分页。
-5. 在 Step 8～9 完成后，用 5 分钟有效播放与负反馈窗口替换新鲜度热门代理，并保留当前结果作为对照基线。
+5. 以 Step 8 的行为事实为输入，在 Step 9 用 5 分钟有效播放与负反馈窗口替换新鲜度热门代理，并保留当前结果作为对照基线。
