@@ -6,7 +6,9 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.seekflux.content.domain.Content;
 import io.seekflux.content.domain.ContentId;
 import io.seekflux.content.domain.ContentProfile;
+import io.seekflux.content.domain.ContentSource;
 import io.seekflux.content.domain.ContentStatus;
+import io.seekflux.content.domain.ContentType;
 import io.seekflux.content.port.out.ContentEvent;
 import io.seekflux.content.port.out.ContentRepository;
 import java.sql.ResultSet;
@@ -42,7 +44,9 @@ public class JdbcContentRepository implements ContentRepository {
                                source_tags::text AS source_tags, status, profile_version,
                                profile_summary, profile_tags::text AS profile_tags,
                                profile_transcript, aggregate_version, created_at, updated_at,
-                               published_at, withdrawn_at
+                               published_at, withdrawn_at, content_type,
+                               asset_uris::text AS asset_uris, body, source_provider,
+                               external_id, source_page_uri, source_author, license_name
                         FROM content.contents
                         WHERE content_id = :contentId
                         """)
@@ -52,23 +56,55 @@ public class JdbcContentRepository implements ContentRepository {
     }
 
     @Override
+    public Optional<Content> findBySource(String provider, String externalId) {
+        return jdbcClient.sql("""
+                        SELECT content_id, creator_id, media_uri, title, description,
+                               source_tags::text AS source_tags, status, profile_version,
+                               profile_summary, profile_tags::text AS profile_tags,
+                               profile_transcript, aggregate_version, created_at, updated_at,
+                               published_at, withdrawn_at, content_type,
+                               asset_uris::text AS asset_uris, body, source_provider,
+                               external_id, source_page_uri, source_author, license_name
+                        FROM content.contents
+                        WHERE source_provider = :provider AND external_id = :externalId
+                        """)
+                .param("provider", provider)
+                .param("externalId", externalId)
+                .query(this::mapContent)
+                .optional();
+    }
+
+    @Override
     @Transactional
     public void insert(Content content, ContentEvent event) {
         int inserted = jdbcClient.sql("""
                         INSERT INTO content.contents (
-                            content_id, creator_id, media_uri, title, description, source_tags,
+                            content_id, creator_id, content_type, media_uri, asset_uris, title,
+                            description, body, source_tags, source_provider, external_id,
+                            source_page_uri, source_author, license_name,
                             status, aggregate_version, created_at, updated_at
                         ) VALUES (
-                            :contentId, :creatorId, :mediaUri, :title, :description,
-                            CAST(:sourceTags AS jsonb), :status, :version, :createdAt, :updatedAt
+                            :contentId, :creatorId, :contentType, :mediaUri,
+                            CAST(:assetUris AS jsonb), :title, :description, :body,
+                            CAST(:sourceTags AS jsonb), :sourceProvider, :externalId,
+                            :sourcePageUri, :sourceAuthor, :licenseName,
+                            :status, :version, :createdAt, :updatedAt
                         )
                         """)
                 .param("contentId", content.id().value())
                 .param("creatorId", content.creatorId())
+                .param("contentType", content.contentType().name())
                 .param("mediaUri", content.mediaUri())
+                .param("assetUris", toJson(content.assetUris()))
                 .param("title", content.title())
                 .param("description", content.description())
+                .param("body", content.body())
                 .param("sourceTags", toJson(content.sourceTags()))
+                .param("sourceProvider", nullable(content.source().provider()), Types.VARCHAR)
+                .param("externalId", nullable(content.source().externalId()), Types.VARCHAR)
+                .param("sourcePageUri", nullable(content.source().sourcePageUri()), Types.VARCHAR)
+                .param("sourceAuthor", nullable(content.source().author()), Types.VARCHAR)
+                .param("licenseName", nullable(content.source().licenseName()), Types.VARCHAR)
                 .param("status", content.status().name())
                 .param("version", content.version())
                 .param("createdAt", databaseTime(content.createdAt()))
@@ -152,10 +188,17 @@ public class JdbcContentRepository implements ContentRepository {
         return Content.restore(
                 new ContentId(row.getObject("content_id", UUID.class)),
                 row.getString("creator_id"),
+                ContentType.valueOf(row.getString("content_type")),
                 row.getString("media_uri"),
+                fromJson(row.getString("asset_uris")),
                 row.getString("title"),
                 row.getString("description"),
+                row.getString("body"),
                 fromJson(row.getString("source_tags")),
+                new ContentSource(
+                        row.getString("source_provider"), row.getString("external_id"),
+                        row.getString("source_page_uri"), row.getString("source_author"),
+                        row.getString("license_name")),
                 ContentStatus.valueOf(row.getString("status")),
                 profile,
                 row.getLong("aggregate_version"),
@@ -163,6 +206,10 @@ public class JdbcContentRepository implements ContentRepository {
                 instant(row, "updated_at"),
                 nullableInstant(row, "published_at"),
                 nullableInstant(row, "withdrawn_at"));
+    }
+
+    private static String nullable(String value) {
+        return value == null || value.isBlank() ? null : value;
     }
 
     private String toJson(Object value) {

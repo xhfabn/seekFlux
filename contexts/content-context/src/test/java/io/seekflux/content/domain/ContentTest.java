@@ -85,6 +85,22 @@ class ContentTest {
                 () -> withdrawn.publish(SUBMITTED_AT.plusSeconds(2)));
     }
 
+    @Test
+    void preservesArticleAssetsBodyAndProvenance() {
+        Content article = Content.submit(
+                new ContentId(UUID.fromString("0198b334-a7c0-7000-8000-000000000002")),
+                "creator-2", ContentType.ARTICLE, "https://media.example/cover.jpg",
+                List.of("https://media.example/cover.jpg", "https://media.example/detail.jpg"),
+                "杭州咖啡地图", "五家小店", "第一站从湖滨开始。", List.of("咖啡"),
+                new ContentSource("qilin", "note-2", "https://example.com/note-2",
+                        "dataset-author", "verify-original-rights"), SUBMITTED_AT);
+
+        assertEquals(ContentType.ARTICLE, article.contentType());
+        assertEquals(2, article.assetUris().size());
+        assertEquals("第一站从湖滨开始。", article.body());
+        assertEquals("note-2", article.source().externalId());
+    }
+
     private Content content() {
         return Content.submit(
                 new ContentId(UUID.fromString("0198b334-a7c0-7000-8000-000000000001")),

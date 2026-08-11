@@ -67,19 +67,26 @@ public final class ElasticsearchSearchAdapter implements SearchIndex, SearchRetr
         ObjectNode body = objectMapper.createObjectNode();
         body.put("content_id", document.contentId());
         body.put("creator_id", document.creatorId());
+        body.put("content_type", document.contentType());
         body.put("media_uri", document.mediaUri());
+        body.set("asset_uris", objectMapper.valueToTree(document.assetUris()));
         body.put("title", document.title());
         body.put("description", document.description());
+        body.put("body", document.body());
         body.put("summary", document.summary());
         body.set("tags", objectMapper.valueToTree(document.tags()));
         body.put("transcript", document.transcript());
+        body.put("source_provider", document.sourceProvider());
+        body.put("source_page_uri", document.sourcePageUri());
+        body.put("source_author", document.sourceAuthor());
+        body.put("license_name", document.licenseName());
         body.put("profile_version", document.profileVersion());
         body.put("published_at", document.publishedAt().toString());
         body.put("searchable", String.join(" ", List.of(
-                document.title(), document.description(), document.summary(),
+                document.title(), document.description(), document.body(), document.summary(),
                 String.join(" ", document.tags()), document.transcript())));
         body.set("semantic_vector", objectMapper.valueToTree(semanticEncoder.encode(String.join(" ", List.of(
-                document.title(), document.description(), document.summary(),
+                document.title(), document.description(), document.body(), document.summary(),
                 String.join(" ", document.tags()), document.transcript())))));
 
         ensureIndex();
@@ -206,12 +213,19 @@ public final class ElasticsearchSearchAdapter implements SearchIndex, SearchRetr
         ObjectNode properties = root.putObject("mappings").putObject("properties");
         keyword(properties, "content_id");
         keyword(properties, "creator_id");
+        keyword(properties, "content_type");
         keyword(properties, "media_uri");
+        keyword(properties, "asset_uris");
         text(properties, "title");
         text(properties, "description");
+        text(properties, "body");
         text(properties, "summary");
         properties.putObject("tags").put("type", "keyword");
         text(properties, "transcript");
+        keyword(properties, "source_provider");
+        keyword(properties, "source_page_uri");
+        keyword(properties, "source_author");
+        keyword(properties, "license_name");
         properties.putObject("profile_version").put("type", "integer");
         properties.putObject("published_at").put("type", "date");
         semanticVector(properties);
@@ -264,8 +278,10 @@ public final class ElasticsearchSearchAdapter implements SearchIndex, SearchRetr
         root.put("size", request.limit());
         root.put("track_total_hits", true);
         ArrayNode source = root.putArray("_source");
-        List.of("content_id", "creator_id", "media_uri", "title", "description", "summary",
-                "tags", "profile_version", "published_at").forEach(source::add);
+        List.of("content_id", "creator_id", "content_type", "media_uri", "asset_uris",
+                "title", "description", "body", "summary", "tags", "source_provider",
+                "source_page_uri", "source_author", "license_name", "profile_version",
+                "published_at").forEach(source::add);
 
         ObjectNode bool = root.putObject("query").putObject("bool");
         ArrayNode should = bool.putArray("should");
@@ -274,7 +290,7 @@ public final class ElasticsearchSearchAdapter implements SearchIndex, SearchRetr
         multiMatch.put("type", "best_fields");
         multiMatch.put("fuzziness", "AUTO");
         ArrayNode fields = multiMatch.putArray("fields");
-        List.of("title^5", "tags^4", "summary^3", "description^2", "transcript")
+        List.of("title^5", "tags^4", "summary^3", "description^2", "body^2", "transcript")
                 .forEach(fields::add);
 
         for (String token : queryTokens(request.query())) {
@@ -394,14 +410,23 @@ public final class ElasticsearchSearchAdapter implements SearchIndex, SearchRetr
             JsonNode source = hit.path("_source");
             List<String> tags = new ArrayList<>();
             source.path("tags").forEach(tag -> tags.add(tag.asText()));
+            List<String> assetUris = new ArrayList<>();
+            source.path("asset_uris").forEach(uri -> assetUris.add(uri.asText()));
             candidates.add(new RankingCandidate(
                     source.path("content_id").asText(),
                     source.path("creator_id").asText(),
+                    source.path("content_type").asText("VIDEO"),
                     source.path("media_uri").asText(),
+                    assetUris,
                     source.path("title").asText(),
                     source.path("description").asText(""),
+                    source.path("body").asText(""),
                     source.path("summary").asText(),
                     tags,
+                    source.path("source_provider").asText(""),
+                    source.path("source_page_uri").asText(""),
+                    source.path("source_author").asText(""),
+                    source.path("license_name").asText(""),
                     source.path("profile_version").asInt(),
                     Instant.parse(source.path("published_at").asText()),
                     retrievalSource,
@@ -413,8 +438,10 @@ public final class ElasticsearchSearchAdapter implements SearchIndex, SearchRetr
 
     private static void sourceFields(ObjectNode root) {
         ArrayNode source = root.putArray("_source");
-        List.of("content_id", "creator_id", "media_uri", "title", "description", "summary",
-                "tags", "profile_version", "published_at").forEach(source::add);
+        List.of("content_id", "creator_id", "content_type", "media_uri", "asset_uris",
+                "title", "description", "body", "summary", "tags", "source_provider",
+                "source_page_uri", "source_author", "license_name", "profile_version",
+                "published_at").forEach(source::add);
     }
 
     private SearchRetrievalResult mapSearchResults(
@@ -429,14 +456,23 @@ public final class ElasticsearchSearchAdapter implements SearchIndex, SearchRetr
             JsonNode source = hit.path("_source");
             List<String> tags = new ArrayList<>();
             source.path("tags").forEach(tag -> tags.add(tag.asText()));
+            List<String> assetUris = new ArrayList<>();
+            source.path("asset_uris").forEach(uri -> assetUris.add(uri.asText()));
             hits.add(new SearchCandidate(
                     source.path("content_id").asText(),
                     source.path("creator_id").asText(),
+                    source.path("content_type").asText("VIDEO"),
                     source.path("media_uri").asText(),
+                    assetUris,
                     source.path("title").asText(),
                     source.path("description").asText(),
+                    source.path("body").asText(""),
                     source.path("summary").asText(),
                     tags,
+                    source.path("source_provider").asText(""),
+                    source.path("source_page_uri").asText(""),
+                    source.path("source_author").asText(""),
+                    source.path("license_name").asText(""),
                     source.path("profile_version").asInt(),
                     hit.path("_score").asDouble(),
                     Instant.parse(source.path("published_at").asText())));

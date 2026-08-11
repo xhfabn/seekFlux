@@ -24,21 +24,30 @@ public final class ContentSearchIndexWorker {
 
     @KafkaListener(
             topics = ContentApplicationService.CONTENT_PROFILE_PUBLISHED,
-            groupId = "seekflux-content-search-index-v2")
+            groupId = "seekflux-content-search-index-v3")
     public void indexPublished(String envelopeJson) throws Exception {
         JsonNode envelope = objectMapper.readTree(envelopeJson);
         JsonNode payload = envelope.path("payload");
         List<String> tags = new ArrayList<>();
         payload.path("tags").forEach(tag -> tags.add(tag.asText()));
+        List<String> assetUris = new ArrayList<>();
+        payload.path("asset_uris").forEach(uri -> assetUris.add(uri.asText()));
         SearchDocument document = new SearchDocument(
                 requiredText(payload, "content_id"),
                 requiredText(payload, "creator_id"),
+                payload.path("content_type").asText("VIDEO"),
                 requiredText(payload, "media_uri"),
+                assetUris,
                 requiredText(payload, "title"),
                 payload.path("description").asText(""),
+                payload.path("body").asText(""),
                 requiredText(payload, "summary"),
                 tags,
                 payload.path("transcript").asText(""),
+                payload.path("source_provider").asText(""),
+                payload.path("source_page_uri").asText(""),
+                payload.path("source_author").asText(""),
+                payload.path("license_name").asText(""),
                 payload.path("profile_version").asInt(),
                 Instant.parse(requiredText(envelope, "event_time")));
         searchIndex.upsert(document);
@@ -46,7 +55,7 @@ public final class ContentSearchIndexWorker {
 
     @KafkaListener(
             topics = ContentApplicationService.CONTENT_DISTRIBUTION_CHANGED,
-            groupId = "seekflux-content-search-index-v2")
+            groupId = "seekflux-content-search-index-v3")
     public void removeWithdrawn(String envelopeJson) throws Exception {
         JsonNode payload = objectMapper.readTree(envelopeJson).path("payload");
         if ("WITHDRAWN".equals(payload.path("distribution_status").asText())) {

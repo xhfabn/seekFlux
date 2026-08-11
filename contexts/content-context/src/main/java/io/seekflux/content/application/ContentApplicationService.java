@@ -19,9 +19,9 @@ import java.util.function.Supplier;
 
 public final class ContentApplicationService implements ContentUseCase {
 
-    public static final String CONTENT_SUBMITTED = "content.submitted.v1";
-    public static final String CONTENT_PROFILE_READY = "content.profile.ready.v1";
-    public static final String CONTENT_PROFILE_PUBLISHED = "content.profile.published.v1";
+    public static final String CONTENT_SUBMITTED = "content.submitted.v2";
+    public static final String CONTENT_PROFILE_READY = "content.profile.ready.v2";
+    public static final String CONTENT_PROFILE_PUBLISHED = "content.profile.published.v2";
     public static final String CONTENT_DISTRIBUTION_CHANGED = "content.distribution.changed.v1";
 
     private final ContentRepository repository;
@@ -44,14 +44,25 @@ public final class ContentApplicationService implements ContentUseCase {
     @Override
     public ContentView submit(SubmitContentCommand command) {
         Objects.requireNonNull(command, "submit command must not be null");
+        if (command.source() != null && command.source().imported()) {
+            var existing = repository.findBySource(
+                    command.source().provider(), command.source().externalId());
+            if (existing.isPresent()) {
+                return ContentView.from(existing.get());
+            }
+        }
         Instant now = clock.instant();
         Content content = Content.submit(
                 new ContentId(idGenerator.get()),
                 command.creatorId(),
+                command.contentType(),
                 command.mediaUri(),
+                command.assetUris(),
                 command.title(),
                 command.description(),
+                command.body(),
                 command.sourceTags(),
+                command.source(),
                 now);
         ContentEvent event = event(CONTENT_SUBMITTED, content, now, submittedPayload(content));
         repository.insert(content, event);
@@ -123,10 +134,14 @@ public final class ContentApplicationService implements ContentUseCase {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("content_id", content.id().toString());
         payload.put("creator_id", content.creatorId());
+        payload.put("content_type", content.contentType().name());
         payload.put("media_uri", content.mediaUri());
+        payload.put("asset_uris", content.assetUris());
         payload.put("title", content.title());
         payload.put("description", content.description());
+        payload.put("body", content.body());
         payload.put("source_tags", content.sourceTags());
+        addSourcePayload(payload, content);
         return payload;
     }
 
@@ -135,14 +150,26 @@ public final class ContentApplicationService implements ContentUseCase {
         Map<String, Object> payload = new LinkedHashMap<>();
         payload.put("content_id", content.id().toString());
         payload.put("creator_id", content.creatorId());
+        payload.put("content_type", content.contentType().name());
         payload.put("media_uri", content.mediaUri());
+        payload.put("asset_uris", content.assetUris());
         payload.put("title", content.title());
         payload.put("description", content.description());
+        payload.put("body", content.body());
         payload.put("profile_version", profile.version());
         payload.put("summary", profile.summary());
         payload.put("tags", profile.tags());
         payload.put("transcript", profile.transcript());
         payload.put("status", content.status().name());
+        addSourcePayload(payload, content);
         return payload;
+    }
+
+    private static void addSourcePayload(Map<String, Object> payload, Content content) {
+        payload.put("source_provider", content.source().provider());
+        payload.put("external_id", content.source().externalId());
+        payload.put("source_page_uri", content.source().sourcePageUri());
+        payload.put("source_author", content.source().author());
+        payload.put("license_name", content.source().licenseName());
     }
 }

@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://seekflux.local/schemas/events/content-profile-ready-v2.schema.json",
+  "title": "Content Profile Ready v2 Payload",
+  "type": "object",
+  "required": [
+    "content_id", "creator_id", "content_type", "media_uri", "asset_uris", "title",
+    "description", "body", "profile_version", "summary", "tags", "transcript", "status",
+    "source_provider", "external_id", "source_page_uri", "source_author", "license_name"
+  ],
+  "properties": {
+    "content_id": {"type": "string", "format": "uuid"},
+    "creator_id": {"type": "string"},
+    "content_type": {"enum": ["VIDEO", "ARTICLE"]},
+    "media_uri": {"type": "string"},
+    "asset_uris": {"type": "array", "minItems": 1, "maxItems": 20, "items": {"type": "string"}},
+    "title": {"type": "string"},
+    "description": {"type": "string"},
+    "body": {"type": "string"},
+    "profile_version": {"type": "integer", "minimum": 1},
+    "summary": {"type": "string"},
+    "tags": {"type": "array", "items": {"type": "string"}},
+    "transcript": {"type": "string"},
+    "status": {"const": "PROFILE_READY"},
+    "source_provider": {"type": "string"},
+    "external_id": {"type": "string"},
+    "source_page_uri": {"type": "string"},
+    "source_author": {"type": "string"},
+    "license_name": {"type": "string"}
+  },
+  "additionalProperties": false
+}

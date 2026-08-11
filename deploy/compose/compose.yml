@@ -119,7 +119,9 @@ services:
       - >-
         mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}" &&
         mc mb --ignore-existing local/seekflux-artifacts &&
-        mc mb --ignore-existing local/seekflux-checkpoints
+        mc mb --ignore-existing local/seekflux-checkpoints &&
+        mc mb --ignore-existing local/seekflux-media &&
+        mc anonymous set download local/seekflux-media
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER:-seekflux}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-seekflux_local_secret}

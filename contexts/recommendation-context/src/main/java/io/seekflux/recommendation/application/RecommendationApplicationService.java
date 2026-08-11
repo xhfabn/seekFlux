@@ -226,8 +226,10 @@ public final class RecommendationApplicationService implements RecommendationUse
 
     private static RecommendationItemView toView(RankedCandidate item) {
         return new RecommendationItemView(
-                item.contentId(), item.creatorId(), item.mediaUri(), item.title(), item.description(),
-                item.summary(), item.tags(), item.profileVersion(), item.publishedAt(), item.score(),
+                item.contentId(), item.creatorId(), item.contentType(), item.mediaUri(), item.assetUris(),
+                item.title(), item.description(), item.body(), item.summary(), item.tags(),
+                item.sourceProvider(), item.sourcePageUri(), item.sourceAuthor(), item.licenseName(),
+                item.profileVersion(), item.publishedAt(), item.score(),
                 item.sources().stream().map(Enum::name).collect(java.util.stream.Collectors.toSet()),
                 item.reason());
     }

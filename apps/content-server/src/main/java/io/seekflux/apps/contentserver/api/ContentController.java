@@ -1,6 +1,8 @@
 package io.seekflux.apps.contentserver.api;
 
 import io.seekflux.content.domain.ContentId;
+import io.seekflux.content.domain.ContentSource;
+import io.seekflux.content.domain.ContentType;
 import io.seekflux.content.port.in.CompleteContentProfileCommand;
 import io.seekflux.content.port.in.ContentUseCase;
 import io.seekflux.content.port.in.SubmitContentCommand;
@@ -31,10 +33,16 @@ public final class ContentController {
             @Valid @RequestBody SubmitContentRequest request) {
         SubmitContentCommand command = new SubmitContentCommand(
                 request.creatorId(),
+                request.contentType() == null ? ContentType.VIDEO : request.contentType(),
                 request.mediaUri(),
+                request.assetUris(),
                 request.title(),
                 request.description(),
-                request.sourceTags());
+                request.body(),
+                request.sourceTags(),
+                new ContentSource(
+                        request.sourceProvider(), request.externalId(), request.sourcePageUri(),
+                        request.sourceAuthor(), request.licenseName()));
         var view = contentUseCase.submit(command);
         return ResponseEntity
                 .accepted()

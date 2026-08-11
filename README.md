@@ -6,7 +6,8 @@ SeekFlux 是一个面向短视频内容平台的搜索、推荐与 Search Agent 
 
 ## 产品能力
 
-- 内容登记经 PostgreSQL、事务 Outbox、Kafka、Worker 和 Elasticsearch 形成可搜索的内容画像；
+- 视频与图文登记经 PostgreSQL、事务 Outbox、Kafka、Worker 和 Elasticsearch 形成可搜索的内容画像；内容包含多媒体资源、图文正文、外部来源与许可声明，无标签内容不会自动发布；
+- 外部媒体可以从 Pixabay API、已合法取得的 Qilin 元数据/图片或规范化 Manifest 断点导入，媒体先落入 MinIO `seekflux-media`，再进入内容、搜索和推荐链路；
 - C 端发现页支持画像驱动的内容发现、关键词搜索、热门/兴趣/相似内容召回、规则排序，以及由 Agent Server 驱动的多轮 AI 搜索；
 - C 端曝光、点击、播放、点赞、收藏、完播和负反馈通过 Interaction API 可靠入站，以真实 request/trace/content/position/surface 完整归因，并经事务 Outbox、Kafka 和幂等 Worker 形成行为事实；
 - 行为事件经 `realtime-window-v1` 生成 30 分钟短期兴趣与 5 分钟内容热度快照，写入 Redis 后由 Search/Feed 消费；过期或不可用时保留现有规则结果并明确降级；
@@ -22,7 +23,7 @@ SeekFlux 是一个面向短视频内容平台的搜索、推荐与 Search Agent 
 
 - C 端发现应用：`http://localhost:3001/`
 - 用户画像：在 Web 中维护用户兴趣与搜索约束。
-- 内容工作台：在 Web 中登记内容，并通过内容标签影响搜索与推荐匹配。
+- 内容工作台：在 Web 中登记视频或图文、填写正文，并通过内容标签影响搜索与推荐匹配。
 
 `apps/web` 是唯一前端工程。页面通过同源 Bridge 调用 Content、Online 与 Agent API；前端不维护模拟的画像匹配或内容推荐逻辑。
 
@@ -37,6 +38,7 @@ Content Server → PostgreSQL + Outbox → Kafka → Worker → Elasticsearch
 Online Server  → Direct Search / Feed / Interaction API
 Agent Server   → AgentOrchestration → Agent Runtime → Search Tools → Direct Search
 Interaction Topics → Flink（生产）/ Worker 参考投影（本地）→ Redis → Search / Feed
+External Sources → Media Importer → MinIO + Content Server
 ```
 
 工程保持模块化单体与独立 Agent Server 的组合：业务语义在 `contexts/`，通用基础能力在 `platform/`，应用装配在 `apps/`。HTTP 接口采用 Spring MVC 同步 JSON；JDBC/HikariCP、Redis 与 Elasticsearch 使用同步 Adapter。Agent 内部的模型调用和 Tool fan-out 只在命名、有界、可观测的执行器中并发，不向领域 Port 或 HTTP 扩散 `Mono`/`Flux`。
@@ -68,6 +70,28 @@ docker compose --env-file .env -f deploy/compose/compose.yml up -d
 
 默认端口：PostgreSQL `5432`、Redis `6379`、Kafka `9092`、Elasticsearch `9200`、MinIO `9000/9001`、Online `8080`、Content `8081`、Agent `8083`、Web `3001`。
 
+## 导入真实媒体
+
+导入器会下载媒体到本地 MinIO，并以外部来源 ID 幂等登记；重复执行同一批次不会创建重复内容。Pixabay 使用自己的 API Key，只写入被 Git 忽略的 `.env`：
+
+```bash
+PIXABAY_API_KEY=your_key
+
+python3 tools/media_import.py pixabay --type video --query "travel" --limit 10
+python3 tools/media_import.py pixabay --type image --query "coffee" --limit 10
+```
+
+Qilin 元数据和图片需要按上游说明单独、合法地取得，用户链接的参考仓库本身不包含其 README 所述的大规模数据目录：
+
+```bash
+python3 tools/media_import.py qilin \
+  --metadata /path/to/qilin.jsonl \
+  --asset-root /path/to/qilin-images \
+  --limit 1000
+```
+
+来源和许可字段用于追溯，不代表项目自动取得第三方内容的传播权。详细实现与验收见 [Step 10](docs/learning/step-10-real-media-ingestion.md) 和 [ADR-009](docs/adr/ADR-009-external-media-ingestion-and-provenance.md)。
+
 ## 验证与文档
 
 ```bash
@@ -77,6 +101,7 @@ python3 evals/run_complex_agent_eval.py
 python3 evals/run_agent_reliability_eval.py
 python3 evals/run_interaction_loop_eval.py
 python3 evals/run_realtime_feature_eval.py
+python3 tools/verify_media_flow.py <video-content-id> <article-content-id>
 ```
 
 - [学习路线与阶段验收](docs/learning/README.md)

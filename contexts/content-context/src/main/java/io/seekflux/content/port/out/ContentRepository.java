@@ -8,6 +8,10 @@ public interface ContentRepository {
 
     Optional<Content> findById(ContentId contentId);
 
+    default Optional<Content> findBySource(String provider, String externalId) {
+        return Optional.empty();
+    }
+
     void insert(Content content, ContentEvent event);
 
     boolean update(Content content, long expectedVersion, ContentEvent event);

@@ -5,7 +5,9 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import io.seekflux.content.domain.Content;
 import io.seekflux.content.domain.ContentId;
+import io.seekflux.content.domain.ContentSource;
 import io.seekflux.content.domain.ContentStatus;
+import io.seekflux.content.domain.ContentType;
 import io.seekflux.content.port.in.CompleteContentProfileCommand;
 import io.seekflux.content.port.in.SubmitContentCommand;
 import io.seekflux.content.port.out.ContentEvent;
@@ -81,6 +83,22 @@ class ContentApplicationServiceTest {
                 () -> service.get(new ContentId(new UUID(9, 9))));
     }
 
+    @Test
+    void reusesContentForTheSameExternalSourceIdentity() {
+        SubmitContentCommand command = new SubmitContentCommand(
+                "external-creator", ContentType.ARTICLE, "https://media.example/1.jpg",
+                List.of("https://media.example/1.jpg"), "真实图文", "描述", "正文",
+                List.of("旅行"), new ContentSource("qilin", "note-1",
+                        "https://example.com/note-1", "author", "verify-rights"));
+
+        var first = service.submit(command);
+        var replay = service.submit(command);
+
+        assertEquals(first.id(), replay.id());
+        assertEquals(1, repository.contents.size());
+        assertEquals(1, repository.events.size());
+    }
+
     private static final class InMemoryContentRepository implements ContentRepository {
 
         private final Map<ContentId, Content> contents = new LinkedHashMap<>();
@@ -89,6 +107,14 @@ class ContentApplicationServiceTest {
         @Override
         public Optional<Content> findById(ContentId contentId) {
             return Optional.ofNullable(contents.get(contentId));
+        }
+
+        @Override
+        public Optional<Content> findBySource(String provider, String externalId) {
+            return contents.values().stream()
+                    .filter(content -> content.source().provider().equals(provider)
+                            && content.source().externalId().equals(externalId))
+                    .findFirst();
         }
 
         @Override

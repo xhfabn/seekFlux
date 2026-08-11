@@ -24,10 +24,14 @@ type ContentProfile = {
 type ContentResponse = {
   contentId: string;
   creatorId: string;
+  contentType: "VIDEO" | "ARTICLE";
   mediaUri: string;
+  assetUris: string[];
   title: string;
   description: string;
+  body: string;
   sourceTags: string[];
+  source?: { provider: string; externalId: string; sourcePageUri: string; author: string; licenseName: string };
   status: "SUBMITTED" | "PROFILE_READY" | "PUBLISHED" | "WITHDRAWN";
   profile?: ContentProfile | null;
   version: number;
@@ -39,11 +43,18 @@ type ContentResponse = {
 type ContentItem = {
   contentId: string;
   creatorId: string;
+  contentType: "VIDEO" | "ARTICLE";
   mediaUri: string;
+  assetUris: string[];
   title: string;
   description: string;
+  body: string;
   summary: string;
   tags: string[];
+  sourceProvider: string;
+  sourcePageUri: string;
+  sourceAuthor: string;
+  licenseName: string;
   profileVersion: number;
   score: number;
   publishedAt: string;
@@ -165,6 +176,8 @@ const sampleContent = {
   title: "杭州周末露营路线",
   description: "从市区出发的一日露营与日落路线，适合新手和亲子家庭。",
   tags: "露营, 杭州, 周末, 亲子",
+  contentType: "VIDEO" as const,
+  body: "",
   mediaUri: "https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4",
 };
 
@@ -247,6 +260,8 @@ export function SeekFluxApp() {
   const [title, setTitle] = useState(sampleContent.title);
   const [description, setDescription] = useState(sampleContent.description);
   const [sourceTags, setSourceTags] = useState(sampleContent.tags);
+  const [contentType, setContentType] = useState<"VIDEO" | "ARTICLE">(sampleContent.contentType);
+  const [contentBody, setContentBody] = useState(sampleContent.body);
   const [mediaUri, setMediaUri] = useState(sampleContent.mediaUri);
   const [selectedFile, setSelectedFile] = useState("");
   const [contentId, setContentId] = useState("");
@@ -369,7 +384,10 @@ export function SeekFluxApp() {
     try {
       const data = await api<ContentResponse>("/api/bridge/content/v1/contents", {
         method: "POST",
-        body: JSON.stringify({ creatorId, mediaUri, title, description, sourceTags: splitTags(sourceTags) }),
+        body: JSON.stringify({
+          creatorId, contentType, mediaUri, assetUris: [mediaUri], title, description,
+          body: contentBody, sourceTags: splitTags(sourceTags),
+        }),
       });
       applyContentResponse(data);
       setFeedSeed(data.contentId);
@@ -792,6 +810,7 @@ export function SeekFluxApp() {
           <StudioWorkspace
             creatorId={creatorId} setCreatorId={setCreatorId} title={title} setTitle={setTitle}
             description={description} setDescription={setDescription} sourceTags={sourceTags} setSourceTags={setSourceTags}
+            contentType={contentType} setContentType={setContentType} contentBody={contentBody} setContentBody={setContentBody}
             mediaUri={mediaUri} setMediaUri={setMediaUri} selectedFile={selectedFile} setSelectedFile={setSelectedFile}
             submitContent={submitContent} contentId={contentId} setContentId={setContentId} content={content}
             contentMessage={contentMessage} currentStage={currentStage} loadContent={loadContent} pollContent={pollContent}
@@ -1054,14 +1073,22 @@ function ConsumerContentCard({ item, index, attribution, addInteraction, runSimi
   addInteraction: DiscoverProps["addInteraction"]; runSimilar: (contentId: string) => Promise<void>;
 }) {
   const [mediaError, setMediaError] = useState(false);
-  const canPlay = Boolean(item.mediaUri) && !mediaError;
+  const [detailOpen, setDetailOpen] = useState(false);
+  const isArticle = item.contentType === "ARTICLE";
+  const canRender = Boolean(item.mediaUri) && !mediaError;
+  const assets = item.assetUris?.length ? item.assetUris : [item.mediaUri];
   const durations = ["08:21", "05:48", "10:06", "06:32", "04:19", "07:45", "09:12", "03:56", "11:08"];
   const likes = ["2.7万", "1.2万", "8,462", "3.1万", "9,830", "1.8万", "6,521", "2.2万", "7,104"];
   const posterWords = ["去野", "手冲", "亲子", "川西", "晚餐", "日落", "散步", "AI", "好好住"];
   return (
     <article className="consumer-content-card">
       <div className={`consumer-card-cover palette-${index % 5}`}>
-        {canPlay ? (
+        {canRender && isArticle ? (
+          <button className="consumer-article-cover" onClick={() => { setDetailOpen(true); addInteraction("CLICK", item, index + 1, attribution); }} aria-label={`打开图文：${item.title}`}>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={item.mediaUri} alt={item.title} onError={() => setMediaError(true)} />
+          </button>
+        ) : canRender ? (
           // Remote creator media does not yet expose a captions track in the content contract.
           // eslint-disable-next-line jsx-a11y/media-has-caption
           <video src={item.mediaUri} controls playsInline preload="metadata" onError={() => setMediaError(true)} onPlay={() => addInteraction("PLAY_START", item, index + 1, attribution)} />
@@ -1072,11 +1099,11 @@ function ConsumerContentCard({ item, index, attribution, addInteraction, runSimi
             <small>{item.tags.slice(0, 2).join(" · ")}</small>
           </div>
         )}
-        <div className="consumer-cover-label">{item.sources?.[0] === "INTEREST" ? "猜你喜欢" : item.tags[0] || "推荐"}</div>
-        <div className="consumer-cover-meta"><button title="喜欢" onClick={() => addInteraction("LIKE", item, index + 1, attribution)}><Icon name="heart" /> {likes[index % likes.length]}</button><span>{durations[index % durations.length]}</span></div>
+        <div className="consumer-cover-label">{isArticle ? "图文" : item.sources?.[0] === "INTEREST" ? "猜你喜欢" : item.tags[0] || "视频"}</div>
+        <div className="consumer-cover-meta"><button title="喜欢" onClick={() => addInteraction("LIKE", item, index + 1, attribution)}><Icon name="heart" /> {likes[index % likes.length]}</button><span>{isArticle ? `${assets.length} 图` : durations[index % durations.length]}</span></div>
       </div>
       <div className="consumer-card-copy">
-        <h2>{item.title}</h2>
+        <button className="consumer-card-title" onClick={() => { setDetailOpen(true); addInteraction("CLICK", item, index + 1, attribution); }}>{item.title}</button>
         <div className="consumer-card-tags">{item.tags.slice(0, 3).map((tag) => <span key={tag}>#{tag}</span>)}</div>
         <div className="consumer-card-byline">
           <span>@{item.creatorId} · {index % 3 === 0 ? "3天前" : index % 3 === 1 ? "6小时前" : "昨天"}</span>
@@ -1086,6 +1113,31 @@ function ConsumerContentCard({ item, index, attribution, addInteraction, runSimi
           </div>
         </div>
       </div>
+      {detailOpen && (
+        <div className="content-detail-backdrop" role="presentation" onMouseDown={() => setDetailOpen(false)}>
+          <section className="content-detail" role="dialog" aria-modal="true" aria-label={item.title} onMouseDown={(event) => event.stopPropagation()}>
+            <button className="content-detail-close" onClick={() => setDetailOpen(false)} aria-label="关闭详情">×</button>
+            <div className={`content-detail-media ${isArticle ? "article-assets" : ""}`}>
+              {isArticle ? assets.map((asset, assetIndex) => (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img key={asset} src={asset} alt={`${item.title} ${assetIndex + 1}`} />
+              )) : (
+                // eslint-disable-next-line jsx-a11y/media-has-caption
+                <video src={item.mediaUri} controls autoPlay playsInline onPlay={() => addInteraction("PLAY_START", item, index + 1, attribution)} />
+              )}
+            </div>
+            <div className="content-detail-copy">
+              <span className="content-kind">{isArticle ? "图文" : "视频"}</span>
+              <h1>{item.title}</h1>
+              <p className="content-detail-byline">@{item.sourceAuthor || item.creatorId}</p>
+              <div className="content-detail-tags">{item.tags.map((tag) => <span key={tag}>#{tag}</span>)}</div>
+              <p className="content-detail-body">{item.body || item.description || item.summary}</p>
+              {(item.sourceProvider || item.sourcePageUri) && <div className="content-provenance"><strong>来源</strong><span>{item.sourceProvider || "外部内容"}{item.licenseName ? ` · ${item.licenseName}` : ""}</span>{item.sourcePageUri && <a href={item.sourcePageUri} target="_blank" rel="noreferrer">查看原始页面</a>}</div>}
+              <div className="content-detail-actions"><button onClick={() => addInteraction("LIKE", item, index + 1, attribution)}><Icon name="heart" /> 喜欢</button><button onClick={() => void runSimilar(item.contentId)}><Icon name="layers" /> 相似内容</button></div>
+            </div>
+          </section>
+        </div>
+      )}
     </article>
   );
 }
@@ -1159,6 +1211,8 @@ function AudienceWorkspace(props: AudienceProps) {
 type StudioProps = {
   creatorId: string; setCreatorId: (value: string) => void; title: string; setTitle: (value: string) => void;
   description: string; setDescription: (value: string) => void; sourceTags: string; setSourceTags: (value: string) => void;
+  contentType: "VIDEO" | "ARTICLE"; setContentType: (value: "VIDEO" | "ARTICLE") => void;
+  contentBody: string; setContentBody: (value: string) => void;
   mediaUri: string; setMediaUri: (value: string) => void; selectedFile: string; setSelectedFile: (value: string) => void;
   submitContent: (event: FormEvent) => void; contentId: string; setContentId: (value: string) => void;
   content: ContentResponse | null; contentMessage: string; currentStage: number; loadContent: () => Promise<ContentResponse | null>;
@@ -1191,19 +1245,21 @@ function StudioWorkspace(props: StudioProps) {
           <div className="panel-header"><div><div className="panel-kicker">步骤 1</div><h2>登记新内容</h2></div><span className="status-tag">接口可用</span></div>
           <form className="panel-body" onSubmit={props.submitContent}>
             <label className="upload-dropzone">
-              <input type="file" accept="video/*" onChange={(event) => props.setSelectedFile(event.target.files?.[0]?.name ?? "")} />
+              <input type="file" accept={props.contentType === "VIDEO" ? "video/*" : "image/*"} onChange={(event) => props.setSelectedFile(event.target.files?.[0]?.name ?? "")} />
               <span className="upload-icon"><Icon name="upload" /></span>
-              <strong>{props.selectedFile || "选择一个视频文件"}</strong>
+              <strong>{props.selectedFile || (props.contentType === "VIDEO" ? "选择一个视频文件" : "选择图文封面")}</strong>
               <small>{props.selectedFile ? "已选择文件；继续填写可访问的媒体地址" : "当前通过媒体地址登记，文件直传待接入"}</small>
             </label>
             <div className="field-grid">
+              <label><span className="field-label">内容类型</span><select className="input" value={props.contentType} onChange={(event) => props.setContentType(event.target.value as "VIDEO" | "ARTICLE")}><option value="VIDEO">视频</option><option value="ARTICLE">图文</option></select></label>
+              <label><span className="field-label">创建者</span><input className="input" value={props.creatorId} onChange={(event) => props.setCreatorId(event.target.value)} required maxLength={128} /></label>
               <label className="wide"><span className="field-label">媒体地址 <span>当前 API 必填</span></span><input className="input" value={props.mediaUri} onChange={(event) => props.setMediaUri(event.target.value)} required placeholder="S3 / HTTPS URI" /></label>
               <label className="wide"><span className="field-label">内容标题 <span>必填</span></span><input className="input" value={props.title} onChange={(event) => props.setTitle(event.target.value)} required maxLength={200} /></label>
               <label className="wide"><span className="field-label">内容描述 <span>用于基础画像</span></span><textarea className="textarea" value={props.description} onChange={(event) => props.setDescription(event.target.value)} maxLength={4000} /></label>
-              <label><span className="field-label">创建者</span><input className="input" value={props.creatorId} onChange={(event) => props.setCreatorId(event.target.value)} required maxLength={128} /></label>
+              {props.contentType === "ARTICLE" && <label className="wide"><span className="field-label">图文正文 <span>详情页与检索</span></span><textarea className="textarea article-body-input" value={props.contentBody} onChange={(event) => props.setContentBody(event.target.value)} maxLength={100000} placeholder="输入图文正文…" /></label>}
               <label><span className="field-label">来源标签 <span>初始推荐匹配</span></span><input className="input" value={props.sourceTags} onChange={(event) => props.setSourceTags(event.target.value)} /></label>
             </div>
-            <div className="form-actions"><button className="button accent" disabled={props.busy === "content-submit"}>登记并开始处理 <Icon name="arrow" /></button><button type="button" className="button secondary" onClick={() => { props.setTitle(sampleContent.title); props.setDescription(sampleContent.description); props.setCreatorId(sampleContent.creatorId); props.setSourceTags(sampleContent.tags); props.setMediaUri(sampleContent.mediaUri); }}>载入示例</button></div>
+            <div className="form-actions"><button className="button accent" disabled={props.busy === "content-submit"}>登记并开始处理 <Icon name="arrow" /></button><button type="button" className="button secondary" onClick={() => { props.setContentType(sampleContent.contentType); props.setContentBody(sampleContent.body); props.setTitle(sampleContent.title); props.setDescription(sampleContent.description); props.setCreatorId(sampleContent.creatorId); props.setSourceTags(sampleContent.tags); props.setMediaUri(sampleContent.mediaUri); }}>载入示例</button></div>
           </form>
         </article>
 

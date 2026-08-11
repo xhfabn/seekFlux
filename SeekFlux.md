@@ -1252,7 +1252,7 @@ weight(event) = action_weight × watch_quality × exp(-decay × age)
 | `interaction.save.v1` | Interaction API/Outbox | 行为事实 Worker；后续实时特征 Job | `user_id` |
 | `interaction.play-complete.v1` | Interaction API/Outbox | 行为事实 Worker；后续实时特征 Job | `user_id` |
 | `interaction.not-interested.v1` | Interaction API/Outbox | 行为事实 Worker；后续实时特征 Job | `user_id` |
-| `content.profile.published.v1` | Content Pipeline | 索引、特征、候选池 | `content_id` |
+| `content.profile.published.v2` | Content Pipeline | 索引、特征、候选池；携带视频/图文、多资源与来源字段 | `content_id` |
 | `content.distribution.changed.v1` | Moderation | 在线过滤与缓存失效 | `content_id` |
 | `feature.snapshot.updated.v1` | Flink/本地参考投影 Outbox | Online Feature Writer | `entity_id` |
 | `feature.interaction-late.v1` | Flink | 补偿/审计消费者 | `event_id` |

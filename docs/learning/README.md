@@ -9,7 +9,7 @@
 
 ## 当前进度
 
-> **当前处于：Step 9 已完成，下一步进入 Step 10「模型排序与推荐实验」。**
+> **当前处于：Step 10 已完成，下一步进入 Step 11「模型排序与推荐实验」。**
 
 截至 2026-08-11，已经跑通以下真实链路：
 
@@ -29,6 +29,7 @@
 - 发现、Search、Feed 与 Agent 候选的真实曝光/主动行为采集，Interaction API 批次幂等、完整归因、事务 Outbox、Kafka 重放与幂等行为事实；
 - 版本化 `realtime-window-v1`、Flink 事件时间/Watermark/迟到 Side Output、本地 JDBC 参考投影、Redis 在线快照，以及 Search/Feed 的短期兴趣与内容热度消费、过期/故障回退；
 - C 端“发现”已通过同源 Bridge 接通推荐、关键词搜索和任务型多轮 AI 搜索；AI 搜索保存 Session/Goal 版本、支持追问与取消，并复用 Search Tool 的真实候选，B 端“用户画像／内容工作台”保持后端联调；
+- 视频/图文内容类型、多媒体资源、正文和来源许可字段已经贯穿 Content v2 事件、Elasticsearch、Search/Feed 与 Web；外部媒体可由 Pixabay、Qilin 本地数据或规范化 Manifest 下载到 MinIO 后幂等登记，无标签内容不会自动进入分发；
 - Spring MVC 普通返回值、JDBC/HikariCP、同步 Redis/Elasticsearch Adapter，以及推荐局部有界并发。
 
 Agent Phase 3 已经完成，Phase 4 的行为事实与实时特征两个深化切片也已完成。OpenAI-compatible Adapter 现兼容标准 `message.content` 与 LongCat 的 `message.reasoning_content`；本地已用 LongCat-2.0 跑通一次模型 → Agent → Search Tool → Web 的真实功能验收，并观测到 Provider 返回的 Token usage。默认固定评测仍使用可复现的确定性 Provider，这次验收不冒充质量或成本基线。HITL、Handoff、子 Agent、MCP、Checkpoint 精确恢复、写 Tool 副作用账本、上下文压缩、流式 Push 和完整 OpenTelemetry 仍未完成；Ark-Leto 反向核对矩阵见 [ADR-006](../adr/ADR-006-agent-reliability-fencing-outbox-shadow.md)。
@@ -53,13 +54,14 @@ Agent 内核决策和参考文档映射见 [ADR-004](../adr/ADR-004-ark-leto-ins
 | Step 7：Agent 可靠性与平台化 | Agent Phase 3 | 多实例执行权、恢复、故障注入、Shadow 和成本治理 | 已完成 |
 | Step 8：曝光与行为闭环 | Agent Phase 4 可选深化 | 可归因、幂等、可回放的行为事实 | 已完成 |
 | Step 9：实时特征与短期兴趣 | Agent Phase 4 可选深化 | Kafka/Flink 窗口、在线兴趣/热度和确定性回退 | 已完成 |
-| **Step 10：模型排序与推荐实验** | **Agent Phase 4 可选深化** | **训练、模型发布、推荐实验和效果闭环** | **下一步** |
+| Step 10：真实媒体入库与可消费内容 | Agent Phase 4 可选深化 | 视频/图文、MinIO、来源审计、幂等导入和消费详情 | 已完成 |
+| **Step 11：模型排序与推荐实验** | **Agent Phase 4 可选深化** | **训练、模型发布、推荐实验和效果闭环** | **下一步** |
 
-Step 3 提前实现 Feed 是已经发生的项目事实，不需要删除或伪装成未完成。Agent 主线已经完成到 Step 7，Step 8～9 已补齐模型实验所需的行为事实与在线实时特征；接下来才进入训练样本、离线模型、注册发布和受控实验，不能用一个本地模型分数冒充效果闭环。
+Step 3 提前实现 Feed 是已经发生的项目事实，不需要删除或伪装成未完成。Agent 主线已经完成到 Step 7，Step 8～10 已补齐行为事实、在线实时特征和真实可消费媒体；接下来才进入训练样本、离线模型、注册发布和受控实验，不能用一个本地模型分数或少量测试媒体冒充效果闭环。
 
-## 下一阶段：Step 10 模型排序与推荐实验
+## 下一阶段：Step 11 模型排序与推荐实验
 
-Step 8 已建立可归因行为事实，Step 9 已建立版本化短期兴趣、内容热度和在线读取保护。Step 10 才能在这些稳定输入上构造训练样本、训练可复现基线、注册模型版本并通过隔离实验比较规则排序；不能跳过样本时间切分、离线评测和回退语义直接替换线上规则。
+Step 8 已建立可归因行为事实，Step 9 已建立版本化短期兴趣、内容热度和在线读取保护，Step 10 已补齐可播放视频、可阅读图文、来源审计和真实导入入口。Step 11 才能在这些稳定输入上构造训练样本、训练可复现基线、注册模型版本并通过隔离实验比较规则排序；不能跳过样本时间切分、离线评测和回退语义直接替换线上规则。
 
 计划范围：
 
@@ -83,6 +85,7 @@ Step 8 已建立可归因行为事实，Step 9 已建立版本化短期兴趣、
 - [Step 7：Agent 可靠性与平台化](step-07-agent-reliability-platform.md)：理解 fencing、强恢复、分布式取消、事务 Outbox、Shadow、故障与 SLO。
 - [Step 8：曝光与行为闭环](step-08-interaction-loop.md)：理解批次/事件双层幂等、完整曝光归因、事务 Outbox、Kafka 重放与行为事实。
 - [Step 9：实时特征与短期兴趣](step-09-realtime-features.md)：理解事件时间、Watermark、窗口、在线快照、新鲜度与确定性回退。
+- [Step 10：真实媒体入库与可消费内容](step-10-real-media-ingestion.md)：理解视频/图文契约、外部身份幂等、MinIO、来源审计、标签门槛和消费详情。
 - [阶段学习文档模板](template.md)：以后每完成一个可运行切片时使用。
 
 ## 完成状态规则
@@ -113,6 +116,7 @@ docs/learning/
 ├── step-07-agent-reliability-platform.md
 ├── step-08-interaction-loop.md
 ├── step-09-realtime-features.md
+├── step-10-real-media-ingestion.md
 └── template.md
 ```
 

@@ -89,8 +89,10 @@ public final class RuleRankingService implements RankingUseCase {
             creatorCounts.merge(item.creatorId(), 1, Integer::sum);
             previousPrimaryTag = primaryTag(item);
             result.add(new RankedCandidate(
-                    item.contentId(), item.creatorId(), item.mediaUri(), item.title(), item.description(),
-                    item.summary(), item.tags(), item.profileVersion(), item.publishedAt(), selected.score(),
+                    item.contentId(), item.creatorId(), item.contentType(), item.mediaUri(), item.assetUris(),
+                    item.title(), item.description(), item.body(), item.summary(), item.tags(),
+                    item.sourceProvider(), item.sourcePageUri(), item.sourceAuthor(), item.licenseName(),
+                    item.profileVersion(), item.publishedAt(), selected.score(),
                     selected.sources(), selected.reason()));
         }
         return List.copyOf(result);

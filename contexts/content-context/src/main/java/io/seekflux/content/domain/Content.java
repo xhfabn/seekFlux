@@ -10,10 +10,14 @@ public final class Content {
 
     private final ContentId id;
     private final String creatorId;
+    private final ContentType contentType;
     private final String mediaUri;
+    private final List<String> assetUris;
     private final String title;
     private final String description;
+    private final String body;
     private final List<String> sourceTags;
+    private final ContentSource source;
     private final ContentStatus status;
     private final ContentProfile profile;
     private final long version;
@@ -25,10 +29,14 @@ public final class Content {
     private Content(
             ContentId id,
             String creatorId,
+            ContentType contentType,
             String mediaUri,
+            List<String> assetUris,
             String title,
             String description,
+            String body,
             List<String> sourceTags,
+            ContentSource source,
             ContentStatus status,
             ContentProfile profile,
             long version,
@@ -38,10 +46,14 @@ public final class Content {
             Instant withdrawnAt) {
         this.id = Objects.requireNonNull(id, "content id must not be null");
         this.creatorId = requireText(creatorId, "creator id", 128);
+        this.contentType = Objects.requireNonNull(contentType, "content type must not be null");
         this.mediaUri = requireMediaUri(mediaUri);
+        this.assetUris = normalizeAssetUris(assetUris, this.mediaUri);
         this.title = requireText(title, "title", 200);
         this.description = normalizeOptionalText(description, "description", 4_000);
+        this.body = normalizeOptionalText(body, "body", 100_000);
         this.sourceTags = normalizeTags(sourceTags);
+        this.source = Objects.requireNonNull(source, "content source must not be null");
         this.status = Objects.requireNonNull(status, "content status must not be null");
         this.profile = profile;
         if (version < 0) {
@@ -58,18 +70,26 @@ public final class Content {
     public static Content submit(
             ContentId id,
             String creatorId,
+            ContentType contentType,
             String mediaUri,
+            List<String> assetUris,
             String title,
             String description,
+            String body,
             List<String> sourceTags,
+            ContentSource source,
             Instant now) {
         return new Content(
                 id,
                 creatorId,
+                contentType,
                 mediaUri,
+                assetUris,
                 title,
                 description,
+                body,
                 sourceTags,
+                source,
                 ContentStatus.SUBMITTED,
                 null,
                 0,
@@ -77,6 +97,56 @@ public final class Content {
                 now,
                 null,
                 null);
+    }
+
+    public static Content submit(
+            ContentId id,
+            String creatorId,
+            String mediaUri,
+            String title,
+            String description,
+            List<String> sourceTags,
+            Instant now) {
+        return submit(id, creatorId, ContentType.VIDEO, mediaUri, List.of(mediaUri), title,
+                description, "", sourceTags, ContentSource.manual(), now);
+    }
+
+    public static Content restore(
+            ContentId id,
+            String creatorId,
+            ContentType contentType,
+            String mediaUri,
+            List<String> assetUris,
+            String title,
+            String description,
+            String body,
+            List<String> sourceTags,
+            ContentSource source,
+            ContentStatus status,
+            ContentProfile profile,
+            long version,
+            Instant createdAt,
+            Instant updatedAt,
+            Instant publishedAt,
+            Instant withdrawnAt) {
+        return new Content(
+                id,
+                creatorId,
+                contentType,
+                mediaUri,
+                assetUris,
+                title,
+                description,
+                body,
+                sourceTags,
+                source,
+                status,
+                profile,
+                version,
+                createdAt,
+                updatedAt,
+                publishedAt,
+                withdrawnAt);
     }
 
     public static Content restore(
@@ -93,20 +163,9 @@ public final class Content {
             Instant updatedAt,
             Instant publishedAt,
             Instant withdrawnAt) {
-        return new Content(
-                id,
-                creatorId,
-                mediaUri,
-                title,
-                description,
-                sourceTags,
-                status,
-                profile,
-                version,
-                createdAt,
-                updatedAt,
-                publishedAt,
-                withdrawnAt);
+        return restore(id, creatorId, ContentType.VIDEO, mediaUri, List.of(mediaUri), title,
+                description, "", sourceTags, ContentSource.manual(), status, profile, version,
+                createdAt, updatedAt, publishedAt, withdrawnAt);
     }
 
     public Content completeProfile(ContentProfile newProfile, Instant now) {
@@ -156,10 +215,14 @@ public final class Content {
         return new Content(
                 id,
                 creatorId,
+                contentType,
                 mediaUri,
+                assetUris,
                 title,
                 description,
+                body,
                 sourceTags,
+                source,
                 newStatus,
                 newProfile,
                 newVersion,
@@ -216,6 +279,23 @@ public final class Content {
         return List.copyOf(normalized);
     }
 
+    private static List<String> normalizeAssetUris(List<String> values, String primaryMediaUri) {
+        var normalized = new LinkedHashSet<String>();
+        normalized.add(primaryMediaUri);
+        if (values != null) {
+            for (String value : values) {
+                if (value == null || value.isBlank()) {
+                    continue;
+                }
+                normalized.add(requireMediaUri(value));
+            }
+        }
+        if (normalized.size() > 20) {
+            throw new IllegalArgumentException("content must not contain more than 20 media assets");
+        }
+        return List.copyOf(normalized);
+    }
+
     private static String requireText(String value, String field, int maxLength) {
         Objects.requireNonNull(value, field + " must not be null");
         String normalized = value.trim();
@@ -244,8 +324,16 @@ public final class Content {
         return creatorId;
     }
 
+    public ContentType contentType() {
+        return contentType;
+    }
+
     public String mediaUri() {
         return mediaUri;
+    }
+
+    public List<String> assetUris() {
+        return assetUris;
     }
 
     public String title() {
@@ -256,8 +344,16 @@ public final class Content {
         return description;
     }
 
+    public String body() {
+        return body;
+    }
+
     public List<String> sourceTags() {
         return sourceTags;
+    }
+
+    public ContentSource source() {
+        return source;
     }
 
     public ContentStatus status() {

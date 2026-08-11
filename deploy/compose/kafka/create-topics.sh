@@ -4,10 +4,13 @@ set -euo pipefail
 topics=(
   content.submitted.v1
   content.profile.ready.v1
+  content.submitted.v2
+  content.profile.ready.v2
   interaction.raw.v1
   interaction.validated.v1
   exposure.logged.v1
   content.profile.published.v1
+  content.profile.published.v2
   content.distribution.changed.v1
   feature.snapshot.updated.v1
   feature.interaction-late.v1

@@ -446,6 +446,7 @@ create_kafka_topics() {
   local topics=(
     interaction.raw.v1 interaction.validated.v1 exposure.logged.v1
     content.submitted.v1 content.profile.ready.v1 content.profile.published.v1
+    content.submitted.v2 content.profile.ready.v2 content.profile.published.v2
     content.distribution.changed.v1 feature.snapshot.updated.v1 model.version.activated.v1
     agent.run.completed.v1 agent.run.fallback.v1 agent.run.cancelled.v1 agent.run.failed.v1
     interaction.exposure.v1 interaction.click.v1 interaction.play-start.v1
@@ -572,7 +573,10 @@ start_minio() {
   MC_CONFIG_DIR="${LOCAL_DIR}/minio/mc-config" "${MINIO_HOME}/mc" alias set seekflux-local \
     "http://127.0.0.1:${MINIO_API_PORT}" "${MINIO_ROOT_USER}" "${MINIO_ROOT_PASSWORD}" >/dev/null
   MC_CONFIG_DIR="${LOCAL_DIR}/minio/mc-config" "${MINIO_HOME}/mc" mb --ignore-existing \
-    seekflux-local/seekflux-artifacts seekflux-local/seekflux-checkpoints >/dev/null
+    seekflux-local/seekflux-artifacts seekflux-local/seekflux-checkpoints \
+    seekflux-local/seekflux-media >/dev/null
+  MC_CONFIG_DIR="${LOCAL_DIR}/minio/mc-config" "${MINIO_HOME}/mc" anonymous set download \
+    seekflux-local/seekflux-media >/dev/null
   log "MinIO Buckets 已初始化；控制台 http://127.0.0.1:${MINIO_CONSOLE_PORT}"
 }
 
