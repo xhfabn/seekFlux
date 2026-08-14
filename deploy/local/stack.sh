@@ -93,6 +93,8 @@ load_local_env() {
   CONTENT_SERVER_PORT="${CONTENT_SERVER_PORT:-8081}"
   AGENT_SERVER_PORT="${AGENT_SERVER_PORT:-8083}"
   WEB_SERVER_PORT="${WEB_SERVER_PORT:-3001}"
+  MULTIMODAL_ENABLED="${MULTIMODAL_ENABLED:-false}"
+  MULTIMODAL_MODEL_PORT="${MULTIMODAL_MODEL_PORT:-8090}"
 }
 
 configure_java() {
@@ -105,6 +107,15 @@ configure_java() {
     fi
   fi
   require_command java
+  if [[ -z "${JAVA_HOME:-}" ]]; then
+    local java_binary
+    java_binary="$(command -v java)"
+    if [[ "${OS_NAME}" == "Linux" ]]; then
+      java_binary="$(readlink -f "${java_binary}")"
+    fi
+    export JAVA_HOME="$(cd "$(dirname "${java_binary}")/.." && pwd)"
+  fi
+  [[ -x "${JAVA_HOME}/bin/java" ]] || fail "JAVA_HOME 无效: ${JAVA_HOME}"
   local java_major
   java_major="$(java -version 2>&1 | awk -F'[\".]' '/version/ {print $2; exit}')"
   [[ "${java_major}" =~ ^[0-9]+$ ]] || fail "无法识别 Java 版本"
@@ -247,7 +258,13 @@ download_file_parallel() {
 verify_sha256() {
   local file="$1" expected="${2:-}" actual
   [[ -n "${expected}" ]] || return 0
-  actual="$(shasum -a 256 "${file}" | awk '{print $1}')"
+  if command -v shasum >/dev/null 2>&1; then
+    actual="$(shasum -a 256 "${file}" | awk '{print $1}')"
+  elif command -v sha256sum >/dev/null 2>&1; then
+    actual="$(sha256sum "${file}" | awk '{print $1}')"
+  else
+    fail "缺少 SHA-256 工具: macOS 需要 shasum，Ubuntu 需要 sha256sum"
+  fi
   [[ "${actual}" == "${expected}" ]] \
     || fail "SHA-256 校验失败: $(basename "${file}")"
   log "SHA-256 校验通过: $(basename "${file}")"
@@ -270,8 +287,17 @@ ensure_postgres() {
   if command -v pg_ctl >/dev/null 2>&1 && command -v psql >/dev/null 2>&1; then
     return 0
   fi
-  if [[ "${OS_NAME}" != "Darwin" ]]; then
-    fail "Linux 环境请先安装 PostgreSQL 17 客户端与服务端工具"
+  if [[ "${OS_NAME}" == "Linux" ]]; then
+    local postgres_bin=""
+    for postgres_bin in \
+      "/usr/lib/postgresql/${POSTGRES_MAJOR_VERSION:-17}/bin" \
+      /usr/lib/postgresql/*/bin; do
+      if [[ -x "${postgres_bin}/pg_ctl" && -x "${postgres_bin}/psql" ]]; then
+        export PATH="${postgres_bin}:${PATH}"
+        return 0
+      fi
+    done
+    fail "Ubuntu 请先安装 PostgreSQL ${POSTGRES_MAJOR_VERSION:-17} 服务端与客户端（postgresql-${POSTGRES_MAJOR_VERSION:-17}、postgresql-client-${POSTGRES_MAJOR_VERSION:-17}）"
   fi
   require_command brew
   local brew_prefix postgres_bin
@@ -294,14 +320,24 @@ ensure_redis() {
   fi
   if [[ ! -x "${REDIS_HOME}/src/redis-server" ]]; then
     require_command make
-    [[ -x /usr/bin/clang ]] || fail "编译 Redis 需要 Apple Clang (/usr/bin/clang)"
+    local cc_bin ar_bin
+    if [[ "${OS_NAME}" == "Darwin" ]]; then
+      [[ -x /usr/bin/clang ]] || fail "编译 Redis 需要 Xcode Command Line Tools"
+      cc_bin=/usr/bin/clang
+      ar_bin=/usr/bin/ar
+    else
+      cc_bin="$(command -v gcc || command -v clang || true)"
+      ar_bin="$(command -v ar || true)"
+      [[ -n "${cc_bin}" && -n "${ar_bin}" ]] \
+        || fail "编译 Redis 需要 C 编译器和 binutils（Ubuntu 可安装 build-essential）"
+    fi
     log "编译 Redis ${REDIS_VERSION}"
     # 某些开发工具会在 PATH 前面放置名为 cc 的命令（例如 Claude Code CLI），
     # 因此不能依赖 Makefile 默认的 `cc`，必须显式使用 Apple Clang。
     # 上一次失败的构建可能留下不完整对象，先清理再重新编译。
     make -C "${REDIS_HOME}" distclean >/dev/null 2>&1 || true
     make -C "${REDIS_HOME}" -j"$(cpu_count)" \
-      CC=/usr/bin/clang AR=/usr/bin/ar \
+      CC="${cc_bin}" AR="${ar_bin}" \
       MALLOC=libc BUILD_TLS=no
   fi
 }
@@ -626,6 +662,43 @@ build_apps() {
   (cd "${ROOT_DIR}" && mvn -DskipTests package)
 }
 
+ensure_multimodal_model() {
+  [[ "${MULTIMODAL_ENABLED}" == "true" ]] || return 0
+  require_command python3
+  require_command ffmpeg
+  local venv="${RUNTIME_DIR}/multimodal-venv"
+  if [[ ! -x "${venv}/bin/python" ]]; then
+    log "创建多模态模型 Python 环境"
+    python3 -m venv "${venv}"
+  fi
+  if ! "${venv}/bin/python" -c 'import fastapi, torch, transformers, PIL' >/dev/null 2>&1; then
+    log "安装多模态模型依赖（首次安装包含 PyTorch，耗时较长）"
+    "${venv}/bin/pip" install -r "${ROOT_DIR}/tools/multimodal/requirements.txt"
+  fi
+}
+
+start_multimodal_model() {
+  [[ "${MULTIMODAL_ENABLED}" == "true" ]] || return 0
+  if curl --noproxy '*' -fsS "http://127.0.0.1:${MULTIMODAL_MODEL_PORT}/health" >/dev/null 2>&1; then
+    log "Multimodal Model 已在运行"
+    return
+  fi
+  ensure_multimodal_model
+  local pidfile="${LOCAL_DIR}/apps/run/multimodal-model.pid"
+  local log_file="${LOCAL_DIR}/apps/logs/multimodal-model.log"
+  local model_pid
+  if [[ "${OS_NAME}" == "Darwin" ]]; then
+    model_pid="$(launchd_start multimodal-model "${log_file}" \
+      "${RUNTIME_DIR}/multimodal-venv/bin/python" "${ROOT_DIR}/tools/multimodal/server.py")"
+  else
+    nohup "${RUNTIME_DIR}/multimodal-venv/bin/python" "${ROOT_DIR}/tools/multimodal/server.py" \
+      >"${log_file}" 2>&1 </dev/null &
+    model_pid="$!"
+  fi
+  printf '%s\n' "${model_pid}" >"${pidfile}"
+  wait_http "Multimodal Model" "http://127.0.0.1:${MULTIMODAL_MODEL_PORT}/health" 900
+}
+
 start_java_app() {
   local name="$1" app="$2" health_url="${3:-}" pidfile log_file jar
   pidfile="${LOCAL_DIR}/apps/run/${app}.pid"
@@ -679,6 +752,7 @@ start_java_app() {
 
 apps_up() {
   load_local_env
+  start_multimodal_model
   build_apps
   start_java_app "Content Server" content-server "http://127.0.0.1:${CONTENT_SERVER_PORT}/actuator/health"
   start_java_app "Worker Runner" worker-runner
@@ -751,7 +825,7 @@ stop_pidfile() {
 apps_down() {
   if [[ "${OS_NAME}" == "Darwin" ]]; then
     local app label
-    for app in web agent-server online-server worker-runner content-server; do
+    for app in web agent-server online-server worker-runner content-server multimodal-model; do
       label="$(launchd_label "${app}")"
       if launchctl print "gui/$(id -u)/${label}" >/dev/null 2>&1; then
         launchctl remove "${label}" >/dev/null 2>&1 || true
@@ -767,6 +841,7 @@ apps_down() {
   stop_pidfile "Worker Runner" "${LOCAL_DIR}/apps/run/worker-runner.pid"
   stop_pidfile "Content Server" "${LOCAL_DIR}/apps/run/content-server.pid"
   stop_pidfile "Web" "${LOCAL_DIR}/apps/run/web.pid"
+  stop_pidfile "Multimodal Model" "${LOCAL_DIR}/apps/run/multimodal-model.pid"
 }
 
 infra_down() {
@@ -823,6 +898,16 @@ status_all() {
   service_status "Online Server" "${ONLINE_SERVER_PORT}" || failed=1
   service_status "Agent Server" "${AGENT_SERVER_PORT}" || failed=1
   web_status || failed=1
+  if [[ "${MULTIMODAL_ENABLED}" == "true" ]]; then
+    if curl --noproxy '*' -fsS "http://127.0.0.1:${MULTIMODAL_MODEL_PORT}/health" >/dev/null 2>&1; then
+      log "Multimodal Model: UP :${MULTIMODAL_MODEL_PORT}"
+    else
+      log "Multimodal Model: DOWN :${MULTIMODAL_MODEL_PORT}"
+      failed=1
+    fi
+  else
+    log "Multimodal Model: DISABLED"
+  fi
   local worker_pidfile="${LOCAL_DIR}/apps/run/worker-runner.pid"
   local worker_pid=""
   if [[ "${OS_NAME}" == "Darwin" ]]; then
@@ -844,9 +929,30 @@ doctor() {
   if [[ "${OS_NAME}" == "Darwin" ]]; then
     command -v brew >/dev/null 2>&1 && log "Homebrew: $(brew --version | head -n 1)" || warn "未安装 Homebrew"
     xcode-select -p >/dev/null 2>&1 && log "Command Line Tools: OK" || warn "缺少 Xcode Command Line Tools"
+  else
+    command -v apt-get >/dev/null 2>&1 \
+      && log "Ubuntu/Debian 包管理器: OK" \
+      || warn "未检测到 apt-get；脚本仍支持 Linux，但安装提示按 Ubuntu/Debian 给出"
+    command -v gcc >/dev/null 2>&1 || command -v clang >/dev/null 2>&1 \
+      && log "C 编译器: OK" \
+      || warn "C 编译器: MISSING（Ubuntu 可安装 build-essential）"
   fi
   command -v curl >/dev/null 2>&1 && log "curl: OK" || warn "curl: MISSING"
+  command -v nc >/dev/null 2>&1 && log "netcat: OK" || warn "netcat: MISSING（Ubuntu 可安装 netcat-openbsd）"
   command -v make >/dev/null 2>&1 && log "make: OK" || warn "make: MISSING"
+  command -v node >/dev/null 2>&1 && log "Node.js: $(node --version)" || warn "Node.js: MISSING"
+  command -v npm >/dev/null 2>&1 && log "npm: $(npm --version)" || warn "npm: MISSING"
+  if [[ "${MULTIMODAL_ENABLED}" == "true" ]]; then
+    command -v python3 >/dev/null 2>&1 && log "Python: $(python3 --version)" || warn "Python: MISSING"
+    command -v ffmpeg >/dev/null 2>&1 && log "ffmpeg: OK" || warn "ffmpeg: MISSING（Ubuntu 可安装 ffmpeg）"
+  fi
+  if command -v psql >/dev/null 2>&1; then
+    log "PostgreSQL tools: $(psql --version)"
+  elif [[ "${OS_NAME}" == "Linux" && -x "/usr/lib/postgresql/${POSTGRES_MAJOR_VERSION:-17}/bin/psql" ]]; then
+    log "PostgreSQL tools: $("/usr/lib/postgresql/${POSTGRES_MAJOR_VERSION:-17}/bin/psql" --version)"
+  else
+    warn "PostgreSQL tools: MISSING（需要 PostgreSQL ${POSTGRES_MAJOR_VERSION:-17}）"
+  fi
   if command -v java >/dev/null 2>&1; then
     configure_java
     log "Java: $(java -version 2>&1 | head -n 1)"
@@ -866,6 +972,7 @@ show_logs() {
     online) files=("${LOCAL_DIR}/apps/logs/online-server.log") ;;
     agent) files=("${LOCAL_DIR}/apps/logs/agent-server.log") ;;
     web) files=("${LOCAL_DIR}/apps/logs/web.log") ;;
+    multimodal) files=("${LOCAL_DIR}/apps/logs/multimodal-model.log") ;;
     postgres) files=("${LOCAL_DIR}/postgres/logs/postgres.log") ;;
     redis) files=("${LOCAL_DIR}/redis/logs/redis.log") ;;
     kafka) files=("${LOCAL_DIR}/kafka/logs/server.log") ;;
@@ -883,18 +990,23 @@ show_logs() {
 }
 
 open_pages() {
-  [[ "${OS_NAME}" == "Darwin" ]] || fail "open 命令目前只支持 macOS"
   load_local_env
-  open "http://localhost:${WEB_SERVER_PORT}/"
+  if [[ "${OS_NAME}" == "Darwin" ]]; then
+    require_command open
+    open "http://localhost:${WEB_SERVER_PORT}/"
+  else
+    require_command xdg-open
+    xdg-open "http://localhost:${WEB_SERVER_PORT}/" >/dev/null 2>&1
+  fi
 }
 
 usage() {
   cat <<'EOF'
-SeekFlux macOS 本地开发环境
+SeekFlux macOS / Ubuntu 本地开发环境
 
 用法: ./seekflux.sh <command>
 
-  doctor            检查 macOS、Homebrew、JDK、Maven 与编译工具
+  doctor            检查操作系统、JDK、Maven、Node.js 与编译工具
   versions          显示固定的中间件版本
   install           安装/升级中间件，不启动服务
   infra-up          安装并启动 PostgreSQL、Redis、Kafka、ES、MinIO
@@ -903,8 +1015,8 @@ SeekFlux macOS 本地开发环境
   seed-demo         通过内容发布链路创建六类画像示例视频
   up                 安装并启动中间件、四个 Java 应用与 Web
   status             查看全部中间件与应用状态
-  logs [name]        查看日志；name: content|worker|online|agent|web|postgres|redis|kafka|elasticsearch|minio
-  open               在 macOS 浏览器打开唯一 Web 前端
+  logs [name]        查看日志；name: content|worker|online|agent|web|multimodal|postgres|redis|kafka|elasticsearch|minio
+  open               用系统默认浏览器打开唯一 Web 前端
   apps-down          停止四个 Java 应用与 Web
   infra-down         停止项目管理的中间件进程
   down               停止应用和中间件

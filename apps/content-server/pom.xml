@@ -14,6 +14,7 @@
         <dependency><groupId>io.seekflux</groupId><artifactId>persistence</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>io.seekflux</groupId><artifactId>messaging</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>io.seekflux</groupId><artifactId>observability</artifactId><version>${project.version}</version></dependency>
+        <dependency><groupId>io.minio</groupId><artifactId>minio</artifactId><version>8.5.12</version></dependency>
         <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-test</artifactId><scope>test</scope></dependency>
     </dependencies>
     <build><plugins><plugin><groupId>org.springframework.boot</groupId><artifactId>spring-boot-maven-plugin</artifactId></plugin></plugins></build>

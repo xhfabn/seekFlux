@@ -14,6 +14,13 @@ spring:
     bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:localhost:9092}
 
 seekflux:
+  media-upload:
+    endpoint: ${S3_ENDPOINT:http://127.0.0.1:9000}
+    public-base: ${MINIO_PUBLIC_BASE:http://127.0.0.1:9000}
+    bucket: ${MEDIA_BUCKET:seekflux-media}
+    access-key: ${MINIO_ROOT_USER:seekflux}
+    secret-key: ${MINIO_ROOT_PASSWORD:seekflux_local_secret}
+    max-bytes: ${MEDIA_UPLOAD_MAX_BYTES:536870912}
   outbox:
     relay-delay-ms: ${OUTBOX_RELAY_DELAY_MS:1000}
     batch-size: ${OUTBOX_BATCH_SIZE:50}
@@ -21,6 +28,12 @@ seekflux:
 
 server:
   port: ${CONTENT_SERVER_PORT:8081}
+  tomcat:
+    max-swallow-size: ${MEDIA_UPLOAD_MAX_BYTES:536870912}
+
+spring.servlet.multipart:
+  max-file-size: 512MB
+  max-request-size: 512MB
 
 management:
   endpoints:

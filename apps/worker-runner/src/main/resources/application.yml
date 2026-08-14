@@ -26,6 +26,12 @@ spring:
       port: ${REDIS_PORT:6379}
 
 seekflux:
+  multimodal:
+    enabled: ${MULTIMODAL_ENABLED:false}
+    endpoint: ${MULTIMODAL_MODEL_ENDPOINT:http://127.0.0.1:8090}
+    index: ${MULTIMODAL_INDEX:seekflux-media-segments-v1}
+    dimensions: ${MULTIMODAL_DIMENSIONS:768}
+    max-video-segments: ${MULTIMODAL_MAX_VIDEO_SEGMENTS:12}
   search:
     index: ${CONTENT_SEARCH_INDEX:seekflux-content-v1}
     semantic:

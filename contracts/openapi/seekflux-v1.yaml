@@ -192,6 +192,29 @@ paths:
           $ref: "#/components/responses/BadRequest"
         "503":
           $ref: "#/components/responses/SearchUnavailable"
+  /v1/search/multimodal:
+    post:
+      operationId: multimodalSearch
+      summary: Search published image and video segments in a shared visual vector space
+      description: Disabled unless MULTIMODAL_ENABLED=true. IMAGE and VIDEO inputs are reachable media URIs; TEXT input is plain query text.
+      tags: [Search]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MultimodalSearchRequest"
+      responses:
+        "200":
+          description: Best matching media segment per content
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MultimodalSearchResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "503":
+          $ref: "#/components/responses/SearchUnavailable"
   /v1/feed:
     get:
       operationId: getFeed
@@ -256,6 +279,29 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ContentResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /v1/media:
+    post:
+      operationId: uploadMedia
+      summary: Upload an image or video to the configured SeekFlux media bucket
+      tags: [Content]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: {type: string, format: binary}
+      responses:
+        "200":
+          description: Public media location used by content registration or multimodal query
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MediaUploadResponse"
         "400":
           $ref: "#/components/responses/BadRequest"
   /v1/contents/{contentId}:
@@ -694,6 +740,56 @@ components:
           type: array
           maxItems: 10
           items: {type: string, maxLength: 64}
+    MultimodalSearchRequest:
+      type: object
+      required: [modality, input]
+      properties:
+        modality: {type: string, enum: [TEXT, IMAGE, VIDEO]}
+        input:
+          type: string
+          minLength: 1
+          maxLength: 4096
+          description: Plain text for TEXT, or an http(s) URI for IMAGE and VIDEO.
+        size: {type: integer, minimum: 1, maximum: 50, default: 12}
+    MediaUploadResponse:
+      type: object
+      required: [uri, contentType, size, originalName]
+      properties:
+        uri: {type: string}
+        contentType: {type: string}
+        size: {type: integer, format: int64, minimum: 1}
+        originalName: {type: string}
+    MultimodalSearchItem:
+      type: object
+      required: [contentId, contentType, mediaUri, assetUris, title, summary, tags, startMillis, endMillis, previewUri, score, modelVersion]
+      properties:
+        contentId: {type: string, format: uuid}
+        contentType: {type: string, enum: [VIDEO, ARTICLE]}
+        mediaUri: {type: string}
+        assetUris:
+          type: array
+          items: {type: string}
+        title: {type: string}
+        summary: {type: string}
+        tags:
+          type: array
+          items: {type: string}
+        startMillis: {type: integer, format: int64, minimum: 0}
+        endMillis: {type: integer, format: int64, minimum: 0}
+        previewUri: {type: string}
+        score: {type: number, format: double}
+        modelVersion: {type: string}
+    MultimodalSearchResult:
+      type: object
+      required: [queryModality, modelVersion, querySegments, items]
+      properties:
+        queryModality: {type: string, enum: [TEXT, IMAGE, VIDEO]}
+        modelVersion: {type: string}
+        querySegments: {type: integer, minimum: 1}
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/MultimodalSearchItem"
     SearchHit:
       type: object
       required: [contentId, creatorId, contentType, mediaUri, assetUris, title, description, body, summary, tags, sourceProvider, sourcePageUri, sourceAuthor, licenseName, profileVersion, score, sources, publishedAt]

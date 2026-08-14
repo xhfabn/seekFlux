@@ -12,6 +12,8 @@ SeekFlux 是一个面向短视频内容平台的搜索、推荐与 Search Agent 
 - C 端曝光、点击、播放、点赞、收藏、完播和负反馈通过 Interaction API 可靠入站，以真实 request/trace/content/position/surface 完整归因，并经事务 Outbox、Kafka 和幂等 Worker 形成行为事实；
 - 行为事件经 `realtime-window-v1` 生成 30 分钟短期兴趣与 5 分钟内容热度快照，写入 Redis 后由 Search/Feed 消费；过期或不可用时保留现有规则结果并明确降级；
 - B 端用户画像与内容工作台通过真实后端接口管理兴趣约束和内容标签；
+- 可选的 Step 11 多模态链路使用 SigLIP 2 编码文本、图片和视频关键帧；内容工作台支持
+  文件直传，发现页支持上传图片/视频查询，媒体分段通过独立 Elasticsearch kNN 索引召回；
 - Direct Search 使用 BM25/kNN 双路召回、RRF 融合、结构化过滤、共同 Deadline、单路降级和 Search Trace；
 - Search Agent 支持简单/复杂 Query 路由、SearchPlan、多轮 ConstraintPatch、动态工具集、并行宽搜/精搜、候选复用、追问与 Direct Fallback；
 - Agent Runtime 提供 `Router → FeaturePipeline → SessionExecutor → AgentLoop` 主链路、Session 事件、运行轨迹和版本冻结；
@@ -49,7 +51,7 @@ Agent Runtime 的详细设计见 [docs/agent-runtime.md](docs/agent-runtime.md)�
 
 环境要求：JDK 21、Maven 3.9+、Docker Engine 26+（Compose 方式）、建议至少 8 GB 可用内存。具体环境基线见 [docs/environment.md](docs/environment.md)。
 
-macOS 推荐使用统一脚本：
+macOS 与 Ubuntu 推荐使用统一脚本：
 
 ```bash
 ./seekflux.sh doctor
@@ -59,7 +61,7 @@ macOS 推荐使用统一脚本：
 ./seekflux.sh down
 ```
 
-脚本管理 PostgreSQL、Redis、Kafka、Elasticsearch、MinIO、Content Server、Worker Runner、Online Server、Agent Server 和 Web。macOS 下 Java/Web、Kafka、Elasticsearch、MinIO 使用 launchd 托管；数据和日志保存在 `.local/`，版本化下载文件保存在 `.runtime/`。详细命令见 [macOS 本地运行脚本](deploy/local/README.md)。
+脚本管理 PostgreSQL、Redis、Kafka、Elasticsearch、MinIO、Content Server、Worker Runner、Online Server、Agent Server 和 Web。macOS 使用 launchd，Ubuntu 使用 `nohup` 与 PID 文件；数据和日志保存在 `.local/`，版本化下载文件保存在 `.runtime/`。详细命令见 [macOS / Ubuntu 本地运行脚本](deploy/local/README.md)。
 
 也可使用 Docker Compose：
 
@@ -69,6 +71,10 @@ docker compose --env-file .env -f deploy/compose/compose.yml up -d
 ```
 
 默认端口：PostgreSQL `5432`、Redis `6379`、Kafka `9092`、Elasticsearch `9200`、MinIO `9000/9001`、Online `8080`、Content `8081`、Agent `8083`、Web `3001`。
+
+多模态检索默认关闭，避免普通开发启动时下载大型模型。安装 Python/FFmpeg 后在 `.env`
+设置 `MULTIMODAL_ENABLED=true`，`./seekflux.sh up` 会安装并启动端口 `8090` 的 SigLIP
+sidecar；首次执行需要下载 PyTorch 和模型，具体见 [多模态模型服务](tools/multimodal/README.md)。
 
 ## 导入真实媒体
 

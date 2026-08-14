@@ -28,7 +28,9 @@ async function proxy(request: Request, context: RouteContext): Promise<Response>
   }
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), service === "agent" ? 45_000 : 12_000);
+  const multipart = request.headers.get("content-type")?.startsWith("multipart/form-data") ?? false;
+  const timeoutMs = multipart && service === "content" ? 120_000 : service === "agent" ? 45_000 : 12_000;
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(target, {
       method: request.method,

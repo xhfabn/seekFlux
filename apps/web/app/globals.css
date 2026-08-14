@@ -563,6 +563,10 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 }
 .consumer-home-search button:hover { background: #3e414c; }
 .consumer-home-search button .icon { width: 17px; }
+.consumer-home-search .media-query-button { display: inline-flex; align-items: center; gap: 6px; padding: 0 12px; height: 36px; border-left: 1px solid #454852; color: #c8cbd3; cursor: pointer; white-space: nowrap; }
+.consumer-home-search .media-query-button input { display: none; }
+.consumer-home-search .media-query-button .icon { width: 16px; }
+.consumer-home-search .media-query-button:hover { color: white; }
 .consumer-header-actions { display: flex; align-items: center; gap: 8px; }
 .consumer-header-actions > button {
   min-height: 42px;

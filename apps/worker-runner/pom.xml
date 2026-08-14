@@ -16,6 +16,7 @@
         <dependency><groupId>io.seekflux</groupId><artifactId>interaction-context</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>io.seekflux</groupId><artifactId>search-context</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>io.seekflux</groupId><artifactId>retrieval</artifactId><version>${project.version}</version></dependency>
+        <dependency><groupId>io.seekflux</groupId><artifactId>model-serving</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>io.seekflux</groupId><artifactId>persistence</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>io.seekflux</groupId><artifactId>messaging</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>io.seekflux</groupId><artifactId>observability</artifactId><version>${project.version}</version></dependency>

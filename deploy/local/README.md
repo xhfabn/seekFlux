@@ -1,8 +1,16 @@
-# SeekFlux macOS 本地运行脚本
+# SeekFlux macOS / Ubuntu 本地运行脚本
 
 根目录的 `seekflux.sh` 是当前已实现服务的统一入口。它会把可下载的中间件安装在项目
-`.runtime/`，把数据、日志和 PID 保存在 `.local/`；PostgreSQL 二进制通过 Homebrew
-安装，数据目录仍属于本项目。
+`.runtime/`，把数据、日志和 PID 保存在 `.local/`。macOS 的 PostgreSQL 二进制可由
+Homebrew 安装；Ubuntu 使用系统安装的 PostgreSQL 17 工具，数据目录仍属于本项目。
+
+Ubuntu 24.04/22.04 首次运行前安装基础依赖（PostgreSQL 17 可使用 PostgreSQL 官方
+APT 仓库；若系统安装在 `/usr/lib/postgresql/17/bin`，脚本会自动识别）：
+
+```bash
+sudo apt-get install curl build-essential netcat-openbsd xdg-utils openjdk-21-jdk maven nodejs npm python3-venv ffmpeg
+sudo apt-get install postgresql-17 postgresql-client-17
+```
 
 ```bash
 ./seekflux.sh doctor   # 首次先检查环境
@@ -20,7 +28,9 @@ Worker Runner、Online Server、Agent Server 和 `apps/web`。Agent Server 默�
 
 Step 9 的本地链路由 Worker Runner 内置 JDBC 参考投影器消费 Interaction Topic，生成与生产 Flink Job 相同版本的短期兴趣/内容热度快照并写入 Redis，因此 `./seekflux.sh up` 不要求额外启动 Flink 集群。生产 Flink Job 的可提交 Jar 位于 `pipelines/realtime-features/target/realtime-features-0.1.0-SNAPSHOT.jar`；同一环境只能选择一个权威投影路径，不能让参考投影器和 Flink 使用同一消费进度重复承担生产职责。
 
-macOS 下 Java/Web 以及 Kafka、Elasticsearch、MinIO 通过 launchd 托管，启动命令返回后仍保持运行；PostgreSQL 和 Redis 使用自身的 daemon 管理。`down` 会同时移除对应 launchd job 和 PID 文件。
+macOS 下 Java/Web 以及 Kafka、Elasticsearch、MinIO 通过 launchd 托管；Ubuntu 下使用
+`nohup` 和项目内 PID 文件管理。PostgreSQL 和 Redis 使用自身的 daemon 管理。`down`
+会停止由当前项目启动的进程，不会停止 Ubuntu 系统中另外运行的 PostgreSQL 实例。
 
 Agent Server 默认使用无需密钥的确定性 Provider。联调 Chat Completions 兼容端点时，在 `.env` 设置 `AGENT_LLM_PROVIDER=openai-compatible`、`AGENT_LLM_ENDPOINT`、`AGENT_LLM_API_KEY`、`AGENT_LLM_MODEL`、可选的 `AGENT_LLM_TIMEOUT_MS` 以及输入/输出百万 Token 单价，再执行 `./seekflux.sh apps-down && ./seekflux.sh apps-up`。密钥不能提交到仓库。
 

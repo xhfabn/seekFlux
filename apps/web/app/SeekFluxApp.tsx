@@ -83,6 +83,19 @@ type SearchResponse = {
   };
 };
 
+type MultimodalSearchResponse = {
+  queryModality: "TEXT" | "IMAGE" | "VIDEO";
+  modelVersion: string;
+  querySegments: number;
+  items: Array<{
+    contentId: string; contentType: "VIDEO" | "ARTICLE"; mediaUri: string; assetUris: string[];
+    title: string; summary: string; tags: string[]; startMillis: number; endMillis: number;
+    previewUri: string; score: number; modelVersion: string;
+  }>;
+};
+
+type MediaUploadResponse = { uri: string; contentType: string; size: number; originalName: string };
+
 type FeedResponse = {
   requestId: string;
   items: ContentItem[];
@@ -220,16 +233,23 @@ function isInteractionEvent(value: unknown): value is InteractionEvent {
 }
 
 async function api<T>(url: string, options?: RequestInit): Promise<T> {
+  const isFormData = options?.body instanceof FormData;
   const response = await fetch(url, {
     ...options,
     headers: {
-      ...(options?.body ? { "Content-Type": "application/json" } : {}),
+      ...(options?.body && !isFormData ? { "Content-Type": "application/json" } : {}),
       ...options?.headers,
     },
   });
   const payload = (await response.json().catch(() => ({}))) as { message?: string; detail?: string; title?: string } & T;
   if (!response.ok) throw new Error(payload.message || payload.detail || payload.title || `${response.status} ${response.statusText}`);
   return payload;
+}
+
+async function uploadMedia(file: File): Promise<MediaUploadResponse> {
+  const form = new FormData();
+  form.append("file", file);
+  return api<MediaUploadResponse>("/api/bridge/content/v1/media", { method: "POST", body: form });
 }
 
 function shortId(value: string): string {
@@ -263,7 +283,7 @@ export function SeekFluxApp() {
   const [contentType, setContentType] = useState<"VIDEO" | "ARTICLE">(sampleContent.contentType);
   const [contentBody, setContentBody] = useState(sampleContent.body);
   const [mediaUri, setMediaUri] = useState(sampleContent.mediaUri);
-  const [selectedFile, setSelectedFile] = useState("");
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [contentId, setContentId] = useState("");
   const [content, setContent] = useState<ContentResponse | null>(null);
   const [contentMessage, setContentMessage] = useState("等待登记一条内容");
@@ -382,10 +402,17 @@ export function SeekFluxApp() {
     setBusy("content-submit");
     setContentMessage("正在登记内容并创建异步处理任务…");
     try {
+      let resolvedMediaUri = mediaUri.trim();
+      if (selectedFile) {
+        const uploaded = await uploadMedia(selectedFile);
+        resolvedMediaUri = uploaded.uri;
+        setMediaUri(uploaded.uri);
+      }
+      if (!resolvedMediaUri) throw new Error("请选择媒体文件或填写媒体地址");
       const data = await api<ContentResponse>("/api/bridge/content/v1/contents", {
         method: "POST",
         body: JSON.stringify({
-          creatorId, contentType, mediaUri, assetUris: [mediaUri], title, description,
+          creatorId, contentType, mediaUri: resolvedMediaUri, assetUris: [resolvedMediaUri], title, description,
           body: contentBody, sourceTags: splitTags(sourceTags),
         }),
       });
@@ -515,6 +542,40 @@ export function SeekFluxApp() {
       const message = error instanceof Error ? error.message : "搜索失败";
       setDiscoverError(message);
       setHealth((current) => ({ ...current, online: "offline" }));
+      showToast(message, true);
+    } finally { setBusy(null); }
+  }
+
+  async function runMultimodalSearch(file: File) {
+    setBusy("search");
+    setDiscoverError("");
+    try {
+      const uploaded = await uploadMedia(file);
+      const modality = file.type.startsWith("video/") ? "VIDEO" : "IMAGE";
+      const result = await api<MultimodalSearchResponse>("/api/bridge/online/v1/search/multimodal", {
+        method: "POST",
+        body: JSON.stringify({ modality, input: uploaded.uri, size: 12 }),
+      });
+      const requestId = `multimodal_${createEventId()}`;
+      const hits: ContentItem[] = result.items.map((item) => ({
+        ...item, creatorId: "", description: item.summary, body: "", sourceProvider: "",
+        sourcePageUri: "", sourceAuthor: "", licenseName: "", profileVersion: 1,
+        publishedAt: new Date().toISOString(), sources: ["VISUAL"],
+        reason: item.startMillis > 0 ? `命中视频 ${Math.floor(item.startMillis / 1000)} 秒附近` : "视觉相似",
+      }));
+      setQuery(file.name);
+      setSearchPage(0);
+      setSearchData({ query: file.name, total: hits.length, page: 0, size: 12, tookMillis: 0, hits,
+        trace: { requestId, executionMode: "DIRECT_SEMANTIC_FALLBACK", indexVersion: result.modelVersion,
+          policyVersion: "multimodal-segment-v1", tookMillis: 0, degraded: false,
+          unavailableSources: [], realtimeFeatureStatus: "NOT_APPLICABLE",
+          realtimeFeatureVersion: null, realtimeFeatureComputedAt: null } });
+      setDiscoverMode("search");
+      appendExposureEvents(hits, { requestId, traceId: requestId, surface: "SEARCH" });
+      showToast(hits.length ? `找到 ${hits.length} 条视觉相似内容` : "没有找到视觉相似内容");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "多模态搜索失败";
+      setDiscoverError(message);
       showToast(message, true);
     } finally { setBusy(null); }
   }
@@ -787,6 +848,7 @@ export function SeekFluxApp() {
             mode={discoverMode} setMode={setDiscoverMode} userId={savedUserId}
             query={query} setQuery={setQuery} runSearch={runSearch} searchPage={searchPage} searchData={searchData}
             runFeed={runFeed} runSimilar={runSimilar} feedData={feedData} items={consumerItems}
+            runMultimodalSearch={runMultimodalSearch}
             error={discoverError} busy={busy}
             attribution={activeAttribution} addInteraction={addInteraction} goProfile={() => navigate("audience")}
             agentQuery={agentQuery} setAgentQuery={setAgentQuery} agentTurns={agentTurns}
@@ -868,6 +930,7 @@ type DiscoverProps = {
   query: string; setQuery: (value: string) => void; runSearch: (page?: number, query?: string) => Promise<void>;
   searchPage: number; searchData: SearchResponse | null; runFeed: (cursor?: string | null, append?: boolean) => Promise<void>;
   runSimilar: (contentId: string) => Promise<void>; feedData: FeedResponse | null; items: ContentItem[];
+  runMultimodalSearch: (file: File) => Promise<void>;
   error: string; busy: string | null; attribution: InteractionAttribution;
   addInteraction: (type: EventType, item: ContentItem, position: number, attribution: InteractionAttribution) => void;
   goProfile: () => void;
@@ -901,6 +964,10 @@ function DiscoverWorkspace(props: DiscoverProps) {
         <form className="consumer-home-search" onSubmit={(event) => { event.preventDefault(); void props.runSearch(0); }}>
           <Icon name="search" />
           <input id="consumer-search-input" value={props.query} onChange={(event) => props.setQuery(event.target.value)} placeholder="搜索你感兴趣的内容" aria-label="搜索内容" />
+          <label className="media-query-button" title="上传图片或视频搜索">
+            <input type="file" accept="image/*,video/*" onChange={(event) => { const file = event.target.files?.[0]; if (file) void props.runMultimodalSearch(file); event.currentTarget.value = ""; }} />
+            <Icon name="upload" /><span>搜图/视频</span>
+          </label>
           <button disabled={props.busy === "search"}><Icon name="search" /> 搜索</button>
         </form>
         <div className="consumer-header-actions">
@@ -1213,7 +1280,7 @@ type StudioProps = {
   description: string; setDescription: (value: string) => void; sourceTags: string; setSourceTags: (value: string) => void;
   contentType: "VIDEO" | "ARTICLE"; setContentType: (value: "VIDEO" | "ARTICLE") => void;
   contentBody: string; setContentBody: (value: string) => void;
-  mediaUri: string; setMediaUri: (value: string) => void; selectedFile: string; setSelectedFile: (value: string) => void;
+  mediaUri: string; setMediaUri: (value: string) => void; selectedFile: File | null; setSelectedFile: (value: File | null) => void;
   submitContent: (event: FormEvent) => void; contentId: string; setContentId: (value: string) => void;
   content: ContentResponse | null; contentMessage: string; currentStage: number; loadContent: () => Promise<ContentResponse | null>;
   pollContent: () => Promise<void>; profileVersion: number; setProfileVersion: (value: number) => void;
@@ -1245,15 +1312,15 @@ function StudioWorkspace(props: StudioProps) {
           <div className="panel-header"><div><div className="panel-kicker">步骤 1</div><h2>登记新内容</h2></div><span className="status-tag">接口可用</span></div>
           <form className="panel-body" onSubmit={props.submitContent}>
             <label className="upload-dropzone">
-              <input type="file" accept={props.contentType === "VIDEO" ? "video/*" : "image/*"} onChange={(event) => props.setSelectedFile(event.target.files?.[0]?.name ?? "")} />
+              <input type="file" accept={props.contentType === "VIDEO" ? "video/*" : "image/*"} onChange={(event) => props.setSelectedFile(event.target.files?.[0] ?? null)} />
               <span className="upload-icon"><Icon name="upload" /></span>
-              <strong>{props.selectedFile || (props.contentType === "VIDEO" ? "选择一个视频文件" : "选择图文封面")}</strong>
-              <small>{props.selectedFile ? "已选择文件；继续填写可访问的媒体地址" : "当前通过媒体地址登记，文件直传待接入"}</small>
+              <strong>{props.selectedFile?.name || (props.contentType === "VIDEO" ? "选择一个视频文件" : "选择图文封面")}</strong>
+              <small>{props.selectedFile ? "提交时将上传到媒体存储并自动分析" : "也可以在下方填写已有媒体地址"}</small>
             </label>
             <div className="field-grid">
               <label><span className="field-label">内容类型</span><select className="input" value={props.contentType} onChange={(event) => props.setContentType(event.target.value as "VIDEO" | "ARTICLE")}><option value="VIDEO">视频</option><option value="ARTICLE">图文</option></select></label>
               <label><span className="field-label">创建者</span><input className="input" value={props.creatorId} onChange={(event) => props.setCreatorId(event.target.value)} required maxLength={128} /></label>
-              <label className="wide"><span className="field-label">媒体地址 <span>当前 API 必填</span></span><input className="input" value={props.mediaUri} onChange={(event) => props.setMediaUri(event.target.value)} required placeholder="S3 / HTTPS URI" /></label>
+              <label className="wide"><span className="field-label">媒体地址 <span>与本地文件二选一</span></span><input className="input" value={props.mediaUri} onChange={(event) => props.setMediaUri(event.target.value)} placeholder="S3 / HTTPS URI" /></label>
               <label className="wide"><span className="field-label">内容标题 <span>必填</span></span><input className="input" value={props.title} onChange={(event) => props.setTitle(event.target.value)} required maxLength={200} /></label>
               <label className="wide"><span className="field-label">内容描述 <span>用于基础画像</span></span><textarea className="textarea" value={props.description} onChange={(event) => props.setDescription(event.target.value)} maxLength={4000} /></label>
               {props.contentType === "ARTICLE" && <label className="wide"><span className="field-label">图文正文 <span>详情页与检索</span></span><textarea className="textarea article-body-input" value={props.contentBody} onChange={(event) => props.setContentBody(event.target.value)} maxLength={100000} placeholder="输入图文正文…" /></label>}

@@ -1,8 +1,12 @@
 package io.seekflux.apps.onlineserver;
 
 import io.seekflux.search.application.SearchApplicationService;
+import io.seekflux.search.application.MultimodalSearchApplicationService;
 import io.seekflux.feature.port.in.RealtimeFeatureUseCase;
 import io.seekflux.search.port.in.SearchUseCase;
+import io.seekflux.search.port.in.MultimodalSearchUseCase;
+import io.seekflux.search.port.out.MediaEmbeddingPort;
+import io.seekflux.search.port.out.MediaSegmentRetriever;
 import io.seekflux.search.port.out.SearchRetriever;
 import java.time.Duration;
 import java.util.Arrays;
@@ -17,9 +21,19 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 
 @Configuration
 class SearchConfiguration {
+
+    @Bean
+    @ConditionalOnProperty(prefix = "seekflux.multimodal", name = "enabled", havingValue = "true")
+    MultimodalSearchUseCase multimodalSearchUseCase(
+            MediaEmbeddingPort embeddingPort,
+            MediaSegmentRetriever retriever,
+            @Value("${seekflux.multimodal.query-segments:8}") int querySegments) {
+        return new MultimodalSearchApplicationService(embeddingPort, retriever, querySegments);
+    }
 
     @Bean(name = "searchRetrievalExecutor", destroyMethod = "shutdown")
     ExecutorService searchRetrievalExecutor(
