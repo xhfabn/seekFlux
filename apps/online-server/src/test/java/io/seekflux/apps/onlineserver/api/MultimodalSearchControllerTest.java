@@ -15,7 +15,7 @@ class MultimodalSearchControllerTest {
     @Test
     void acceptsImageQueryWithoutEmbeddingInTheController() throws Exception {
         var controller = new MultimodalSearchController(query -> new MultimodalSearchResult(
-                query.modality().name(), "siglip-test", 1, List.of()));
+                query.modality().name(), "siglip-test", 1, List.of("VISUAL"), false, List.of(), List.of()));
         var mvc = MockMvcBuilders.standaloneSetup(controller).build();
 
         mvc.perform(post("/v1/search/multimodal")

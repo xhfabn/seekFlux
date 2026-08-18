@@ -7,5 +7,8 @@ public record MultimodalSearchResult(
         String queryModality,
         String modelVersion,
         int querySegments,
+        List<String> retrievalChannels,
+        boolean degraded,
+        List<String> unavailableChannels,
         List<MediaSearchCandidate> items) {
 }

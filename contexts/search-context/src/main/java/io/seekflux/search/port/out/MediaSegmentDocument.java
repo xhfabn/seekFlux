@@ -17,5 +17,17 @@ public record MediaSegmentDocument(
         String previewUri,
         String modelVersion,
         List<Double> vector,
+        String understandingText,
+        List<MediaUnderstandingEvidence> evidence,
+        java.util.Map<String, String> channelStatuses,
         Instant publishedAt) {
+
+    public MediaSegmentDocument {
+        assetUris = assetUris == null ? List.of() : List.copyOf(assetUris);
+        tags = tags == null ? List.of() : List.copyOf(tags);
+        vector = vector == null ? List.of() : List.copyOf(vector);
+        understandingText = understandingText == null ? "" : understandingText.trim();
+        evidence = evidence == null ? List.of() : List.copyOf(evidence);
+        channelStatuses = channelStatuses == null ? java.util.Map.of() : java.util.Map.copyOf(channelStatuses);
+    }
 }

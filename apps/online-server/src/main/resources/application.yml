@@ -23,7 +23,7 @@ seekflux:
   multimodal:
     enabled: ${MULTIMODAL_ENABLED:false}
     endpoint: ${MULTIMODAL_MODEL_ENDPOINT:http://127.0.0.1:8090}
-    index: ${MULTIMODAL_INDEX:seekflux-media-segments-v1}
+    index: ${MULTIMODAL_INDEX:seekflux-media-segments-v2}
     dimensions: ${MULTIMODAL_DIMENSIONS:768}
     query-segments: ${MULTIMODAL_QUERY_SEGMENTS:8}
   search:

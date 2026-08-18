@@ -73,8 +73,10 @@ docker compose --env-file .env -f deploy/compose/compose.yml up -d
 默认端口：PostgreSQL `5432`、Redis `6379`、Kafka `9092`、Elasticsearch `9200`、MinIO `9000/9001`、Online `8080`、Content `8081`、Agent `8083`、Web `3001`。
 
 多模态检索默认关闭，避免普通开发启动时下载大型模型。安装 Python/FFmpeg 后在 `.env`
-设置 `MULTIMODAL_ENABLED=true`，`./seekflux.sh up` 会安装并启动端口 `8090` 的 SigLIP
-sidecar；首次执行需要下载 PyTorch 和模型，具体见 [多模态模型服务](tools/multimodal/README.md)。
+设置 `MULTIMODAL_ENABLED=true`，`./seekflux.sh up` 会安装并启动端口 `8090` 的多模态
+sidecar：SigLIP 负责共享视觉向量，RapidOCR 与 faster-whisper 负责画面文字和音轨理解，
+BLIP 描述可按需开启。首次执行需要下载 PyTorch 和模型，具体见
+[多模态模型服务](tools/multimodal/README.md)。
 
 ## 导入真实媒体
 

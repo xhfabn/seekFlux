@@ -60,7 +60,7 @@ AgentOrchestration 决定搜索目标、约束修正、追问和业务回退；R
 | worker-runner | 内容理解、索引发布、行为事实写入、特征写入、Outbox Relay 与 Agent 终态幂等审计消费 |
 | agent-server | Agent API、AgentOrchestration、Agent Runtime 与 Tool 装配；端口 `8083`，独立线程池和故障边界 |
 | realtime-features | 生产 Flink 事件时间窗口、短期兴趣、内容热度与迟到事件输出；本地统一启动由 Worker JDBC 参考投影器执行同一策略 |
-| multimodal-model（Step 11） | SigLIP 文本/图片编码与 FFmpeg 视频关键帧；只经 MediaEmbeddingPort 被 Java 应用调用 |
+| multimodal-model（Step 11） | SigLIP 共享向量、FFmpeg 关键帧、RapidOCR、faster-whisper 与可选 BLIP；只经 MediaEmbeddingPort/MediaUnderstandingPort 被 Java 应用调用 |
 | training-runner（Step 12 可选） | 样本生成、基线训练、离线评测、模型注册 |
 
 ## 拆分触发条件

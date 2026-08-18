@@ -87,10 +87,14 @@ type MultimodalSearchResponse = {
   queryModality: "TEXT" | "IMAGE" | "VIDEO";
   modelVersion: string;
   querySegments: number;
+  retrievalChannels: string[];
+  degraded: boolean;
+  unavailableChannels: string[];
   items: Array<{
     contentId: string; contentType: "VIDEO" | "ARTICLE"; mediaUri: string; assetUris: string[];
     title: string; summary: string; tags: string[]; startMillis: number; endMillis: number;
-    previewUri: string; score: number; modelVersion: string;
+    previewUri: string; score: number; modelVersion: string; matchedChannels: string[];
+    evidence: Array<{ channel: string; text: string; confidence: number; startMillis: number; endMillis: number; modelVersion: string }>;
   }>;
 };
 
@@ -561,14 +565,14 @@ export function SeekFluxApp() {
         ...item, creatorId: "", description: item.summary, body: "", sourceProvider: "",
         sourcePageUri: "", sourceAuthor: "", licenseName: "", profileVersion: 1,
         publishedAt: new Date().toISOString(), sources: ["VISUAL"],
-        reason: item.startMillis > 0 ? `命中视频 ${Math.floor(item.startMillis / 1000)} 秒附近` : "视觉相似",
+        reason: `${item.matchedChannels.includes("UNDERSTANDING_TEXT") ? "内容理解 + " : ""}视觉匹配${item.startMillis > 0 ? ` · ${Math.floor(item.startMillis / 1000)} 秒附近` : ""}`,
       }));
       setQuery(file.name);
       setSearchPage(0);
       setSearchData({ query: file.name, total: hits.length, page: 0, size: 12, tookMillis: 0, hits,
         trace: { requestId, executionMode: "DIRECT_SEMANTIC_FALLBACK", indexVersion: result.modelVersion,
-          policyVersion: "multimodal-segment-v1", tookMillis: 0, degraded: false,
-          unavailableSources: [], realtimeFeatureStatus: "NOT_APPLICABLE",
+          policyVersion: "multimodal-understanding-v2", tookMillis: 0, degraded: result.degraded,
+          unavailableSources: result.unavailableChannels, realtimeFeatureStatus: "NOT_APPLICABLE",
           realtimeFeatureVersion: null, realtimeFeatureComputedAt: null } });
       setDiscoverMode("search");
       appendExposureEvents(hits, { requestId, traceId: requestId, surface: "SEARCH" });

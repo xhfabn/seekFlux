@@ -761,7 +761,7 @@ components:
         originalName: {type: string}
     MultimodalSearchItem:
       type: object
-      required: [contentId, contentType, mediaUri, assetUris, title, summary, tags, startMillis, endMillis, previewUri, score, modelVersion]
+      required: [contentId, contentType, mediaUri, assetUris, title, summary, tags, startMillis, endMillis, previewUri, score, modelVersion, matchedChannels, evidence]
       properties:
         contentId: {type: string, format: uuid}
         contentType: {type: string, enum: [VIDEO, ARTICLE]}
@@ -779,13 +779,37 @@ components:
         previewUri: {type: string}
         score: {type: number, format: double}
         modelVersion: {type: string}
+        matchedChannels:
+          type: array
+          items: {type: string, enum: [VISUAL, UNDERSTANDING_TEXT]}
+        evidence:
+          type: array
+          items:
+            $ref: "#/components/schemas/MediaUnderstandingEvidence"
+    MediaUnderstandingEvidence:
+      type: object
+      required: [channel, text, confidence, startMillis, endMillis, modelVersion]
+      properties:
+        channel: {type: string, enum: [METADATA, OCR, ASR, CAPTION]}
+        text: {type: string}
+        confidence: {type: number, format: double, minimum: 0, maximum: 1}
+        startMillis: {type: integer, format: int64, minimum: 0}
+        endMillis: {type: integer, format: int64, minimum: 0}
+        modelVersion: {type: string}
     MultimodalSearchResult:
       type: object
-      required: [queryModality, modelVersion, querySegments, items]
+      required: [queryModality, modelVersion, querySegments, retrievalChannels, degraded, unavailableChannels, items]
       properties:
         queryModality: {type: string, enum: [TEXT, IMAGE, VIDEO]}
         modelVersion: {type: string}
         querySegments: {type: integer, minimum: 1}
+        retrievalChannels:
+          type: array
+          items: {type: string, enum: [VISUAL, UNDERSTANDING_TEXT]}
+        degraded: {type: boolean}
+        unavailableChannels:
+          type: array
+          items: {type: string}
         items:
           type: array
           items:

@@ -664,14 +664,16 @@ build_apps() {
 
 ensure_multimodal_model() {
   [[ "${MULTIMODAL_ENABLED}" == "true" ]] || return 0
-  require_command python3
   require_command ffmpeg
-  local venv="${RUNTIME_DIR}/multimodal-venv"
-  if [[ ! -x "${venv}/bin/python" ]]; then
-    log "创建多模态模型 Python 环境"
-    python3 -m venv "${venv}"
+  local venv="${RUNTIME_DIR}/multimodal-venv" python_bin
+  python_bin="$(command -v python3.12 || command -v python3.11 || command -v python3.10 || true)"
+  [[ -n "${python_bin}" ]] || fail "多模态模型需要 Python 3.10-3.12；macOS 可安装 python@3.12，Ubuntu 需安装 python3-venv"
+  if [[ ! -x "${venv}/bin/python" || ! -x "${venv}/bin/pip" ]] \
+      || ! "${venv}/bin/python" -c 'import sys; assert (3, 10) <= sys.version_info[:2] <= (3, 12)' >/dev/null 2>&1; then
+    log "使用 ${python_bin} 创建多模态模型 Python 环境"
+    "${python_bin}" -m venv --clear "${venv}"
   fi
-  if ! "${venv}/bin/python" -c 'import fastapi, torch, transformers, PIL' >/dev/null 2>&1; then
+  if ! "${venv}/bin/python" -c 'import fastapi, torch, transformers, PIL, rapidocr_onnxruntime, faster_whisper' >/dev/null 2>&1; then
     log "安装多模态模型依赖（首次安装包含 PyTorch，耗时较长）"
     "${venv}/bin/pip" install -r "${ROOT_DIR}/tools/multimodal/requirements.txt"
   fi
@@ -943,7 +945,11 @@ doctor() {
   command -v node >/dev/null 2>&1 && log "Node.js: $(node --version)" || warn "Node.js: MISSING"
   command -v npm >/dev/null 2>&1 && log "npm: $(npm --version)" || warn "npm: MISSING"
   if [[ "${MULTIMODAL_ENABLED}" == "true" ]]; then
-    command -v python3 >/dev/null 2>&1 && log "Python: $(python3 --version)" || warn "Python: MISSING"
+    local multimodal_python
+    multimodal_python="$(command -v python3.12 || command -v python3.11 || command -v python3.10 || true)"
+    [[ -n "${multimodal_python}" ]] \
+      && log "Multimodal Python: $(${multimodal_python} --version)" \
+      || warn "Multimodal Python: MISSING（需要 3.10-3.12）"
     command -v ffmpeg >/dev/null 2>&1 && log "ffmpeg: OK" || warn "ffmpeg: MISSING（Ubuntu 可安装 ffmpeg）"
   fi
   if command -v psql >/dev/null 2>&1; then

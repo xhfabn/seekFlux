@@ -14,5 +14,19 @@ public record MediaSearchCandidate(
         long endMillis,
         String previewUri,
         double score,
-        String modelVersion) {
+        String modelVersion,
+        List<String> matchedChannels,
+        List<MediaUnderstandingEvidence> evidence) {
+
+    public MediaSearchCandidate {
+        assetUris = assetUris == null ? List.of() : List.copyOf(assetUris);
+        tags = tags == null ? List.of() : List.copyOf(tags);
+        matchedChannels = matchedChannels == null ? List.of() : List.copyOf(matchedChannels);
+        evidence = evidence == null ? List.of() : List.copyOf(evidence);
+    }
+
+    public MediaSearchCandidate withFusion(double fusionScore, List<String> channels) {
+        return new MediaSearchCandidate(contentId, contentType, mediaUri, assetUris, title, summary, tags,
+                startMillis, endMillis, previewUri, fusionScore, modelVersion, channels, evidence);
+    }
 }
