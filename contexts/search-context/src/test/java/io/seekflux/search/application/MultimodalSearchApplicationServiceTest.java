@@ -14,6 +14,25 @@ import org.junit.jupiter.api.Test;
 class MultimodalSearchApplicationServiceTest {
 
     @Test
+    void countsOnlyBestSegmentPerContentWithinOneRetrievalRoute() {
+        var service = new MultimodalSearchApplicationService(
+                (modality, input, maxSegments) -> new MediaEmbeddingBatch(
+                        "siglip-test", 2,
+                        List.of(new MediaEmbeddingSegment(0, 0, 0, "", List.of(1.0, 0.0)))),
+                (vector, limit) -> List.of(
+                        candidate("exact-image", 1.0),
+                        candidate("multi-segment-video", 0.9),
+                        candidate("multi-segment-video", 0.8)),
+                8);
+
+        var result = service.search(new MultimodalSearchQuery(MediaModality.IMAGE,
+                "https://media/query.png", 2));
+
+        assertEquals(List.of("exact-image", "multi-segment-video"),
+                result.items().stream().map(MediaSearchCandidate::contentId).toList());
+    }
+
+    @Test
     void fusesMultipleQuerySegmentsByBestContentScore() {
         var service = new MultimodalSearchApplicationService(
                 (modality, input, maxSegments) -> new MediaEmbeddingBatch(

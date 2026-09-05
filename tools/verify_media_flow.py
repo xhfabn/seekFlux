@@ -11,6 +11,16 @@ import urllib.request
 from typing import Any
 
 
+def open_request(request: urllib.request.Request, timeout: int):
+    parsed = urllib.parse.urlparse(request.full_url)
+    opener = (
+        urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        if parsed.hostname in {"localhost", "127.0.0.1", "::1"}
+        else urllib.request.build_opener()
+    )
+    return opener.open(request, timeout=timeout)
+
+
 def json_request(url: str, *, method: str = "GET", payload: dict[str, Any] | None = None,
                  headers: dict[str, str] | None = None) -> dict[str, Any]:
     data = None if payload is None else json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -19,7 +29,7 @@ def json_request(url: str, *, method: str = "GET", payload: dict[str, Any] | Non
         **({"Content-Type": "application/json"} if data else {}),
         **(headers or {}),
     })
-    with urllib.request.urlopen(request, timeout=10) as response:
+    with open_request(request, timeout=10) as response:
         return json.loads(response.read().decode("utf-8"))
 
 
@@ -34,7 +44,7 @@ def wait_published(base: str, content_id: str) -> dict[str, Any]:
 
 def assert_media(content: dict[str, Any]) -> None:
     request = urllib.request.Request(content["mediaUri"], method="HEAD")
-    with urllib.request.urlopen(request, timeout=10) as response:
+    with open_request(request, timeout=10) as response:
         media_type = response.headers.get_content_type()
         expected_prefix = "video/" if content["contentType"] == "VIDEO" else "image/"
         if not media_type.startswith(expected_prefix):

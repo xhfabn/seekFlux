@@ -93,6 +93,7 @@ load_local_env() {
   CONTENT_SERVER_PORT="${CONTENT_SERVER_PORT:-8081}"
   AGENT_SERVER_PORT="${AGENT_SERVER_PORT:-8083}"
   WEB_SERVER_PORT="${WEB_SERVER_PORT:-3001}"
+  WEB_SERVER_HOST="${WEB_SERVER_HOST:-localhost}"
   MULTIMODAL_ENABLED="${MULTIMODAL_ENABLED:-false}"
   MULTIMODAL_MODEL_PORT="${MULTIMODAL_MODEL_PORT:-8090}"
 }
@@ -178,10 +179,6 @@ download_file_parallel() {
     && curl -x "${SEEKFLUX_DOWNLOAD_PROXY}" -fsSIL --connect-timeout 5 --max-time 10 "${url}" >/dev/null 2>&1; then
     curl_route=(-x "${SEEKFLUX_DOWNLOAD_PROXY}")
     log "使用下载代理 ${SEEKFLUX_DOWNLOAD_PROXY}"
-  # 在部分中国大陆网络中，Elastic/MinIO CDN 的 IPv6 链路明显快于 IPv4。
-  elif curl -6 -fsSIL --connect-timeout 5 --max-time 10 "${url}" >/dev/null 2>&1; then
-    curl_route=(-6)
-    log "目标支持 IPv6，优先使用 IPv6 下载"
   fi
 
   local content_length
@@ -312,6 +309,52 @@ ensure_postgres() {
   require_command psql
 }
 
+postgres_os_user() {
+  if [[ "${OS_NAME}" == "Linux" && "${EUID}" -eq 0 ]] && id postgres >/dev/null 2>&1; then
+    printf 'postgres\n'
+  else
+    id -un
+  fi
+}
+
+prepare_postgres_ownership() {
+  local owner
+  owner="$(postgres_os_user)"
+  if [[ "${owner}" != "$(id -un)" ]]; then
+    require_command runuser
+    chown -R "${owner}:${owner}" "${LOCAL_DIR}/postgres"
+  fi
+}
+
+run_as_postgres_owner() {
+  local owner
+  owner="$(postgres_os_user)"
+  if [[ "${owner}" == "$(id -un)" ]]; then
+    "$@"
+  else
+    runuser -u "${owner}" -- "$@"
+  fi
+}
+
+prepare_elasticsearch_ownership() {
+  if [[ "${OS_NAME}" == "Linux" && "${EUID}" -eq 0 ]]; then
+    if ! id seekflux >/dev/null 2>&1; then
+      require_command useradd
+      useradd --system --no-create-home --shell "$(command -v nologin || printf '/usr/sbin/nologin')" seekflux
+      log "已创建 Elasticsearch 本地运行用户 seekflux"
+    fi
+    require_command runuser
+    require_command setfacl
+    chmod 1777 /tmp
+    local parent_path="${ROOT_DIR}"
+    while [[ "${parent_path}" != "/" ]]; do
+      setfacl -m u:seekflux:x "${parent_path}"
+      parent_path="$(dirname "${parent_path}")"
+    done
+    chown -R seekflux:seekflux "${LOCAL_DIR}/elasticsearch" "${ELASTICSEARCH_HOME}"
+  fi
+}
+
 ensure_redis() {
   local archive="${DOWNLOAD_DIR}/redis-${REDIS_VERSION}.tar.gz"
   if [[ ! -d "${REDIS_HOME}" ]]; then
@@ -410,6 +453,7 @@ install_all() {
 
 start_postgres() {
   ensure_postgres
+  prepare_postgres_ownership
   if port_open "${POSTGRES_PORT}"; then
     log "PostgreSQL 已在运行"
   else
@@ -418,12 +462,13 @@ start_postgres() {
       local password_file
       password_file="$(mktemp "${LOCAL_DIR}/postgres/run/password.XXXXXX")"
       printf '%s\n' "${POSTGRES_PASSWORD}" >"${password_file}"
-      initdb -D "${POSTGRES_DATA}" -U "${POSTGRES_USER}" --pwfile="${password_file}" \
+      chown "$(postgres_os_user):$(postgres_os_user)" "${password_file}"
+      run_as_postgres_owner initdb -D "${POSTGRES_DATA}" -U "${POSTGRES_USER}" --pwfile="${password_file}" \
         --auth-local=trust --auth-host=scram-sha-256 >/dev/null
       rm -f "${password_file}"
     fi
-    pg_ctl -D "${POSTGRES_DATA}" -l "${LOCAL_DIR}/postgres/logs/postgres.log" \
-      -o "-h 127.0.0.1 -p ${POSTGRES_PORT}" start >/dev/null
+    run_as_postgres_owner pg_ctl -D "${POSTGRES_DATA}" -l "${LOCAL_DIR}/postgres/logs/postgres.log" \
+      -o "-h 127.0.0.1 -p ${POSTGRES_PORT} -k ${LOCAL_DIR}/postgres/run" start >/dev/null
   fi
   wait_port PostgreSQL "${POSTGRES_PORT}" 60
   export PGPASSWORD="${POSTGRES_PASSWORD}"
@@ -489,10 +534,16 @@ create_kafka_topics() {
     interaction.like.v1 interaction.save.v1 interaction.play-complete.v1
     interaction.not-interested.v1 feature.interaction-late.v1
   )
-  local topic
+  local topic existing_topics
+  existing_topics="$("${KAFKA_HOME}/bin/kafka-topics.sh" \
+    --bootstrap-server "127.0.0.1:${KAFKA_PORT}" --list)"
   for topic in "${topics[@]}"; do
+    if grep -Fxq "${topic}" <<<"${existing_topics}"; then
+      continue
+    fi
     "${KAFKA_HOME}/bin/kafka-topics.sh" --bootstrap-server "127.0.0.1:${KAFKA_PORT}" \
       --create --if-not-exists --topic "${topic}" --partitions 3 --replication-factor 1 >/dev/null
+    existing_topics="${existing_topics}"$'\n'"${topic}"
   done
   log "Kafka 业务 Topics 已初始化"
 }
@@ -569,15 +620,23 @@ start_elasticsearch() {
     'xpack.watcher.enabled: false' \
     'ingest.geoip.downloader.enabled: false' >"${yml}"
   mkdir -p "${ELASTICSEARCH_HOME}/config/jvm.options.d"
+  mkdir -p "${LOCAL_DIR}/elasticsearch/tmp"
   printf '%s\n' '-Xms512m' '-Xmx512m' >"${ELASTICSEARCH_HOME}/config/jvm.options.d/seekflux.options"
+  prepare_elasticsearch_ownership
   local elasticsearch_pid log_file="${LOCAL_DIR}/elasticsearch/logs/console.log"
   if [[ "${OS_NAME}" == "Darwin" ]]; then
     elasticsearch_pid="$(launchd_start elasticsearch "${log_file}" \
       "${ELASTICSEARCH_HOME}/bin/elasticsearch")"
     printf '%s\n' "${elasticsearch_pid}" >"${LOCAL_DIR}/elasticsearch/run/elasticsearch.pid"
   else
-    nohup "${ELASTICSEARCH_HOME}/bin/elasticsearch" -p "${LOCAL_DIR}/elasticsearch/run/elasticsearch.pid" \
-      >"${log_file}" 2>&1 </dev/null &
+    if [[ "${EUID}" -eq 0 ]]; then
+      nohup runuser -u seekflux -- env "ES_TMPDIR=${LOCAL_DIR}/elasticsearch/tmp" \
+        "${ELASTICSEARCH_HOME}/bin/elasticsearch" \
+        -p "${LOCAL_DIR}/elasticsearch/run/elasticsearch.pid" >"${log_file}" 2>&1 </dev/null &
+    else
+      ES_TMPDIR="${LOCAL_DIR}/elasticsearch/tmp" nohup "${ELASTICSEARCH_HOME}/bin/elasticsearch" \
+        -p "${LOCAL_DIR}/elasticsearch/run/elasticsearch.pid" >"${log_file}" 2>&1 </dev/null &
+    fi
   fi
   wait_http Elasticsearch "http://127.0.0.1:${ELASTICSEARCH_PORT}/" 300
   curl --noproxy '*' -fsS -X PUT \
@@ -659,7 +718,11 @@ build_apps() {
   configure_java
   require_command mvn
   log "构建 Content、Worker、Online 与 Agent 四个应用"
-  (cd "${ROOT_DIR}" && mvn -DskipTests package)
+  # A plain incremental package can reuse target/classes resources whose
+  # timestamp matches the source even when their contents differ (for example
+  # after switching branches or restoring a workspace). Always clean local
+  # launch artifacts so the executable jars reflect the current checkout.
+  (cd "${ROOT_DIR}" && mvn -DskipTests clean package)
 }
 
 ensure_multimodal_model() {
@@ -791,7 +854,8 @@ start_web_app() {
     fi
     launchctl remove "${label}" >/dev/null 2>&1 || true
     launchctl submit -l "${label}" -o "${log_file}" -e "${log_file}" -- \
-      "${ROOT_DIR}/deploy/local/run-web-app.sh" "${WEB_SERVER_PORT}" "${node_bin_dir}" "${npm_bin_dir}"
+      "${ROOT_DIR}/deploy/local/run-web-app.sh" "${WEB_SERVER_PORT}" "${node_bin_dir}" "${npm_bin_dir}" \
+      "${WEB_SERVER_HOST}"
     for _ in {1..20}; do
       app_pid="$(launchd_pid "${label}" || true)"
       [[ "${app_pid}" =~ ^[0-9]+$ ]] && break
@@ -799,7 +863,8 @@ start_web_app() {
     done
     [[ "${app_pid}" =~ ^[0-9]+$ ]] || fail "Web 未能注册到 launchd"
   else
-    nohup "${ROOT_DIR}/deploy/local/run-web-app.sh" "${WEB_SERVER_PORT}" "${node_bin_dir}" "${npm_bin_dir}" >"${log_file}" 2>&1 </dev/null &
+    nohup "${ROOT_DIR}/deploy/local/run-web-app.sh" "${WEB_SERVER_PORT}" "${node_bin_dir}" "${npm_bin_dir}" \
+      "${WEB_SERVER_HOST}" >"${log_file}" 2>&1 </dev/null &
     app_pid="$!"
   fi
   printf '%s\n' "${app_pid}" >"${pidfile}"
@@ -863,7 +928,8 @@ infra_down() {
   fi
   ensure_postgres
   if [[ -f "${POSTGRES_DATA}/postmaster.pid" ]]; then
-    pg_ctl -D "${POSTGRES_DATA}" stop -m fast >/dev/null || true
+    prepare_postgres_ownership
+    run_as_postgres_owner pg_ctl -D "${POSTGRES_DATA}" stop -m fast >/dev/null || true
     log "PostgreSQL 已停止"
   fi
 }
@@ -880,9 +946,9 @@ service_status() {
 
 web_status() {
   if curl --noproxy '*' -fsS "http://localhost:${WEB_SERVER_PORT}/" >/dev/null 2>&1; then
-    log "Web: UP :${WEB_SERVER_PORT}"
+    log "Web: UP ${WEB_SERVER_HOST}:${WEB_SERVER_PORT}"
   else
-    log "Web: DOWN :${WEB_SERVER_PORT}"
+    log "Web: DOWN ${WEB_SERVER_HOST}:${WEB_SERVER_PORT}"
     return 1
   fi
 }

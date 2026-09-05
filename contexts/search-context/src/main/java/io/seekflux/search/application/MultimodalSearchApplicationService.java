@@ -75,10 +75,19 @@ public final class MultimodalSearchApplicationService implements MultimodalSearc
     }
 
     private static void mergeRanked(Map<String, FusionState> fused, List<MediaSearchCandidate> ranked, double weight) {
-        for (int rank = 0; rank < ranked.size(); rank++) {
-            MediaSearchCandidate candidate = ranked.get(rank);
+        LinkedHashSet<String> seenContents = new LinkedHashSet<>();
+        int contentRank = 0;
+        for (MediaSearchCandidate candidate : ranked) {
+            // A retriever ranks media segments, while the API ranks contents.
+            // Count at most the best segment for one content in each route so
+            // long videos cannot outrank an exact image only by having more
+            // indexed segments.
+            if (!seenContents.add(candidate.contentId())) {
+                continue;
+            }
             FusionState state = fused.computeIfAbsent(candidate.contentId(), ignored -> new FusionState(candidate));
-            state.score += weight / (RRF_K + rank + 1);
+            state.score += weight / (RRF_K + contentRank + 1);
+            contentRank++;
             if (candidate.score() > state.bestRawScore) {
                 state.best = candidate;
                 state.bestRawScore = candidate.score();

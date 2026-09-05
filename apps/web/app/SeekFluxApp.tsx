@@ -1185,8 +1185,9 @@ function ConsumerContentCard({ item, index, attribution, addInteraction, runSimi
         </div>
       </div>
       {detailOpen && (
-        <div className="content-detail-backdrop" role="presentation" onMouseDown={() => setDetailOpen(false)}>
-          <section className="content-detail" role="dialog" aria-modal="true" aria-label={item.title} onMouseDown={(event) => event.stopPropagation()}>
+        <div className="content-detail-backdrop" role="presentation">
+          <button className="content-detail-dismiss" onClick={() => setDetailOpen(false)} aria-label="关闭详情" />
+          <section className="content-detail" role="dialog" aria-modal="true" aria-label={item.title}>
             <button className="content-detail-close" onClick={() => setDetailOpen(false)} aria-label="关闭详情">×</button>
             <div className={`content-detail-media ${isArticle ? "article-assets" : ""}`}>
               {isArticle ? assets.map((asset, assetIndex) => (

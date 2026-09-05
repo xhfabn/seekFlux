@@ -682,7 +682,8 @@ button:focus-visible, a:focus-visible, input:focus-visible, textarea:focus-visib
 .consumer-card-byline button:hover { background: #242731; color: white; }
 .consumer-card-byline .icon { width: 14px; }
 .content-detail-backdrop { position: fixed; inset: 0; z-index: 120; display: grid; place-items: center; padding: 28px; background: rgba(4,5,8,.82); backdrop-filter: blur(12px); }
-.content-detail { position: relative; width: min(1080px, 96vw); max-height: min(820px, 92vh); display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(310px, .75fr); overflow: hidden; border: 1px solid #343843; border-radius: 20px; background: #171920; box-shadow: 0 32px 100px rgba(0,0,0,.55); }
+.content-detail-dismiss { position: absolute; inset: 0; border: 0; background: transparent; cursor: default; }
+.content-detail { position: relative; z-index: 1; width: min(1080px, 96vw); max-height: min(820px, 92vh); display: grid; grid-template-columns: minmax(0, 1.25fr) minmax(310px, .75fr); overflow: hidden; border: 1px solid #343843; border-radius: 20px; background: #171920; box-shadow: 0 32px 100px rgba(0,0,0,.55); }
 .content-detail-close { position: absolute; top: 14px; right: 14px; z-index: 2; width: 35px; height: 35px; border: 1px solid rgba(255,255,255,.16); border-radius: 50%; background: rgba(10,11,15,.72); color: white; font-size: 22px; cursor: pointer; }
 .content-detail-media { min-height: 520px; background: #090a0e; }
 .content-detail-media > video, .content-detail-media > img { width: 100%; height: 100%; max-height: 82vh; object-fit: contain; }

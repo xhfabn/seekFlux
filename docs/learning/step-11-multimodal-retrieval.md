@@ -52,6 +52,16 @@ POST /v1/search/multimodal → MultimodalSearchUseCase
 - 文本跨模态查询同时走 SigLIP 共享空间 kNN 和理解文本 BM25，以加权 RRF 做后端融合；
   图片/视频查询仍只依赖真实媒体向量，不在前端伪造标签；
 - API 返回命中通道、理解证据、降级状态与不可用通道，Web 使用后端返回的命中通道展示原因。
+- Linux root 本地启动已能让项目 PostgreSQL 以 `postgres` 用户、Elasticsearch 以自动创建的
+  `seekflux` 用户运行；Java 启动改为 `clean package`，避免旧 `target/classes` 资源进入新 Jar；
+- Web 本地启动使用 Vinext Node Runtime，Cloudflare 构建模式保持不变；PID 文件直接跟踪
+  Vinext 服务进程，`apps-down` 不再遗留占用 3001 的孤儿进程；
+- Web 启动入口支持通过 `.env` 配置 `WEB_SERVER_HOST` 与 `WEB_SERVER_PORT`；受控云开发环境
+  可以只把 Web 绑定到 `0.0.0.0:10000`，其余数据、中间件和模型端口继续保持本机回环；
+- Sidecar 和真实媒体验收脚本对 `localhost`、`127.0.0.1`、`::1` 强制绕过系统 HTTP 代理，
+  本地 MinIO 媒体不再被代理误报 502；
+- 媒体分段检索结果在每条召回路由内先按内容去重，再进入 RRF；长视频不能仅凭更多索引分段
+  累加分数压过完全相同的图片，并有回归测试覆盖该排序边界。
 
 ## 关键代码入口
 
@@ -67,30 +77,54 @@ POST /v1/search/multimodal → MultimodalSearchUseCase
 
 ## 如何验证
 
-已执行：
+2026-09-05 已在 Ubuntu 20.04、JDK 21、Node 22、Python 3.12、RTX 4090 环境完成一次
+真实模型和真实上传链路验收。固定模型 `google/siglip2-base-patch16-224` 运行于 CUDA，健康接口
+报告视觉、OCR、ASR 启用，进程占用约 2 GiB 显存。通过 Content API 上传一张生成图片和一段
+11 秒带合成语音的视频，二者经 PostgreSQL/Outbox、Kafka、Worker 后发布，并在
+`seekflux-media-segments-v2` 形成 1 个图片分段和 2 个视频分段：
+
+- 图片 OCR 得到 `SEEKFLUXCOFFEELAB`，置信度 0.9938；
+- 视频 OCR 得到 `SEEKFLUXMOUNTAINJOURNEY`，置信度约 0.994；
+- 视频 ASR 得到 `A mountain journey under a blue sky seek flux multimodal retrieval.`，
+  置信度 0.9957，模型版本 `faster-whisper-small`；
+- 文字查询 `mountain journey under a blue sky` 把视频排第 1，同时命中 `VISUAL` 和
+  `UNDERSTANDING_TEXT`，无降级；
+- 使用原图查询时相同图片排第 1；使用原视频查询时相同视频排第 1，命中视频范围
+  `5000–10000 ms`；
+- Web 首页返回 200，经 `/api/bridge/online/v1/search/multimodal` 查询返回 200；普通 Search、
+  Feed 和 MinIO 对象可达性也由 `tools/verify_media_flow.py` 验收通过。
+- 云开发环境把 Web 配置为 `WEB_SERVER_HOST=0.0.0.0`、`WEB_SERVER_PORT=10000` 后，`ss` 确认
+  Vinext 监听所有 IPv4 接口；回环地址、容器网卡地址和模拟平台转发域名的请求均返回 200，
+  `./seekflux.sh status` 同时报告完整链路全部为 UP。
+
+本次实际执行：
 
 ```bash
-bash -n seekflux.sh deploy/local/stack.sh
-python3 -m py_compile tools/multimodal/server.py
-mvn -pl contexts/search-context,platform/model-serving,platform/retrieval,apps/worker-runner,apps/online-server -am -DskipTests package
-mvn -pl contexts/search-context -am test
+bash -n seekflux.sh deploy/local/stack.sh deploy/local/run-web-app.sh deploy/local/seed-demo-content.sh
+.runtime/multimodal-venv/bin/python -m py_compile tools/multimodal/server.py tools/verify_media_flow.py
+./seekflux.sh up
+./seekflux.sh status
+ss -lntp '( sport = :10000 )'
+curl --noproxy '*' http://127.0.0.1:10000/
+mvn -pl contexts/search-context -am -Dtest=MultimodalSearchApplicationServiceTest -Dsurefire.failIfNoSpecifiedTests=false test
 mvn -pl apps/worker-runner,apps/online-server -am -Dtest=ContentMediaIndexWorkerTest,MultimodalSearchControllerTest -Dsurefire.failIfNoSpecifiedTests=false test
+cd apps/web && npm run lint && npm test
+python3 tools/verify_media_flow.py \
+  35d855a6-26b3-4f3b-b0b6-819571ed053e \
+  90818b0d-05c5-43cc-ab02-906582da7806 --query E2E
 ```
 
-编译和 Python 语法检查通过；Search Context 的视觉多分段、文本双路 RRF 测试通过；
-Worker 的版本化证据入库测试和 Controller 契约测试在 JDK 21 下通过。使用当前 shell 默认
-JDK 25 跑全量 Worker 测试时，旧 `BasicContentProfileWorkerTest` 仍被 Mockito/ByteBuddy
-自附加权限阻断，这不是新增测试失败。当前 macOS 已安装 FFmpeg 与 Python 3.12，但
-Homebrew Python 的 `pyexpat` 与系统 `libexpat` 符号不兼容，依赖和模型尚未成功安装；因此
-没有把 Sidecar 启动或真实媒体结果写成验收通过。
+Shell/Python 检查、Search Context 3 个多模态融合测试、Worker/Controller 定向测试、Web lint、
+Web 构建和 3 个渲染测试均通过。首次启动还实际验证了 SigLIP 与 Whisper 权重下载、CUDA 加载、
+MinIO 上传、异步索引、三种查询输入以及 Web Bridge。该两条样本只证明链路可运行，不是固定
+查询集，也不构成 Recall@K 或消融基线。
 
 ## 剩余完成门槛
 
-1. 实际下载并启动固定版本 SigLIP 模型，使用至少一组真实图片和视频完成端到端验收；
-2. 建立固定跨模态查询集，分别报告文字搜图/视频、以图搜图/视频、视频搜视频 Recall@K，
+1. 建立固定跨模态查询集，分别报告文字搜图/视频、以图搜图/视频、视频搜视频 Recall@K，
    并分别做视觉、OCR、ASR、Caption 消融；
-3. 补齐 v1 → v2 索引重建命令、模型版本切换、Kafka 重试/DLQ、URI 出站安全和资源限流；
-4. 把通道延迟、失败率、证据覆盖率和索引积压接入可观测性。
+2. 补齐 v1 → v2 索引重建命令、模型版本切换、Kafka 重试/DLQ、URI 出站安全和资源限流；
+3. 把通道延迟、失败率、证据覆盖率和索引积压接入可观测性。
 
 完成上述门槛并保留可复现证据后，才能进入 Step 12 模型排序与推荐实验。
 

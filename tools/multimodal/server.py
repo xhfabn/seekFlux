@@ -75,9 +75,17 @@ def download(uri: str, directory: Path) -> Path:
         raise HTTPException(400, "media input must be an http(s) URI")
     destination = directory / (Path(parsed.path).name or "media.bin")
     request = urllib.request.Request(uri, headers={"User-Agent": "SeekFlux-Multimodal/2.0"})
+    # Hosted development environments commonly inject an HTTP proxy without a
+    # matching NO_PROXY value. Local MinIO media must never be sent to that
+    # proxy, otherwise a valid upload becomes a misleading 502 response.
+    opener = (
+        urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        if parsed.hostname in {"localhost", "127.0.0.1", "::1"}
+        else urllib.request.build_opener()
+    )
     total = 0
     try:
-        with urllib.request.urlopen(request, timeout=60) as response, destination.open("wb") as output:
+        with opener.open(request, timeout=60) as response, destination.open("wb") as output:
             while chunk := response.read(1024 * 1024):
                 total += len(chunk)
                 if total > MAX_DOWNLOAD_BYTES:

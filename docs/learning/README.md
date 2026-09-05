@@ -11,7 +11,7 @@
 
 > **当前处于：Step 10 已完成，Step 11「多模态媒体理解与跨模态检索」已开始、仍为下一步。**
 
-截至 2026-08-18，已经跑通以下真实链路：
+截至 2026-09-05，已经跑通以下真实链路：
 
 - 内容登记 → PostgreSQL/Outbox → Kafka → Worker 生成画像并发布 → Elasticsearch 建索引；
 - 用户画像保存到 Redis → Search/Feed 使用真实后端数据；
@@ -31,6 +31,9 @@
 - C 端“发现”已通过同源 Bridge 接通推荐、关键词搜索和任务型多轮 AI 搜索；AI 搜索保存 Session/Goal 版本、支持追问与取消，并复用 Search Tool 的真实候选，B 端“用户画像／内容工作台”保持后端联调；
 - 视频/图文内容类型、多媒体资源、正文和来源许可字段已经贯穿 Content v2 事件、Elasticsearch、Search/Feed 与 Web；外部媒体可由 Pixabay、Qilin 本地数据或规范化 Manifest 下载到 MinIO 后幂等登记，无标签内容不会自动进入分发；
 - Spring MVC 普通返回值、JDBC/HikariCP、同步 Redis/Elasticsearch Adapter，以及推荐局部有界并发。
+- RTX 4090/CUDA 上的固定 SigLIP 2、RapidOCR 与 faster-whisper 已通过一组真实上传图片和带语音
+  视频的端到端验收；文本、图片、视频查询均能返回真实媒体与视频时间范围，但固定五向查询集、
+  Recall@K 和通道消融尚未完成，因此 Step 11 仍是“下一步”。
 
 Agent Phase 3 已经完成，Phase 4 的行为事实与实时特征两个深化切片也已完成。OpenAI-compatible Adapter 现兼容标准 `message.content` 与 LongCat 的 `message.reasoning_content`；本地已用 LongCat-2.0 跑通一次模型 → Agent → Search Tool → Web 的真实功能验收，并观测到 Provider 返回的 Token usage。默认固定评测仍使用可复现的确定性 Provider，这次验收不冒充质量或成本基线。HITL、Handoff、子 Agent、MCP、Checkpoint 精确恢复、写 Tool 副作用账本、上下文压缩、流式 Push 和完整 OpenTelemetry 仍未完成；Ark-Leto 反向核对矩阵见 [ADR-006](../adr/ADR-006-agent-reliability-fencing-outbox-shadow.md)。
 
@@ -64,7 +67,8 @@ Step 3 提前实现 Feed 是已经发生的项目事实，不需要删除或伪�
 
 Step 10 已补齐可播放视频、可阅读图文、来源审计和真实导入入口。Step 11 已加入 SigLIP
 共享向量、视频关键帧、OCR、ASR、可选视觉描述、版本化理解证据和文本双路 RRF；目前仍
-只有代码/单测基线，尚未完成真实模型端到端验收和固定跨模态评测，所以状态仍是“下一步”。
+已用一组真实上传图片和带语音视频完成 CUDA 模型、异步索引及三类查询输入验收，但尚未完成
+固定五向跨模态查询集、Recall@K 和消融评测，所以状态仍是“下一步”。
 
 计划范围：
 
