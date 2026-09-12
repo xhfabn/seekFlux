@@ -1,7 +1,7 @@
 package io.seekflux.apps.agentserver.runtime;
 
-import io.seekflux.platform.agentruntime.llm.ShadowControl;
-import io.seekflux.platform.agentruntime.llm.ShadowSettingsStore;
+import io.seekflux.platform.agentruntime.application.spi.capability.shadow.ShadowSettingsStore;
+import io.seekflux.platform.agentruntime.application.spi.capability.shadow.model.ShadowSettings;
 import java.util.Optional;
 import org.springframework.data.redis.core.StringRedisTemplate;
 
@@ -16,7 +16,7 @@ public final class RedisShadowSettingsStore implements ShadowSettingsStore {
     }
 
     @Override
-    public Optional<ShadowControl.Settings> load() {
+    public Optional<ShadowSettings> load() {
         String value = redis.opsForValue().get(KEY);
         if (value == null || value.isBlank()) {
             return Optional.empty();
@@ -26,7 +26,7 @@ public final class RedisShadowSettingsStore implements ShadowSettingsStore {
             return Optional.empty();
         }
         try {
-            return Optional.of(new ShadowControl.Settings(
+            return Optional.of(new ShadowSettings(
                     Boolean.parseBoolean(parts[0]),
                     Double.parseDouble(parts[1])));
         } catch (IllegalArgumentException ignored) {
@@ -35,7 +35,7 @@ public final class RedisShadowSettingsStore implements ShadowSettingsStore {
     }
 
     @Override
-    public void save(ShadowControl.Settings settings) {
+    public void save(ShadowSettings settings) {
         redis.opsForValue().set(KEY, settings.enabled() + "|" + settings.sampleRate());
     }
 }

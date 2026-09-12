@@ -1,7 +1,7 @@
 package io.seekflux.platform.persistence.agent;
 
-import io.seekflux.platform.agentruntime.llm.AgentShadowRecorder;
-import io.seekflux.platform.agentruntime.llm.ShadowEvaluation;
+import io.seekflux.platform.agentruntime.application.spi.capability.shadow.AgentShadowRecorder;
+import io.seekflux.platform.agentruntime.application.spi.capability.shadow.model.ShadowEvaluation;
 import java.sql.Types;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;

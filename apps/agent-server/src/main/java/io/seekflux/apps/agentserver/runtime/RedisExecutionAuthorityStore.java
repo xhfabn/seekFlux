@@ -1,7 +1,7 @@
 package io.seekflux.apps.agentserver.runtime;
 
-import io.seekflux.platform.agentruntime.execution.ExecutionAuthority;
-import io.seekflux.platform.agentruntime.execution.ExecutionAuthorityStore;
+import io.seekflux.platform.agentruntime.application.spi.capability.execution.ExecutionAuthority;
+import io.seekflux.platform.agentruntime.application.spi.capability.execution.ExecutionAuthorityStore;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicBoolean;

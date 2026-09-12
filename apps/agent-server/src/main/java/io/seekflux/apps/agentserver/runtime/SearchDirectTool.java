@@ -1,10 +1,10 @@
 package io.seekflux.apps.agentserver.runtime;
 
-import io.seekflux.platform.agentruntime.AgentTool;
-import io.seekflux.platform.agentruntime.AgentToolContext;
-import io.seekflux.platform.agentruntime.AgentToolParameter;
-import io.seekflux.platform.agentruntime.AgentToolResult;
-import io.seekflux.platform.agentruntime.AgentToolSchema;
+import io.seekflux.platform.agentruntime.application.spi.business.tool.AgentTool;
+import io.seekflux.platform.agentruntime.application.spi.business.tool.model.AgentToolContext;
+import io.seekflux.platform.agentruntime.domain.model.tool.AgentToolParameter;
+import io.seekflux.platform.agentruntime.domain.model.tool.AgentToolResult;
+import io.seekflux.platform.agentruntime.domain.model.tool.AgentToolSchema;
 import io.seekflux.search.port.in.SearchQuery;
 import io.seekflux.search.port.in.SearchResultPage;
 import io.seekflux.search.port.in.SearchUnavailableException;

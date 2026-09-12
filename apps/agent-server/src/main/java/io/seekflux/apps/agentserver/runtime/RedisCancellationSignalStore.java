@@ -1,6 +1,6 @@
 package io.seekflux.apps.agentserver.runtime;
 
-import io.seekflux.platform.agentruntime.execution.CancellationSignalStore;
+import io.seekflux.platform.agentruntime.application.spi.capability.execution.CancellationSignalStore;
 import java.time.Duration;
 import java.time.Instant;
 import org.springframework.data.redis.core.StringRedisTemplate;

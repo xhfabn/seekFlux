@@ -29,22 +29,35 @@ adapter/out/  PostgreSQL、Redis、Kafka、Elasticsearch、S3、模型服务
 
 ## Agent 专用依赖规则
 
+`platform/agent-runtime` 是供业务 Context 接入的框架内核，因此不用普通 Context 的 `port/in|out` 命名，而把 `application` 明确定义为纯对外契约面：
+
+```text
+业务 / interfaces -> application/api <- domain/service
+输入请求          -> application/command
+domain/service    -> application/spi/business   <- 业务定制实现
+domain/service    -> application/spi/capability <- 基础设施或业务 Adapter
+domain/service    -> domain/model
+```
+
+API 与 SPI 都是对外契约。API 表示“业务可以调用 Runtime 什么”，Command 表示“业务向 Runtime 传入什么”，SPI 表示“业务或运行环境需要向 Runtime 提供什么”。Application 不放 Service 或通用 Model；组件状态与规则进入 `domain/model`，跨组件关系与主链编排进入 `domain/service`。默认基础设施实现可以被替换、装饰或组合。
+
 ```text
 apps/agent-server
   -> contexts/agent-orchestration-context port/in
-  -> platform/agent-runtime input port
+  -> platform/agent-runtime application/api
 
 contexts/agent-orchestration-context
   -> 自身 domain + port/out
   -/> Search Context、Agent Runtime 具体实现、外部存储
 
 platform/agent-runtime
-  -> LLM / Session / RuntimeEvent / Clock 等输出 Port
+  -> LLM / Session / RuntimeEvent / Clock 等 capability SPI
   -/> AgentOrchestration domain、Search domain、模型 SDK、Redis、Kafka、Elasticsearch
 
 Search Tool Adapter
   -> AgentOrchestration 的 AgentExecutionPort 实现
-  -> platform/agent-runtime input API
+  -> platform/agent-runtime application/api
+  -> platform/agent-runtime application/spi/business
   -> Search Use Case
   -/> Elasticsearch / Redis / Ranking Adapter
 ```

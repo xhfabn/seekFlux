@@ -2,8 +2,8 @@ package io.seekflux.platform.persistence.agent;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.seekflux.platform.agentruntime.AgentRunEvent;
-import io.seekflux.platform.agentruntime.AgentRunRecorder;
+import io.seekflux.platform.agentruntime.domain.model.run.AgentRunEvent;
+import io.seekflux.platform.agentruntime.application.spi.capability.event.AgentRunRecorder;
 import java.sql.Types;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;

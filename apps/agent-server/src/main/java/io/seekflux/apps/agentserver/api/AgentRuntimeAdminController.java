@@ -1,6 +1,7 @@
 package io.seekflux.apps.agentserver.api;
 
-import io.seekflux.platform.agentruntime.llm.ShadowControl;
+import io.seekflux.platform.agentruntime.domain.service.shadow.ShadowControl;
+import io.seekflux.platform.agentruntime.application.spi.capability.shadow.model.ShadowSettings;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.DecimalMax;
 import jakarta.validation.constraints.DecimalMin;
@@ -22,12 +23,12 @@ public final class AgentRuntimeAdminController {
     }
 
     @GetMapping("/shadow")
-    public ShadowControl.Settings shadow() {
+    public ShadowSettings shadow() {
         return shadowControl.current();
     }
 
     @PutMapping("/shadow")
-    public ShadowControl.Settings updateShadow(@Valid @RequestBody ShadowUpdate request) {
+    public ShadowSettings updateShadow(@Valid @RequestBody ShadowUpdate request) {
         return shadowControl.update(request.enabled(), request.sampleRate());
     }
 

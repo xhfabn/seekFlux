@@ -2,7 +2,7 @@ package io.seekflux.apps.agentserver.runtime;
 
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.Tags;
-import io.seekflux.platform.agentruntime.AgentRunResult;
+import io.seekflux.platform.agentruntime.domain.model.run.AgentRunResult;
 import java.util.concurrent.TimeUnit;
 
 public final class MicrometerAgentExecutionMetrics implements AgentExecutionMetrics {

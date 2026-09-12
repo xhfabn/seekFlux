@@ -34,6 +34,54 @@ flowchart LR
 | `apps/agent-server` | Spring 装配、HTTP、Redis/JDBC/Search Tool/决策 Provider Adapter | 在 Controller 内规划或过滤结果 |
 | `platform/persistence` | Session 追加事件、最新投影、Run/RunEvent 持久化 | Agent 业务决策 |
 
+### 2.1 Runtime 内部 DDD 分层
+
+`platform/agent-runtime` 已按领域、应用和基础设施三层组织；接口层位于外层应用模块，不在内核里建立空目录或反向依赖 Spring：
+
+```text
+platform/agent-runtime/.../agentruntime/
+├── domain/
+│   ├── model/
+│   │   ├── agent/definition/  # AgentDefinition：版本、工具集和执行限制
+│   │   ├── decision/          # AgentDecision 领域决策
+│   │   ├── run/               # Run 结果、事件、Trace、终态和 usage
+│   │   ├── session/           # Session、WorkspaceEvent、状态补丁与提交结果
+│   │   ├── tool/              # Tool Schema、参数、调用、结果和观察
+│   │   ├── feature/           # Feature 与 Runtime 执行上下文
+│   │   └── execution/         # 取消令牌等执行期领域状态
+│   ├── service/
+│   │   ├── runtime/           # Runtime 总编排
+│   │   ├── router/            # 请求路由
+│   │   ├── execution/         # Session 执行、fencing 与调用保护
+│   │   ├── loop/              # 有限步 Agent Loop
+│   │   ├── feature/           # Feature Pipeline
+│   │   ├── context/           # 上下文组装
+│   │   ├── tool/              # Tool 注册与选择
+│   │   └── shadow/            # Shadow 控制
+│   └── exception/             # 会话冲突、执行 fencing 等领域异常
+├── application/
+│   ├── api/                   # 业务调用 Runtime 的能力及其 API DTO
+│   ├── command/               # AgentRunRequest、FeatureRequest 等输入命令
+│   └── spi/
+│       ├── business/          # 业务可定制：Planner、Tool、FeatureNode、ContextEngine
+│       └── capability/        # Runtime 所需：Session、LLM、执行权、记录与事件
+└── infrastructure/
+    ├── event/                 # 默认 PushEvent publisher
+    ├── llm/                   # Shadow LLM 装饰器
+    ├── prompt/                # 内存 Prompt resolver
+    └── tool/                  # 默认 Tool executor
+
+apps/agent-server/
+├── api/                       # 当前物理包；在系统 DDD 视图中对应 interfaces/rest
+└── runtime/                   # Redis/JDBC/Search/Provider 等外部 Adapter 与装配
+```
+
+`application` 是 Runtime 的纯契约面，不保存业务编排：业务通过 `application/api` 调用 Runtime，通过 `application/command` 传入请求；Runtime 通过 `application/spi` 调用由业务或运行环境提供的能力。API/SPI 专属 DTO 与对应契约就近放置，不再建立笼统的 `application/model`、`application/port` 或 `application/service`。
+
+`spi/business` 承载 Agent Planner、Tool、Feature 和上下文组装等业务扩展；`spi/capability` 承载 LLM、Session、执行权、记录和事件发布等运行能力。`domain/model` 保存各组件自身的状态与规则，`domain/service` 保存 Runtime、Router、Loop、Feature、Context、Tool、执行权和 Shadow 之间的编排。`infrastructure` 只提供可替换的默认 SPI 实现，外层业务可以实现、替换、装饰或组合这些 SPI。
+
+具体调用关系是：`业务/interfaces → application/api ← domain/service`，`domain/service → application/spi ← 业务/infrastructure`，同时 `domain/service` 编排 `domain/model`。Domain 不依赖具体 Infrastructure，Application 契约不依赖 Domain Service 或 Infrastructure；`apps/agent-server` 作为组合根把 HTTP 接口、Context Port 和外部 Adapter 装配到 Runtime。此次调整改变了 Java 类型的包名并更新了仓库内全部调用方，但没有改变方法体、HTTP/OpenAPI 契约、事件 Schema 或运行语义。
+
 ## 3. 主链路
 
 ```mermaid

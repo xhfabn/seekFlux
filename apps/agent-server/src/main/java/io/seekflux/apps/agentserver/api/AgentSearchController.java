@@ -4,7 +4,7 @@ import io.seekflux.agent.domain.ConstraintPatch;
 import io.seekflux.agent.port.in.AgentRequestedMode;
 import io.seekflux.agent.port.in.AgentSearchCommand;
 import io.seekflux.agent.port.in.AgentSearchUseCase;
-import io.seekflux.platform.agentruntime.router.Router;
+import io.seekflux.platform.agentruntime.application.api.Router;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Size;
 import java.util.List;

@@ -1,6 +1,6 @@
 package io.seekflux.apps.agentserver.runtime;
 
-import io.seekflux.platform.agentruntime.AgentRunResult;
+import io.seekflux.platform.agentruntime.domain.model.run.AgentRunResult;
 
 public interface AgentExecutionMetrics {
 

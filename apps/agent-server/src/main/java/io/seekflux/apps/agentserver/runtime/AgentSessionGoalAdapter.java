@@ -2,7 +2,7 @@ package io.seekflux.apps.agentserver.runtime;
 
 import io.seekflux.agent.domain.SearchGoal;
 import io.seekflux.agent.port.out.AgentConversationPort;
-import io.seekflux.platform.agentruntime.session.AgentSessionStore;
+import io.seekflux.platform.agentruntime.application.spi.capability.session.AgentSessionStore;
 import java.util.Optional;
 
 public final class AgentSessionGoalAdapter implements AgentConversationPort {
