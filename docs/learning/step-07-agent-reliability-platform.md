@@ -28,6 +28,7 @@ Phase 2 证明了 Agent 的编排增量，但租约过期、实例退出、重�
 - 隔离执行器中的 Shadow、PostgreSQL 对比记录、Redis 跨实例开关和管理 API；
 - OpenAI-compatible 响应兼容标准 `message.content` 与 LongCat `message.reasoning_content`，两种结构都保留真实 usage；
 - Agent Runtime 内核完成 DDD 物理分层：Application 只保留 `api`、`command`、`spi/business`、`spi/capability` 对外契约；领域模型按 Agent Definition、Decision、Run、Session、Tool、Feature、Execution 细分；Runtime、Router、Loop、Feature、Context、Tool、Execution、Shadow 编排进入 `domain/service`，默认 SPI 实现进入 `infrastructure`；外层 Agent Server 的 HTTP API 对应系统 `interfaces/rest`；
+- Runtime 技术实现和 Search Agent 业务适配器按所有者内聚：执行权、取消和 Shadow 配置的 Redis 默认实现进入 `platform/agent-runtime/infrastructure`，Runtime/Context 映射、Search Tool、Direct Fallback、投影、确定性决策、OpenAI-compatible Provider 和指标进入 `contexts/agent-orchestration-context/infrastructure`；Agent Server 只保留 REST、启动和组合装配；
 - C 端新增任务型 AI 搜索界面，通过同源 Bridge 直连 Agent Server，支持多轮 Goal 版本、追问、取消、降级提示和真实 Search 候选展示；
 - macOS 中间件改由 launchd 托管，解决启动命令结束后 Kafka/ES/MinIO 退出的问题；
 - 自带样本发布、索引等待、清理和数据库断言的可靠性 Eval。
@@ -51,17 +52,20 @@ Phase 2 证明了 Agent 的编排增量，但租约过期、实例退出、重�
 | `platform/agent-runtime/.../application/spi/business/` | Planner、Tool、Feature、Context 等业务定制 SPI |
 | `platform/agent-runtime/.../application/spi/capability/` | Session、LLM、执行权、记录和事件等能力 SPI |
 | `platform/agent-runtime/.../domain/service/execution/SessionExecutor.java` | fencing、续租、恢复、跨实例取消、优雅停机 |
-| `apps/agent-server/.../RedisExecutionAuthorityStore.java` | 原子 fencing 计数与 owner-CAS Lua |
+| `platform/agent-runtime/.../infrastructure/redis/RedisExecutionAuthorityStore.java` | 原子 fencing 计数与 owner-CAS Lua |
 | `platform/persistence/.../JdbcAgentSessionStore.java` | 受 fencing 保护的 Session/Outcome/Outbox 事务 |
 | `platform/agent-runtime/.../domain/service/execution/AgentCallGuard.java` | 模型/Tool Bulkhead 与故障注入边界 |
 | `platform/agent-runtime/.../infrastructure/llm/ShadowingLlmClient.java` | 不影响主链的 Shadow 执行 |
-| `apps/agent-server/.../RedisShadowSettingsStore.java` | 跨实例 Shadow 开关 |
+| `platform/agent-runtime/.../infrastructure/redis/RedisShadowSettingsStore.java` | 跨实例 Shadow 开关 |
+| `contexts/agent-orchestration-context/.../infrastructure/runtime/AgentRuntimeExecutionAdapter.java` | Context 输出 Port 与 Runtime API 的业务映射 |
 | `apps/worker-runner/.../AgentOutcomeAuditWorker.java` | 幂等 Agent 终态审计消费者 |
 | `evals/run_agent_reliability_eval.py` | 真实链路可靠性/SLO 固定评测 |
 
 ## 完成证据
 
 - 2026-09-12 DDD 包结构调整后，Agent Runtime 23 个测试通过；包含 Agent Orchestration、Agent Server、Worker 及依赖在内的 17 个 Reactor 模块完整测试无失败；
+- 2026-09-13 Adapter 按所有者收敛后，Agent Runtime 26 个测试、Agent Orchestration Context 7 个测试通过；包含 Server、Worker 及依赖在内的 17 个 Reactor 模块 clean 回归无失败；
+- 2026-09-13 模型 Provider 所有权修正后，OpenAI-compatible Adapter 及其 3 个协议测试迁入 Agent Orchestration Context；Agent Runtime 23 个测试、Agent Orchestration Context 10 个测试通过，17 个 Reactor 模块共 76 个测试 clean 回归无失败；
 - `agent-reliability-v1` 使用真实 Content → Outbox/Kafka → Worker → Elasticsearch → Agent 链路，12 次请求可用性 `1.0`，P95 `226.402 ms`，Fallback Rate `0.0`；
 - 单写者、fencing 单调、重复请求无额外 Run/Tool 事件、终态 Outbox、幂等审计消费、Shadow 主结果不变和快速关闭全部为 `true`；
 - 固定单测证明旧 owner 不能提交、另一个实例写取消能停止 Loop、模型/Tool 故障稳定回退、Bulkhead 饱和快速拒绝；

@@ -4,6 +4,9 @@
 
 ```text
 apps -> contexts + platform
+apps -> Context/Runtime 的接口与实现（只负责选择和装配）
+context infrastructure -> context application/port + Runtime API/SPI + 被适配 Context 输入 Port
+platform infrastructure -> platform application SPI
 platform -> context output ports（实现阶段按需依赖）
 context adapter -> application -> domain
 application -> port/in + port/out + domain
@@ -43,26 +46,23 @@ API 与 SPI 都是对外契约。API 表示“业务可以调用 Runtime 什么�
 
 ```text
 apps/agent-server
+  -> interfaces/rest + bootstrap
   -> contexts/agent-orchestration-context port/in
+  -> contexts/agent-orchestration-context infrastructure
   -> platform/agent-runtime application/api
 
 contexts/agent-orchestration-context
-  -> 自身 domain + port/out
-  -/> Search Context、Agent Runtime 具体实现、外部存储
+  domain/application/port -> 自身业务规则与契约
+  infrastructure -> 自身 port/out + Runtime application/api/business SPI/capability SPI + Search port/in + OpenAI-compatible 协议
+  domain/application/port -/> Runtime 具体实现、Redis、Micrometer
 
 platform/agent-runtime
-  -> LLM / Session / RuntimeEvent / Clock 等 capability SPI
-  -/> AgentOrchestration domain、Search domain、模型 SDK、Redis、Kafka、Elasticsearch
-
-Search Tool Adapter
-  -> AgentOrchestration 的 AgentExecutionPort 实现
-  -> platform/agent-runtime application/api
-  -> platform/agent-runtime application/spi/business
-  -> Search Use Case
-  -/> Elasticsearch / Redis / Ranking Adapter
+  domain/application -> LLM / Session / RuntimeEvent / Clock 等 capability SPI
+  infrastructure -> 自身 application/spi + Runtime 所有的纯 Java/Redis 默认实现
+  domain/application/infrastructure -/> AgentOrchestration domain、Search domain、Elasticsearch
 ```
 
-AgentOrchestration 决定搜索目标、约束修正、追问和业务回退；Runtime 只执行有限步循环、Deadline、取消、Tool 调度与运行事件。跨 Context 装配发生在 `agent-server` Adapter：`SearchDirectTool` 与确定性回退都调用 Search 的稳定输入 Port。Direct Search 不反向依赖 Agent 模块。
+AgentOrchestration 的 Domain/Application 决定搜索目标、约束修正、追问和业务回退；Runtime 的 Domain/Application 只执行有限步循环、Deadline、取消、Tool 调度与运行事件。跨 Context 适配发生在 `agent-orchestration-context/infrastructure`：`SearchDirectTool` 与确定性回退都调用 Search 的稳定输入 Port。最终实现选择发生在 `agent-server/bootstrap`，但 Server 不拥有 Adapter 实现。Direct Search 不反向依赖 Agent 模块。
 
 ## 物理部署基线
 
@@ -71,7 +71,7 @@ AgentOrchestration 决定搜索目标、约束修正、追问和业务回退；R
 | online-server | Search、Recommendation、Interaction、UserInterest、Ranking、Experiment、Moderation |
 | content-server | Content、Moderation、Feature/Model 控制面 |
 | worker-runner | 内容理解、索引发布、行为事实写入、特征写入、Outbox Relay 与 Agent 终态幂等审计消费 |
-| agent-server | Agent API、AgentOrchestration、Agent Runtime 与 Tool 装配；端口 `8083`，独立线程池和故障边界 |
+| agent-server | Agent REST API 与组合装配；依赖 AgentOrchestration 和 Runtime 模块，端口 `8083`，独立线程池和故障边界 |
 | realtime-features | 生产 Flink 事件时间窗口、短期兴趣、内容热度与迟到事件输出；本地统一启动由 Worker JDBC 参考投影器执行同一策略 |
 | multimodal-model（Step 11） | SigLIP 共享向量、FFmpeg 关键帧、RapidOCR、faster-whisper 与可选 BLIP；只经 MediaEmbeddingPort/MediaUnderstandingPort 被 Java 应用调用 |
 | training-runner（Step 12 可选） | 样本生成、基线训练、离线评测、模型注册 |

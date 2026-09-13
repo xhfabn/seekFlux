@@ -106,6 +106,7 @@ public final class SessionExecutor implements AutoCloseable {
             }
             AgentSession fresh = sessions.restoreFresh(sessionId)
                     .orElseThrow(() -> new IllegalStateException("agent session disappeared before execution"));
+            //loop 启动入口
             AgentRunResult result = loop.run(fresh, context, publisher, token);
             if (!authority.renew(AUTHORITY_TTL_MILLIS)) {
                 throw new AgentExecutionFencedException(sessionId, authority.fencingToken());

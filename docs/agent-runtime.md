@@ -29,14 +29,14 @@ flowchart LR
 
 | 模块 | 已实现职责 | 禁止拥有的职责 |
 | --- | --- | --- |
-| `platform/agent-runtime` | Router、Feature、Session 执行、有限步 Loop、上下文、Tool、运行事件 | Search 约束语义、Spring、模型厂商 SDK、Redis/ES 访问 |
-| `contexts/agent-orchestration-context` | SearchGoal/ConstraintPatch、SearchPlan、Query Mode、追问与回退业务状态、输入/输出 Port | 线程池、租约实现、HTTP、直接检索索引 |
-| `apps/agent-server` | Spring 装配、HTTP、Redis/JDBC/Search Tool/决策 Provider Adapter | 在 Controller 内规划或过滤结果 |
+| `platform/agent-runtime` | Runtime Domain/Application、纯 Java 默认实现，以及 Redis 执行权/取消/Shadow 配置 | SearchGoal、Search Tool、模型厂商协议、HTTP 或 Elasticsearch 业务访问 |
+| `contexts/agent-orchestration-context` | SearchGoal/ConstraintPatch、SearchPlan、Query Mode、输入/输出 Port，以及 Runtime/Search/LLM Provider/投影/指标业务 Adapter | Runtime 通用机制、HTTP 接口、直接访问检索索引 |
+| `apps/agent-server` | `interfaces/rest`、Spring Boot 启动和最终 Bean 装配 | Runtime/Context/技术 Adapter 的具体实现，在 Controller 内规划或过滤结果 |
 | `platform/persistence` | Session 追加事件、最新投影、Run/RunEvent 持久化 | Agent 业务决策 |
 
 ### 2.1 Runtime 内部 DDD 分层
 
-`platform/agent-runtime` 已按领域、应用和基础设施三层组织；接口层位于外层应用模块，不在内核里建立空目录或反向依赖 Spring：
+`platform/agent-runtime` 已按领域、应用和基础设施三层组织；Domain/Application 不依赖 Spring，具体技术依赖只允许出现在 Infrastructure。接口层位于外层应用模块：
 
 ```text
 platform/agent-runtime/.../agentruntime/
@@ -69,18 +69,30 @@ platform/agent-runtime/.../agentruntime/
     ├── event/                 # 默认 PushEvent publisher
     ├── llm/                   # Shadow LLM 装饰器
     ├── prompt/                # 内存 Prompt resolver
-    └── tool/                  # 默认 Tool executor
+    ├── tool/                  # 默认 Tool executor
+    └── redis/                 # 执行权、取消、Shadow 配置的 Redis 实现
 
-apps/agent-server/
-├── api/                       # 当前物理包；在系统 DDD 视图中对应 interfaces/rest
-└── runtime/                   # Redis/JDBC/Search/Provider 等外部 Adapter 与装配
+contexts/agent-orchestration-context/
+├── domain/                    # Search Agent 领域语义
+├── application/、port/        # 用例与输入/输出契约
+└── infrastructure/
+    ├── runtime/               # AgentExecutionPort → Runtime Router
+    ├── search/、tool/         # Direct Search 与 Search Agent Tool
+    ├── session/、projection/  # 会话目标和 Redis 热投影
+    ├── llm/                   # 确定性决策与 OpenAI-compatible LlmClient Adapter
+    └── observability/         # Agent 执行指标
+
+apps/agent-server/.../agentserver/
+├── interfaces/rest/          # HTTP Controller、DTO 和异常映射
+├── bootstrap/                # Spring Bean 组合装配
+└── AgentServerApplication    # 可独立部署的进程入口
 ```
 
 `application` 是 Runtime 的纯契约面，不保存业务编排：业务通过 `application/api` 调用 Runtime，通过 `application/command` 传入请求；Runtime 通过 `application/spi` 调用由业务或运行环境提供的能力。API/SPI 专属 DTO 与对应契约就近放置，不再建立笼统的 `application/model`、`application/port` 或 `application/service`。
 
-`spi/business` 承载 Agent Planner、Tool、Feature 和上下文组装等业务扩展；`spi/capability` 承载 LLM、Session、执行权、记录和事件发布等运行能力。`domain/model` 保存各组件自身的状态与规则，`domain/service` 保存 Runtime、Router、Loop、Feature、Context、Tool、执行权和 Shadow 之间的编排。`infrastructure` 只提供可替换的默认 SPI 实现，外层业务可以实现、替换、装饰或组合这些 SPI。
+`spi/business` 承载 Agent Planner、Tool、Feature 和上下文组装等业务扩展；`spi/capability` 承载 LLM、Session、执行权、记录和事件发布等运行能力。`domain/model` 保存各组件自身的状态与规则，`domain/service` 保存 Runtime、Router、Loop、Feature、Context、Tool、执行权和 Shadow 之间的编排。Runtime 的 `infrastructure` 只提供由 Runtime 拥有且与具体 Agent 业务无关的默认实现；模型厂商协议及其到业务 Decision 的转换由 Context Infrastructure 实现对应 SPI。
 
-具体调用关系是：`业务/interfaces → application/api ← domain/service`，`domain/service → application/spi ← 业务/infrastructure`，同时 `domain/service` 编排 `domain/model`。Domain 不依赖具体 Infrastructure，Application 契约不依赖 Domain Service 或 Infrastructure；`apps/agent-server` 作为组合根把 HTTP 接口、Context Port 和外部 Adapter 装配到 Runtime。此次调整改变了 Java 类型的包名并更新了仓库内全部调用方，但没有改变方法体、HTTP/OpenAPI 契约、事件 Schema 或运行语义。
+具体调用关系是：`业务/interfaces → Context 输入 Port → Context 应用服务 → Context 输出 Port ← Context infrastructure → Runtime application/api`；Runtime 的 `domain/service → application/spi ← Runtime infrastructure`。Domain/Application 不依赖具体 Infrastructure，实现依赖由组合根注入。`apps/agent-server` 只是可部署宿主和组合根，不是第三层业务逻辑；它选择实现并管理 Spring/线程池生命周期。此次调整改变了 Java 包名和仓库内调用方，但没有改变方法体、HTTP/OpenAPI 契约、事件 Schema 或运行语义。
 
 ## 3. 主链路
 
@@ -182,7 +194,7 @@ Tool 参数校验失败后只做一次不改变业务意图的确定性修复；
 | `search-assistant` | `search-assistant-v2` | 4 | `search_direct@v1`、`search_filtered@v1` |
 | `search-precise` | `search-precise-v2` | 3 | `search_direct@v1`、`search_filtered@v1` |
 
-二者复用同一 Runtime。默认 `DeterministicSearchLlmClient@deterministic-complex-search-decision-v2` 无需 API Key，可以稳定验证“并行 Search Tool → 观察结果 → 选择候选集 → 完成”。`OpenAiCompatibleLlmClient` 已实现真实 Chat Completions 兼容协议、结构化 Decision、usage 解析和配置价格换算；协议测试不等同于真实模型质量或付费成本评测，确定性 Provider 的 Trace 会明确 `usageMeasured=false`。
+二者复用同一 Runtime。默认 `DeterministicSearchLlmClient@deterministic-complex-search-decision-v2` 无需 API Key，可以稳定验证“并行 Search Tool → 观察结果 → 选择候选集 → 完成”。Context Infrastructure 中的 `OpenAiCompatibleLlmClient` 实现 Runtime 的 `LlmClient` SPI，负责真实 Chat Completions 兼容协议、结构化 Decision、usage 解析和配置价格换算；协议测试不等同于真实模型质量或付费成本评测，确定性 Provider 的 Trace 会明确 `usageMeasured=false`。
 
 `ShadowingLlmClient` 在独立有界线程池运行候选策略，只同步返回 primary。候选结果、延迟、错误和一致性写入 `agent.shadow_evaluations`；Redis 共享的开关/采样率使任一实例关闭后其他实例下一次请求生效。Shadow 拒绝或失败不会影响主链。
 
@@ -214,7 +226,7 @@ PUT  /v1/agent/runtime/shadow
 ## 9. 验证和当前边界
 
 ```bash
-mvn -pl platform/agent-runtime,apps/agent-server,apps/worker-runner -am test
+mvn -pl platform/agent-runtime,contexts/agent-orchestration-context,apps/agent-server,apps/worker-runner -am test
 python3 evals/run_agent_search_eval.py
 python3 evals/run_complex_agent_eval.py
 python3 evals/run_agent_reliability_eval.py

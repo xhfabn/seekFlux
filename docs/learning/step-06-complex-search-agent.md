@@ -69,10 +69,10 @@ Direct Search 仍不依赖 Agent。Query Mode 和 SearchGoal 语义属于 AgentO
 | `contexts/agent-orchestration-context/.../QueryModeRouter.java` | Direct/Agent 模式判定 |
 | `contexts/agent-orchestration-context/.../SearchIntentAnalyzer.java` | 结构化 SearchPlan 基线 |
 | `contexts/agent-orchestration-context/.../SearchGoal.java` | 目标版本与 ConstraintPatch |
-| `platform/agent-runtime/.../AgentRuntime.java` | 动态 Tool、fan-out、修复、无进展检测 |
+| `platform/agent-runtime/.../domain/service/runtime/AgentRuntime.java` | 动态 Tool、fan-out、修复、无进展检测 |
 | `platform/persistence/.../JdbcAgentSessionStore.java` | 状态补丁与消息原子提交 |
-| `apps/agent-server/.../OpenAiCompatibleLlmClient.java` | 真实 Provider 协议 Adapter |
-| `apps/agent-server/.../SearchFilteredTool.java` | 标签精搜 Tool Adapter |
+| `contexts/agent-orchestration-context/.../infrastructure/llm/openai/OpenAiCompatibleLlmClient.java` | 实现 Runtime LLM SPI 的真实 Provider 协议与业务 Decision Adapter |
+| `contexts/agent-orchestration-context/.../infrastructure/tool/SearchFilteredTool.java` | 标签精搜 Tool Adapter |
 | `evals/run_complex_agent_eval.py` | 真实复杂 Query、多轮和路由评测 |
 
 ## 设计取舍与边界
@@ -94,7 +94,7 @@ python3 evals/run_complex_agent_eval.py
 OpenAI-compatible Adapter 的本地协议测试：
 
 ```bash
-mvn -pl apps/agent-server -am -Dtest=OpenAiCompatibleLlmClientTest -Dsurefire.failIfNoSpecifiedTests=false test
+mvn -pl contexts/agent-orchestration-context -am -Dtest=OpenAiCompatibleLlmClientTest -Dsurefire.failIfNoSpecifiedTests=false test
 ```
 
 若使用真实兼容端点，在 `.env` 设置 `AGENT_LLM_PROVIDER`、`AGENT_LLM_ENDPOINT`、`AGENT_LLM_API_KEY` 和 `AGENT_LLM_MODEL` 后重启 Agent Server。密钥不进入仓库或 Trace。

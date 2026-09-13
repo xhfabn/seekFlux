@@ -36,7 +36,7 @@ flowchart LR
     SessionExecutor --> Redis[(Redis Execution Authority)]
 ```
 
-Runtime Core 位于 `platform`，SearchGoal 和回退映射位于 AgentOrchestration，外部 Adapter 与装配位于独立 `agent-server`。Direct Search 不依赖 Agent 模块。
+Runtime Core 位于 `platform`，SearchGoal 位于 AgentOrchestration Core，回退映射与 Search Tool 位于 Agent Orchestration Infrastructure；独立 `agent-server` 只负责 REST 与组合装配。Direct Search 不依赖 Agent 模块。
 
 ## 完成了什么
 
@@ -83,16 +83,16 @@ SeekFlux 没有 Ark-Leto 源码或依赖，因此没有声称“使用 Ark-Leto�
 
 | 入口 | 作用 | 建议阅读顺序 |
 | --- | --- | --- |
-| `platform/agent-runtime/.../router/DefaultRouter.java` | acquire-before-commit、幂等与入口分派 | 1 |
-| `platform/agent-runtime/.../feature/` | 显式 Feature Pipeline 和 RuntimeContext | 2 |
-| `platform/agent-runtime/.../execution/SessionExecutor.java` | 续租、取消、恢复和释放 | 3 |
-| `platform/agent-runtime/.../loop/DefaultAgentLoop.java` | Context、Decision、Tool 与 PushEvent | 4 |
-| `platform/agent-runtime/.../AgentRuntime.java` | 有限步、Deadline、版本冻结和稳定终态 | 5 |
-| `platform/agent-runtime/.../session/` | WorkspaceEvent 与 Session 重放 | 6 |
+| `platform/agent-runtime/.../domain/service/router/DefaultRouter.java` | acquire-before-commit、幂等与入口分派 | 1 |
+| `platform/agent-runtime/.../domain/service/feature/` | 显式 Feature Pipeline 和 RuntimeContext | 2 |
+| `platform/agent-runtime/.../domain/service/execution/SessionExecutor.java` | 续租、取消、恢复和释放 | 3 |
+| `platform/agent-runtime/.../domain/service/loop/DefaultAgentLoop.java` | Context、Decision、Tool 与 PushEvent | 4 |
+| `platform/agent-runtime/.../domain/service/runtime/AgentRuntime.java` | 有限步、Deadline、版本冻结和稳定终态 | 5 |
+| `platform/agent-runtime/.../domain/model/session/` | WorkspaceEvent 与 Session 重放 | 6 |
 | `platform/persistence/.../agent/` | JDBC Session/Run Event Adapter | 7 |
 | `contexts/agent-orchestration-context/` | SearchGoal、约束和 Agent 用例 Port | 8 |
-| `apps/agent-server/.../SearchDirectTool.java` | Search Use Case 唯一 Tool 入口 | 9 |
-| `apps/agent-server/.../AgentRuntimeExecutionAdapter.java` | Runtime/业务状态映射与 Direct Fallback | 10 |
+| `contexts/agent-orchestration-context/.../infrastructure/tool/SearchDirectTool.java` | Search Use Case 唯一 Tool 入口 | 9 |
+| `contexts/agent-orchestration-context/.../infrastructure/runtime/AgentRuntimeExecutionAdapter.java` | Runtime/业务状态映射与 Direct Fallback | 10 |
 | `evals/run_agent_search_eval.py` | Direct/Agent 真实对照 | 11 |
 
 ## 设计取舍
