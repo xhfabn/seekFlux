@@ -22,5 +22,6 @@ public record AgentSearchResult(
         boolean candidateSetReused,
         boolean degraded,
         String fallbackReason,
+        String cancellationReason,
         AgentTraceView trace) {
 }

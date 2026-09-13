@@ -14,7 +14,7 @@ Step 6 的 Runtime 能处理复杂 Query 和多轮约束，但 Redis 租约本�
 1. Redis 获取执行权时原子递增每个 Session 永不过期的 fencing 计数器，租约值保存 `owner|fencingToken`；续租和释放都使用 owner-CAS Lua。
 2. fencing 覆盖从 Ingress 到终态提交的整个持权区间。PostgreSQL Session 保存 `active_fencing_token`，状态补丁和终态提交都拒绝旧 token；Loop 返回后必须再次续租成功才能提交结果。
 3. 新 owner 获权后从 PostgreSQL `workspace_events` 强一致重放 Session。若相同 `requestId` 已提交但 Session 仍为 `EXECUTING`，更高 fencing token 可以认领该轮并创建新的 Run attempt；普通重复请求仍返回 409。
-4. 取消信号写入 Redis 并带发生时间，运行实例按有界间隔轮询；任务只响应晚于本次启动时间的信号。优雅停机先停止接收新执行，广播取消，等待受控宽限期，再关闭调度器。清理顺序保持“移除本机 token → owner-CAS 释放租约”。
+4. 取消信号写入 Redis 并带发生时间和稳定原因；任务只响应晚于本次启动时间的信号。`USER_CANCEL | STEER | AUTHORITY_LOST | SHUTDOWN` 采用 first-cause-wins，经 Session → batch → Tool token 向下传播；Runtime 在等待模型/Tool Future 时有界轮询并通过线程中断停止在途调用，晚到结果不得推进状态。取消是独立 `CANCELLED` Outcome，不得伪装成失败或回退。优雅停机先停止接收新执行、固化本地 `SHUTDOWN`、广播取消、等待受控宽限期，再关闭调度器。清理顺序保持“移除本机 token → owner-CAS 释放租约”。
 5. Session 终态、`WorkspaceEvent` 和 Agent Outbox 在同一 PostgreSQL 事务中提交。Outbox 事件 ID 由 Session 与事件位置确定性生成；Kafka 审计消费者以 `eventId` 主键幂等写入。
 6. 模型与 Tool 使用独立 Semaphore Bulkhead，饱和时快速返回稳定错误；模型、Tool、执行权丢失和跨实例取消均有固定故障测试。Tool 声明 `READ_ONLY | IDEMPOTENT | MUTATING` 效果类型，当前 Search Tools 均为 `READ_ONLY`，Tool Call ID 由请求和规范化参数确定性生成。
 7. OpenAI-compatible Adapter 解析 Provider usage，并按配置价格计算微美元；Trace 和 Micrometer 指标关联 Agent、Prompt、Provider 与 Tool Schema 版本。默认确定性 Provider 不报告 Token，不伪造成本。
@@ -31,7 +31,7 @@ Step 6 的 Runtime 能处理复杂 Query 和多轮约束，但 Redis 租约本�
 | 接管前强一致恢复 | 已实现 | 每轮从 PostgreSQL 追加事件重放；崩溃中的相同请求可由高 token 认领 |
 | 本地 token 先移除，再释放执行权 | 已实现 | `SessionExecutor.finally` 固定清理顺序 |
 | Workspace/Run/Push 三类事件分责 | 部分实现 | Workspace 与 Run 已持久化；项目按既定同步 JSON 边界不提供流式 Push |
-| 分布式 cancel | 已实现 | Redis 信号按运行起始时间过滤，跨实例测试通过 |
+| 分布式 cancel 与在途调用停止 | 已实现 | 原因化 Redis 信号按运行起始时间过滤；真实 Loop 的模型前/中、Tool 中、跨实例和停机测试通过，Run/Trace/Push/HTTP 使用同一原因 |
 | steer 先入队、再 cancel | 未实现 | 当前没有 QueuedUserMessage/插话 API，不能把 `steer=true` 误称为完整 steer |
 | Tool Schema、动态工具、并行调用、部分成功 | 已实现 | 共同 Deadline、稳定调用 ID、候选复用和 Bulkhead |
 | Checkpoint 精确恢复 pending Tool Call | 未实现 | 当前接管从 Session 事实重跑该轮；仅对现有只读 Search Tool 安全 |
@@ -47,6 +47,7 @@ Step 6 的 Runtime 能处理复杂 Query 和多轮约束，但 Redis 租约本�
 ## 后果
 
 - 旧 owner 即使继续运行也不能污染 Session 终态或 Outbox；Redis 故障时续租失败，主链按失主处理而不是冒险提交。
+- Runtime 产出 Outcome 是取消与正常完成的线性化点；该点前观察到的取消优先并丢弃晚到模型/Tool 结果，该点后新到的取消不反向改写已完成结果。线程中断只提供协作式停止，不能撤销外部系统已经发生的写副作用。
 - Session 是唯一权威业务状态，Run attempt 可以保留失主和接管诊断记录；审计消费者可从 Outbox 重放。
 - Shadow 可跨实例快速关闭且不增加主链失败率，但当前管理 API 仍是内部接口，生产部署前必须接入平台鉴权与变更审计。
 - 现有 Search Tool 全部只读，因此接管重跑不会产生外部写副作用；未来新增发布、支付或通知类 Tool 前，Checkpoint/副作用账本成为硬门槛。

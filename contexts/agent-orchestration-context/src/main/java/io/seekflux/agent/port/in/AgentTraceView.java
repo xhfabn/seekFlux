@@ -17,6 +17,7 @@ public record AgentTraceView(
         String terminalState,
         String executionMode,
         String fallbackReason,
+        String cancellationReason,
         long inputTokens,
         long outputTokens,
         long totalTokens,

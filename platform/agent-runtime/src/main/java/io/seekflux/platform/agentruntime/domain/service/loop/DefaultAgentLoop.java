@@ -1,6 +1,5 @@
 package io.seekflux.platform.agentruntime.domain.service.loop;
 
-import io.seekflux.platform.agentruntime.domain.model.decision.AgentDecision;
 import io.seekflux.platform.agentruntime.domain.model.run.AgentRunResult;
 import io.seekflux.platform.agentruntime.domain.service.runtime.AgentRuntime;
 import io.seekflux.platform.agentruntime.application.spi.business.context.ContextEngine;
@@ -34,24 +33,18 @@ public final class DefaultAgentLoop implements AgentLoop {
             RuntimeContext context,
             PushEventPublisher publisher,
             CancellationToken cancellationToken) {
-        if (cancellationToken.isCancelled()) {
-            return finiteStepRuntime.run(
-                    context.definition(),
-                    context.request(),
-                    ignored -> new AgentDecision.Fallback("AGENT_CANCELLED"));
-        }
         AgentRunResult result = finiteStepRuntime.run(
                 context.definition(),
                 context.request(),
                 decisionContext -> {
-                    if (cancellationToken.isCancelled()) {
-                        return new AgentDecision.Fallback("AGENT_CANCELLED");
-                    }
+                    cancellationToken.throwIfCancelled();
                     var call = context.llmClient().chatWithUsage(
-                            contextEngine.assemble(session, context, decisionContext));
+                            contextEngine.assemble(session, context, decisionContext),
+                            cancellationToken);
                     decisionContext.recordUsage(call.usage());
                     return call.decision();
-                });
+                },
+                cancellationToken);
         publisher.publish(new PushEvent.LoopStarted(
                 result.trace().agentRunId(),
                 result.trace().startedAt(),
@@ -69,7 +62,8 @@ public final class DefaultAgentLoop implements AgentLoop {
                 result.trace().agentRunId(),
                 clock.instant(),
                 result.state(),
-                result.trace().tookMillis()));
+                result.trace().tookMillis(),
+                result.cancellationReason()));
         return result;
     }
 }

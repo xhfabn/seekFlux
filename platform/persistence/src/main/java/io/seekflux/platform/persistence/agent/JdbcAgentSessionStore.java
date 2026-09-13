@@ -170,8 +170,11 @@ public class JdbcAgentSessionStore implements AgentSessionStore {
         Map<String, Object> payload = new java.util.LinkedHashMap<>();
         payload.put("agentRunId", result.trace().agentRunId());
         payload.put("state", result.state().name());
-        if (result.fallbackReason() != null) {
-            payload.put("reason", result.fallbackReason());
+        String terminalReason = result.state() == AgentTerminalState.CANCELLED
+                ? result.cancellationReason()
+                : result.fallbackReason();
+        if (terminalReason != null) {
+            payload.put("reason", terminalReason);
         }
         insertWorkspaceEvent(sessionId, position, eventType, null, null, eventTime, payload);
         insertOutcomeOutbox(sessionId, position, result, fencingToken, eventTime);
@@ -297,6 +300,7 @@ public class JdbcAgentSessionStore implements AgentSessionStore {
         payload.put("state", result.state().name());
         payload.put("executionMode", result.trace().executionMode());
         payload.put("fallbackReason", result.fallbackReason());
+        payload.put("cancellationReason", result.cancellationReason());
         payload.put("fencingToken", fencingToken);
         payload.put("definition", result.trace().definition());
         payload.put("tookMillis", result.trace().tookMillis());

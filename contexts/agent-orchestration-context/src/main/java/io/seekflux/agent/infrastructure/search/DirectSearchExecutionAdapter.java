@@ -37,6 +37,7 @@ public final class DirectSearchExecutionAdapter implements DirectSearchPort {
                 false,
                 result.trace().degraded(),
                 null,
+                null,
                 null);
     }
 }

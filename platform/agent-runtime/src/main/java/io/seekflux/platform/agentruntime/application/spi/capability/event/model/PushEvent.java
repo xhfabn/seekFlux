@@ -25,7 +25,16 @@ public sealed interface PushEvent {
             String agentRunId,
             Instant eventTime,
             AgentTerminalState state,
-            long tookMillis) implements PushEvent {
+            long tookMillis,
+            String cancellationReason) implements PushEvent {
+
+        public LoopCompleted(
+                String agentRunId,
+                Instant eventTime,
+                AgentTerminalState state,
+                long tookMillis) {
+            this(agentRunId, eventTime, state, tookMillis, null);
+        }
     }
 
     record RuntimeError(

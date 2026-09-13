@@ -1,10 +1,12 @@
 package io.seekflux.platform.agentruntime.domain.service.execution;
 
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.seekflux.platform.agentruntime.domain.model.execution.CancellationToken;
+import io.seekflux.platform.agentruntime.domain.model.execution.CancellationCause;
 import io.seekflux.platform.agentruntime.domain.model.agent.definition.AgentDefinition;
 import io.seekflux.platform.agentruntime.application.command.AgentRunRequest;
 import io.seekflux.platform.agentruntime.domain.model.run.AgentRunResult;
@@ -74,10 +76,29 @@ class SessionExecutorReliabilityTest {
             assertTrue(remote.cancel("session", false));
             AgentRunResult result = running.get();
             assertTrue(result.state() == AgentTerminalState.CANCELLED);
+            assertEquals("USER_CANCEL", result.cancellationReason());
         } finally {
             owner.close();
             remote.close();
         }
+    }
+
+    @Test
+    void shutdownCancelsActiveLoopWithAStableCause() throws Exception {
+        SharedSignals signals = new SharedSignals();
+        FakeSessions sessions = new FakeSessions(new AtomicBoolean());
+        SessionExecutor owner = executor(sessions, waitingLoop(), signals);
+        CompletableFuture<AgentRunResult> running = CompletableFuture.supplyAsync(
+                () -> owner.run("session", runtimeContext(), PushEventPublisher.NOOP, authority(12)));
+        while (!SharedSignals.loopStarted.get()) {
+            Thread.onSpinWait();
+        }
+
+        owner.close();
+        AgentRunResult result = running.get();
+
+        assertEquals(AgentTerminalState.CANCELLED, result.state());
+        assertEquals("SHUTDOWN", result.cancellationReason());
     }
 
     private static SessionExecutor executor(
@@ -130,7 +151,7 @@ class SessionExecutorReliabilityTest {
                 }
                 return outcome(context, token.isCancelled()
                         ? AgentTerminalState.CANCELLED
-                        : AgentTerminalState.FAILED);
+                        : AgentTerminalState.FAILED, token.cause());
             }
         };
     }
@@ -152,14 +173,24 @@ class SessionExecutorReliabilityTest {
     }
 
     private static AgentRunResult outcome(RuntimeContext context, AgentTerminalState state) {
+        return outcome(context, state, null);
+    }
+
+    private static AgentRunResult outcome(
+            RuntimeContext context,
+            AgentTerminalState state,
+            CancellationCause cancellationCause) {
+        String cancellationReason = cancellationCause == null ? null : cancellationCause.name();
         AgentRunTrace trace = new AgentRunTrace(
                 "00000000-0000-0000-0000-000000000001",
                 context.request().requestId(), "session", "turn",
                 new AgentRunTrace.DefinitionSnapshot(
                         "agent", "v1", "loop", "prompt", "provider", 2, 1, 1000,
                         Map.of("tool", "v1")),
-                Instant.now(), 1, state, "AGENT", null, List.of());
-        return new AgentRunResult(state, Map.of(), null, null, false, trace);
+                Instant.now(), 1, state, "AGENT", null, cancellationReason,
+                io.seekflux.platform.agentruntime.domain.model.run.LlmUsage.UNMEASURED, List.of());
+        return new AgentRunResult(
+                state, Map.of(), null, null, cancellationReason, false, trace);
     }
 
     private static final class FakeSessions implements AgentSessionStore {

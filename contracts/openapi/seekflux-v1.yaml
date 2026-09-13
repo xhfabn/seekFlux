@@ -629,6 +629,9 @@ components:
           type: string
           enum: [AGENT, AGENT_TO_DIRECT_FALLBACK]
         fallbackReason: {type: [string, "null"]}
+        cancellationReason:
+          type: [string, "null"]
+          enum: [USER_CANCEL, STEER, AUTHORITY_LOST, SHUTDOWN, null]
         inputTokens: {type: integer, format: int64, minimum: 0}
         outputTokens: {type: integer, format: int64, minimum: 0}
         totalTokens: {type: integer, format: int64, minimum: 0}
@@ -711,6 +714,9 @@ components:
           description: True when the response returns one Search Tool candidate set without Agent-side reranking.
         degraded: {type: boolean}
         fallbackReason: {type: [string, "null"]}
+        cancellationReason:
+          type: [string, "null"]
+          enum: [USER_CANCEL, STEER, AUTHORITY_LOST, SHUTDOWN, null]
     UpdateUserInterestProfileRequest:
       type: object
       required: [topics]

@@ -32,7 +32,8 @@ public record AgentSearchResponse(
         int successfulToolCount,
         boolean candidateSetReused,
         boolean degraded,
-        String fallbackReason) {
+        String fallbackReason,
+        String cancellationReason) {
 
     public static AgentSearchResponse from(AgentSearchResult result) {
         var search = result.searchResult();
@@ -58,6 +59,7 @@ public record AgentSearchResponse(
                 result.successfulToolCount(),
                 result.candidateSetReused(),
                 result.degraded(),
-                result.fallbackReason());
+                result.fallbackReason(),
+                result.cancellationReason());
     }
 }

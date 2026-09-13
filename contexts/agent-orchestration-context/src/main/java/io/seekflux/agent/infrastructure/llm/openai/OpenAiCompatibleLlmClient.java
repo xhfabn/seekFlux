@@ -9,6 +9,9 @@ import io.seekflux.platform.agentruntime.application.spi.capability.llm.model.As
 import io.seekflux.platform.agentruntime.application.spi.capability.llm.model.ContextMessage;
 import io.seekflux.platform.agentruntime.application.spi.capability.llm.LlmClient;
 import io.seekflux.platform.agentruntime.application.spi.capability.llm.model.LlmCallResult;
+import io.seekflux.platform.agentruntime.domain.exception.AgentCancellationException;
+import io.seekflux.platform.agentruntime.domain.model.execution.CancellationCause;
+import io.seekflux.platform.agentruntime.domain.model.execution.CancellationToken;
 import io.seekflux.platform.agentruntime.domain.model.run.LlmUsage;
 import java.io.IOException;
 import java.net.URI;
@@ -76,6 +79,14 @@ public final class OpenAiCompatibleLlmClient implements LlmClient {
 
     @Override
     public LlmCallResult chatWithUsage(AssembledContext context) {
+        return chatWithUsage(context, new CancellationToken());
+    }
+
+    @Override
+    public LlmCallResult chatWithUsage(
+            AssembledContext context,
+            CancellationToken cancellationToken) {
+        cancellationToken.throwIfCancelled();
         Duration requestTimeout = context.decisionContext().remaining().compareTo(timeout) < 0
                 ? context.decisionContext().remaining()
                 : timeout;
@@ -97,12 +108,17 @@ public final class OpenAiCompatibleLlmClient implements LlmClient {
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
                 throw new IllegalStateException("LLM provider returned HTTP " + response.statusCode());
             }
+            cancellationToken.throwIfCancelled();
             Map<String, Object> responseBody = readMap(response.body());
             return new LlmCallResult(
                     parseDecision(extractContent(responseBody), context),
                     usage(responseBody));
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
+            CancellationCause cause = cancellationToken.cause();
+            if (cause != null) {
+                throw new AgentCancellationException(cause);
+            }
             throw new IllegalStateException("LLM provider call was interrupted", interrupted);
         } catch (IOException error) {
             throw new IllegalStateException("LLM provider call failed", error);

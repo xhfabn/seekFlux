@@ -11,11 +11,18 @@ import io.seekflux.platform.agentruntime.domain.model.tool.AgentToolObservation;
 import io.seekflux.platform.agentruntime.domain.model.tool.AgentToolResult;
 import io.seekflux.platform.agentruntime.application.spi.capability.llm.model.AssembledContext;
 import io.seekflux.platform.agentruntime.application.spi.capability.llm.model.ContextMessage;
+import io.seekflux.platform.agentruntime.domain.exception.AgentCancellationException;
+import io.seekflux.platform.agentruntime.domain.model.execution.CancellationCause;
+import io.seekflux.platform.agentruntime.domain.model.execution.CancellationToken;
 import java.net.InetSocketAddress;
 import java.net.http.HttpClient;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
@@ -172,6 +179,64 @@ class OpenAiCompatibleLlmClientTest {
             assertThat(result.usage().totalTokens()).isEqualTo(32);
             assertThat(result.usage().measured()).isTrue();
         } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void interruptedProviderCallPreservesTheCancellationCause() throws Exception {
+        ObjectMapper objectMapper = new ObjectMapper();
+        CountDownLatch requestEntered = new CountDownLatch(1);
+        CountDownLatch releaseResponse = new CountDownLatch(1);
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/chat/completions", exchange -> {
+            requestEntered.countDown();
+            try {
+                releaseResponse.await(5, TimeUnit.SECONDS);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+            } finally {
+                exchange.close();
+            }
+        });
+        server.start();
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try {
+            OpenAiCompatibleLlmClient client = new OpenAiCompatibleLlmClient(
+                    HttpClient.newHttpClient(), objectMapper,
+                    java.net.URI.create("http://127.0.0.1:" + server.getAddress().getPort()
+                            + "/v1/chat/completions"),
+                    "", "test-model", Duration.ofSeconds(10));
+            AgentRunRequest run = new AgentRunRequest(
+                    "request-4", "session-4", "turn-4", "取消", Map.of());
+            AgentDecisionContext decisionContext = new AgentDecisionContext(
+                    run, 1, Duration.ofSeconds(10), List.of());
+            AssembledContext context = new AssembledContext(
+                    decisionContext,
+                    List.of(new ContextMessage("user", "取消")),
+                    "prompt-spec-4",
+                    2);
+            CancellationToken token = new CancellationToken();
+            AtomicReference<Thread> caller = new AtomicReference<>();
+
+            var result = executor.submit(() -> {
+                caller.set(Thread.currentThread());
+                try {
+                    client.chatWithUsage(context, token);
+                    return null;
+                } catch (AgentCancellationException cancelled) {
+                    return cancelled.cancellationCause();
+                }
+            });
+            assertThat(requestEntered.await(1, TimeUnit.SECONDS)).isTrue();
+
+            token.cancel(CancellationCause.USER_CANCEL);
+            caller.get().interrupt();
+
+            assertThat(result.get(1, TimeUnit.SECONDS)).isEqualTo(CancellationCause.USER_CANCEL);
+        } finally {
+            releaseResponse.countDown();
+            executor.shutdownNow();
             server.stop(0);
         }
     }

@@ -1,6 +1,7 @@
 package io.seekflux.platform.agentruntime.infrastructure.redis;
 
 import io.seekflux.platform.agentruntime.application.spi.capability.execution.CancellationSignalStore;
+import io.seekflux.platform.agentruntime.domain.model.execution.CancellationCause;
 import java.time.Duration;
 import java.time.Instant;
 import org.springframework.data.redis.core.StringRedisTemplate;
@@ -28,8 +29,10 @@ public final class RedisCancellationSignalStore implements CancellationSignalSto
             if (!signalTime.isAfter(taskStartedAt)) {
                 return CancelSignal.NONE;
             }
-            boolean steer = parts.length == 2 && "steer".equals(parts[1]);
-            return new CancelSignal(true, steer);
+            CancellationCause cause = parts.length == 1
+                    ? CancellationCause.USER_CANCEL
+                    : parseCause(parts[1]);
+            return new CancelSignal(true, cause);
         } catch (RuntimeException unavailableOrMalformed) {
             return CancelSignal.NONE;
         }
@@ -37,12 +40,28 @@ public final class RedisCancellationSignalStore implements CancellationSignalSto
 
     @Override
     public boolean write(String sessionId, boolean steer, Instant signalTime) {
+        return write(sessionId, steer ? CancellationCause.STEER : CancellationCause.USER_CANCEL, signalTime);
+    }
+
+    @Override
+    public boolean write(String sessionId, CancellationCause cause, Instant signalTime) {
         try {
-            String value = signalTime + (steer ? "|steer" : "");
+            String value = signalTime + "|" + cause.name();
             redis.opsForValue().set(KEY_PREFIX + sessionId, value, ttl);
             return true;
         } catch (RuntimeException unavailable) {
             return false;
+        }
+    }
+
+    private static CancellationCause parseCause(String value) {
+        if ("steer".equalsIgnoreCase(value)) {
+            return CancellationCause.STEER;
+        }
+        try {
+            return CancellationCause.valueOf(value.toUpperCase(java.util.Locale.ROOT));
+        } catch (IllegalArgumentException malformed) {
+            return CancellationCause.USER_CANCEL;
         }
     }
 }

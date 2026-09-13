@@ -145,6 +145,7 @@ public final class AgentRuntimeExecutionAdapter implements AgentExecutionPort {
                 Boolean.TRUE.equals(runtime.output().get("candidateSetReused")),
                 degraded,
                 runtime.fallbackReason(),
+                runtime.cancellationReason(),
                 traceView(runtime.trace(), mode));
         projection.project(result);
         metrics.succeeded(runtime, System.nanoTime() - startedNanos);
@@ -190,6 +191,7 @@ public final class AgentRuntimeExecutionAdapter implements AgentExecutionPort {
                 trace.terminalState().name(),
                 mode.name(),
                 trace.fallbackReason(),
+                trace.cancellationReason(),
                 usage.inputTokens(),
                 usage.outputTokens(),
                 usage.totalTokens(),

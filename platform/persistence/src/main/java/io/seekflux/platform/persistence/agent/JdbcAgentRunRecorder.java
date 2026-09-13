@@ -99,12 +99,14 @@ public class JdbcAgentRunRecorder implements AgentRunRecorder {
         String state = String.valueOf(event.payload().get("state"));
         String executionMode = String.valueOf(event.payload().get("executionMode"));
         Object fallbackReason = event.payload().get("fallbackReason");
+        Object cancellationReason = event.payload().get("cancellationReason");
         Object trace = event.payload().get("trace");
         int runRows = jdbcClient.sql("""
                         UPDATE agent.runs
                         SET state = :state,
                             execution_mode = :executionMode,
                             fallback_reason = :fallbackReason,
+                            cancellation_reason = :cancellationReason,
                             trace = CAST(:trace AS jsonb),
                             completed_at = :completedAt
                         WHERE agent_run_id = :agentRunId
@@ -113,6 +115,7 @@ public class JdbcAgentRunRecorder implements AgentRunRecorder {
                 .param("state", state)
                 .param("executionMode", executionMode)
                 .param("fallbackReason", fallbackReason, Types.VARCHAR)
+                .param("cancellationReason", cancellationReason, Types.VARCHAR)
                 .param("trace", toJson(trace))
                 .param("completedAt", databaseTime(event.eventTime()))
                 .param("agentRunId", UUID.fromString(event.agentRunId()))

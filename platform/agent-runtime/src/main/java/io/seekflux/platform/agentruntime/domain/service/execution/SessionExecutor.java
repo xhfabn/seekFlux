@@ -1,6 +1,7 @@
 package io.seekflux.platform.agentruntime.domain.service.execution;
 
 import io.seekflux.platform.agentruntime.domain.model.execution.CancellationToken;
+import io.seekflux.platform.agentruntime.domain.model.execution.CancellationCause;
 import io.seekflux.platform.agentruntime.application.spi.capability.execution.CancellationSignalStore;
 import io.seekflux.platform.agentruntime.application.spi.capability.execution.ExecutionAuthority;
 import io.seekflux.platform.agentruntime.application.spi.capability.execution.ExecutionAuthorityStore;
@@ -93,7 +94,7 @@ public final class SessionExecutor implements AutoCloseable {
         ScheduledFuture<?> renewal = renewalScheduler.scheduleAtFixedRate(
                 () -> {
                     if (!authority.renew(AUTHORITY_TTL_MILLIS)) {
-                        token.cancel(false);
+                        token.cancel(CancellationCause.AUTHORITY_LOST);
                     }
                 },
                 AUTHORITY_RENEW_MILLIS,
@@ -101,14 +102,15 @@ public final class SessionExecutor implements AutoCloseable {
                 TimeUnit.MILLISECONDS);
         try {
             if (!authority.renew(AUTHORITY_TTL_MILLIS)) {
-                token.cancel(false);
-                throw new IllegalStateException("agent session execution authority was lost before execution");
+                token.cancel(CancellationCause.AUTHORITY_LOST);
+                throw new AgentExecutionFencedException(sessionId, authority.fencingToken());
             }
             AgentSession fresh = sessions.restoreFresh(sessionId)
                     .orElseThrow(() -> new IllegalStateException("agent session disappeared before execution"));
             //loop 启动入口
             AgentRunResult result = loop.run(fresh, context, publisher, token);
             if (!authority.renew(AUTHORITY_TTL_MILLIS)) {
+                token.cancel(CancellationCause.AUTHORITY_LOST);
                 throw new AgentExecutionFencedException(sessionId, authority.fencingToken());
             }
             sessions.appendOutcome(sessionId, result, authority.fencingToken(), clock.instant());
@@ -122,12 +124,16 @@ public final class SessionExecutor implements AutoCloseable {
     }
 
     public boolean cancel(String sessionId, boolean steer) {
+        return cancel(sessionId, steer ? CancellationCause.STEER : CancellationCause.USER_CANCEL);
+    }
+
+    public boolean cancel(String sessionId, CancellationCause cause) {
         CancellationToken token = cancellationTokens.get(sessionId);
         boolean local = token != null;
         if (local) {
-            token.cancel(steer);
+            token.cancel(cause);
         }
-        boolean distributed = cancellationSignals.write(sessionId, steer, clock.instant());
+        boolean distributed = cancellationSignals.write(sessionId, cause, clock.instant());
         return local || distributed;
     }
 
@@ -135,8 +141,8 @@ public final class SessionExecutor implements AutoCloseable {
     public void close() {
         closing = true;
         cancellationTokens.forEach((sessionId, token) -> {
-            cancellationSignals.write(sessionId, false, clock.instant());
-            token.cancel(false);
+            token.cancel(CancellationCause.SHUTDOWN);
+            cancellationSignals.write(sessionId, CancellationCause.SHUTDOWN, clock.instant());
         });
         awaitActiveRuns();
         renewalScheduler.shutdownNow();

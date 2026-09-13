@@ -4,6 +4,7 @@ import io.seekflux.platform.agentruntime.application.spi.capability.shadow.Agent
 import io.seekflux.platform.agentruntime.application.spi.capability.llm.LlmClient;
 import io.seekflux.platform.agentruntime.domain.service.shadow.ShadowControl;
 import io.seekflux.platform.agentruntime.domain.model.decision.AgentDecision;
+import io.seekflux.platform.agentruntime.domain.model.execution.CancellationToken;
 import io.seekflux.platform.agentruntime.application.spi.capability.llm.model.LlmCallResult;
 import io.seekflux.platform.agentruntime.application.spi.capability.shadow.model.ShadowEvaluation;
 import io.seekflux.platform.agentruntime.application.spi.capability.llm.model.AssembledContext;
@@ -51,11 +52,20 @@ public final class ShadowingLlmClient implements LlmClient {
 
     @Override
     public LlmCallResult chatWithUsage(AssembledContext context) {
-        LlmCallResult primaryResult = primary.chatWithUsage(context);
+        return chatWithUsage(context, new CancellationToken());
+    }
+
+    @Override
+    public LlmCallResult chatWithUsage(
+            AssembledContext context,
+            CancellationToken cancellationToken) {
+        LlmCallResult primaryResult = primary.chatWithUsage(context, cancellationToken);
+        cancellationToken.throwIfCancelled();
         String requestId = context.decisionContext().request().requestId();
         if (control.shouldSample(requestId)) {
             try {
-                executor.submit(() -> evaluate(context, primaryResult.decision()));
+                CancellationToken shadowToken = cancellationToken.child();
+                executor.submit(() -> evaluate(context, primaryResult.decision(), shadowToken));
             } catch (RejectedExecutionException ignored) {
                 // Shadow saturation must never affect the primary result.
             }
@@ -63,13 +73,16 @@ public final class ShadowingLlmClient implements LlmClient {
         return primaryResult;
     }
 
-    private void evaluate(AssembledContext context, AgentDecision primaryDecision) {
+    private void evaluate(
+            AssembledContext context,
+            AgentDecision primaryDecision,
+            CancellationToken cancellationToken) {
         long started = System.nanoTime();
         String shadowDecision = null;
         String errorCode = null;
         boolean agreed = false;
         try {
-            AgentDecision candidate = shadow.chatWithUsage(context).decision();
+            AgentDecision candidate = shadow.chatWithUsage(context, cancellationToken).decision();
             shadowDecision = decisionType(candidate);
             agreed = decisionFingerprint(primaryDecision).equals(decisionFingerprint(candidate));
         } catch (RuntimeException failure) {
