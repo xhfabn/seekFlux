@@ -50,7 +50,24 @@ public final class DefaultContextEngine implements ContextEngine {
         }
         for (WorkspaceEvent event : session.events()) {
             if (event instanceof WorkspaceEvent.UserMessage message) {
-                messages.add(new ContextMessage("user", message.text()));
+                messages.add(new ContextMessage(
+                        "user", message.text(), message.messageId(), null, null));
+            } else if (event instanceof WorkspaceEvent.AssistantMessage eventMessage) {
+                var message = eventMessage.message();
+                messages.add(new ContextMessage(
+                        "assistant",
+                        assistantContent(message),
+                        message.messageId(),
+                        null,
+                        null));
+            } else if (event instanceof WorkspaceEvent.ToolResultMessage eventMessage) {
+                var message = eventMessage.message();
+                messages.add(new ContextMessage(
+                        "tool",
+                        message.modelContent(),
+                        message.messageId(),
+                        message.toolCallId(),
+                        message.toolName()));
             }
         }
         for (AgentToolObservation observation : decisionContext.observations()) {
@@ -66,6 +83,19 @@ public final class DefaultContextEngine implements ContextEngine {
                 messages,
                 specId(messages.getFirst().content()),
                 estimatedTokens);
+    }
+
+    private static String assistantContent(
+            io.seekflux.platform.agentruntime.domain.model.message.AgentMessage.Assistant message) {
+        StringBuilder content = new StringBuilder(
+                message.content() == null ? "" : message.content());
+        if (message.reasoningReplayable() && message.reasoning() != null) {
+            content.append("\nreasoning:").append(message.reasoning());
+        }
+        if (!message.toolCalls().isEmpty()) {
+            content.append("\ntool_calls:").append(message.toolCalls());
+        }
+        return content.toString();
     }
 
     private String runtimeInstructions(

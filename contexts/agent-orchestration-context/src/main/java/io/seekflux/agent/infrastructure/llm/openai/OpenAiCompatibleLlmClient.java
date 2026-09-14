@@ -12,6 +12,7 @@ import io.seekflux.platform.agentruntime.application.spi.capability.llm.model.Ll
 import io.seekflux.platform.agentruntime.domain.exception.AgentCancellationException;
 import io.seekflux.platform.agentruntime.domain.model.execution.CancellationCause;
 import io.seekflux.platform.agentruntime.domain.model.execution.CancellationToken;
+import io.seekflux.platform.agentruntime.domain.model.message.AgentAssistantContent;
 import io.seekflux.platform.agentruntime.domain.model.run.LlmUsage;
 import java.io.IOException;
 import java.net.URI;
@@ -110,9 +111,14 @@ public final class OpenAiCompatibleLlmClient implements LlmClient {
             }
             cancellationToken.throwIfCancelled();
             Map<String, Object> responseBody = readMap(response.body());
+            AssistantPayload assistant = extractAssistant(responseBody);
             return new LlmCallResult(
-                    parseDecision(extractContent(responseBody), context),
-                    usage(responseBody));
+                    parseDecision(assistant.decisionContent(), context),
+                    usage(responseBody),
+                    new AgentAssistantContent(
+                            assistant.decisionContent(),
+                            assistant.reasoningContent(),
+                            false));
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
             CancellationCause cause = cancellationToken.cause();
@@ -194,7 +200,7 @@ public final class OpenAiCompatibleLlmClient implements LlmClient {
         return Map.of("role", message.role(), "content", message.content());
     }
 
-    private String extractContent(Map<String, Object> response) {
+    private AssistantPayload extractAssistant(Map<String, Object> response) {
         List<?> choices = list(response.get("choices"));
         if (choices.isEmpty()) {
             throw new IllegalStateException("LLM provider response has no choices");
@@ -203,10 +209,12 @@ public final class OpenAiCompatibleLlmClient implements LlmClient {
         Map<String, Object> message = map(first.get("message"));
         String content = text(message.get("content"));
         if (!content.isBlank()) {
-            return content;
+            return new AssistantPayload(content, text(message.get("reasoning_content")));
         }
         String reasoningContent = text(message.get("reasoning_content"));
-        return requireText(reasoningContent, "LLM response content");
+        return new AssistantPayload(
+                requireText(reasoningContent, "LLM response content"),
+                reasoningContent);
     }
 
     private String writeJson(Object value) {
@@ -264,5 +272,8 @@ public final class OpenAiCompatibleLlmClient implements LlmClient {
             throw new IllegalArgumentException(name + " must not be blank");
         }
         return value.trim();
+    }
+
+    private record AssistantPayload(String decisionContent, String reasoningContent) {
     }
 }

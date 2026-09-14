@@ -165,11 +165,13 @@ FeatureNode 不依赖 Spring 扫描顺序，装配层明确传入列表，Pipeli
 
 | 类型 | 存储/生命周期 | 用途 |
 | --- | --- | --- |
-| `WorkspaceEvent` | PostgreSQL 追加式事实源 | 重建 Session：Created、StatePatched、UserMessage、RunCompleted/Cancelled/Failed |
+| `WorkspaceEvent` | PostgreSQL 追加式事实源 | 重建 Session：Created、StatePatched、User/Assistant/ToolResult、RunCompleted/Cancelled/Failed |
 | `AgentRunEvent` | PostgreSQL 独立运行表 | 诊断每次 Decision、Tool 和终态，关联版本及 Search Trace ID |
 | `PushEvent` | 请求内 Publisher；当前不持久化 | 客户端过程投影；Phase 1 同步响应内按逻辑顺序缓冲 |
 
-PostgreSQL 的 `agent.sessions` 保存最新版本、状态版本、事件位置、快照和当前 fencing token，`agent.workspace_events` 以 `(session_id, event_position)` 排序，并以 `(session_id, request_id)` 保证 Ingress 幂等。状态补丁和 UserMessage 在同一事务中提交，旧 `baseVersion` 不能覆盖新目标。终态 WorkspaceEvent 与 `outbox.events` 也在同一事务提交，Worker 按确定性 `eventId` 幂等写入 `agent.audit_events`。`agent.runs` 与 `agent.run_events` 记录每个失主/接管 attempt，但不参与 Workspace 重放。Redis 只保存热投影、执行权、取消信号和 Shadow 开关，不是 Session 真相源。
+PostgreSQL 的 `agent.sessions` 保存最新版本、状态版本、事件位置、快照和当前 fencing token，`agent.workspace_events` 以 `(session_id, event_position)` 排序。UserMessage 的 `(session_id, request_id)` 部分唯一索引保证 Ingress 幂等，同一 request 下允许追加多个 Assistant/ToolResult；每条消息还有全局唯一 `message_id`、Schema 版本和可选 `tool_call_id`。状态补丁和 UserMessage 在同一事务中提交，旧 `baseVersion` 不能覆盖新目标。本轮 Assistant/ToolResult、终态 WorkspaceEvent 与 `outbox.events` 在同一 fencing 事务中按连续 position 提交，外部不会看到半轮历史。Worker 按确定性 `eventId` 幂等写入 `agent.audit_events`。`agent.runs` 与 `agent.run_events` 记录每个失主/接管 attempt，但不参与 Workspace 重放。Redis 只保存热投影、执行权、取消信号和 Shadow 开关，不是 Session 真相源。
+
+Assistant 正文、reasoning 和 tool calls 分字段持久化；当前 Provider reasoning 默认不可重放，只有事件显式允许时 ContextEngine 才把它加入后续模型输入。ToolResult 以 toolCallId 与 Assistant 调用一一对应，状态覆盖 `SUCCEEDED/FAILED/CANCELLED/TIMED_OUT/WAITING`，同时保存不可变 raw contents、模型文本、UI display contents、structured data、resources 和错误/Trace 信息。Session 重放拒绝孤立、重复或缺失的 ToolResult，并把 Clarification 终态投影为 `SUSPENDED`。逻辑契约见 [`agent-workspace-message-v1.schema.json`](../contracts/events/agent-workspace-message-v1.schema.json)。
 
 ## 6. 有限步 AgentLoop
 
@@ -182,6 +184,8 @@ PostgreSQL 的 `agent.sessions` 保存最新版本、状态版本、事件位置
 - `Fallback`：结束为 `FALLBACK_REQUIRED`，由业务 Adapter 决定确定性回退。
 
 Tool 参数校验失败后只做一次不改变业务意图的确定性修复；相同规范化 Tool 指纹再次出现时返回 `NO_PROGRESS_DETECTED`。执行器是命名、有界线程池；超时会取消 Future，队列饱和产生稳定失败原因。Runtime 不使用公共线程池，也不把异步类型暴露到 Port 或 HTTP。
+
+每个模型 Decision 都形成 AssistantMessage；Tool Decision 先记录按 index 排序的稳定 Tool Call，随后为每个调用形成唯一 ToolResultMessage，最后的 Complete/Clarify/Fallback 再形成 AssistantMessage。消息同时关联 request、turn、segment、agentRun/attempt 和 call；当前尚无 Steer 分段，因此 `segmentId=turnId`，AR-5 再把一个 turn 内的多 segment 显式化。消息 ID 和 Tool Call ID 由 session/request/turn/step/index 等稳定输入确定，接管重跑不会随机改变关联键。`DefaultContextEngine` 下一轮只读取 Workspace 事件，按 position 还原 User → Assistant → Tool 历史；本轮内存 observation 只用于尚未提交的当前 Loop。
 
 取消使用同一棵 Session → batch → individual Tool token 传播。`USER_CANCEL`、`STEER`、`AUTHORITY_LOST` 和 `SHUTDOWN` 采用 first-cause-wins，Redis 信号一次读出时间与原因并过滤旧任务残留；Runtime 在步骤边界以及模型/Tool 调用前后检查 token，等待 Future 时每 10ms 检查一次并在取消后发出线程中断。模型或 Tool 即使晚到返回也不能继续推进 Loop。取消结果固定为 `CANCELLED`，不会转成 `FAILED` 或 `FALLBACK_REQUIRED`，并在 Run、Trace、Push、HTTP 响应和 PostgreSQL `agent.runs.cancellation_reason` 中使用同一个 `cancellationReason`。Runtime 产出 Outcome 是取消与正常完成的线性化点，Session 提交前的 fencing 校验仍是防止旧 owner 晚到写入的最终屏障。
 
@@ -238,4 +242,4 @@ python3 evals/run_agent_reliability_eval.py
 
 `agent-reliability-v1` 固定评测证明单写者、fencing 单调、重复请求无额外 Tool 事件、事务 Outbox、幂等审计、Shadow 主结果隔离和快速关闭；12 次样本可用性 `1.0`、P95 `226.402 ms`、Fallback `0.0`。旧 owner、跨实例取消、停机取消、模型/Tool 在途取消、取消后禁止下一轮、OpenAI 调用中断、模型/Tool 故障和 Bulkhead 另有自动化测试。
 
-对照 Ark-Leto 后仍未完成的是 steer 排队、pending Tool Checkpoint、写 Tool 副作用账本、上下文压缩、OutputGuard、实时 Push/SSE、HITL、Handoff、子 Agent、MCP/Skill/Graph 和完整 OTel。真实付费 Provider 基线也需要部署方端点和密钥；当前报告不伪造 Token/成本。完整取舍见 [ADR-006](adr/ADR-006-agent-reliability-fencing-outbox-shadow.md)。
+对照 Ark-Leto 后仍未完成的是 steer 排队、pending Tool Checkpoint、写 Tool 副作用账本、上下文压缩、OutputGuard、实时 Push/SSE、HITL、Handoff、子 Agent、MCP/Skill/Graph 和完整 OTel。当前消息在 Outcome 事务统一提交，崩溃后的模型/Tool 中间点精确恢复属于 AR-3。真实付费 Provider 基线也需要部署方端点和密钥；当前报告不伪造 Token/成本。完整取舍见 [ADR-006](adr/ADR-006-agent-reliability-fencing-outbox-shadow.md)。

@@ -16,7 +16,7 @@
 2. Runtime 内部固定采用 DDD/Ports-and-Adapters 分层。`application` 只作为对外契约面，包含业务调用的 `api`、输入 `command`、业务可定制的 `spi/business` 和运行能力 `spi/capability`，契约专属 DTO 就近放在对应子树，不设置 `application/model`、`application/port` 或 `application/service`。领域模型按 `agent/definition`、`decision`、`run`、`session`、`tool`、`feature`、`execution` 组织；各组件关系与主链编排统一放在 `domain/service` 的 runtime、router、execution、loop、feature、context、tool、shadow 子域中。`infrastructure` 提供 Runtime 拥有的纯 Java 和 Redis 可替换默认实现；模型厂商协议由使用 Runtime 的 Context Infrastructure 适配。
 3. 主链路固定为 `Router → FeaturePipeline → SessionExecutor → AgentLoop`。FeatureNode 使用显式列表和稳定顺序，当前内置节点依次为 SessionLoad、AgentResolve、ParamInit、ResumeEval。
 4. 同一 Session 必须先获得执行权，再提交本轮 UserMessage。执行权由 Port 抽象，Redis Adapter 使用带 owner 比较的获取、续租和释放；重复 `requestId` 不再次进入 Loop。
-5. PostgreSQL 中的 `WorkspaceEvent` 是 Session 的追加式事实源；AgentRun/RunEvent 是独立的执行轨迹。前端过程 `PushEvent` 不参与 Session 投影，三类事件不能互相替代。
+5. PostgreSQL 中的 `WorkspaceEvent` 是 Session 的追加式事实源；User、Assistant 和 ToolResult 都使用版本化消息 Envelope、稳定 message/call ID 与 set-once position。Tool Call Assistant 必须先于且唯一对应一个 ToolResult；Assistant 正文、reasoning、tool calls 和 ToolResult 的 raw/model/display/structured/resources 分字段保存。AgentRun/RunEvent 是独立执行轨迹，前端过程 `PushEvent` 不参与 Session 投影，三类事件不能互相替代。
 6. `AgentLoop` 每轮都通过 `ContextEngine` 组装上下文，通过厂商无关 `LlmClient` 获取结构化 Decision，通过 Tool Registry/Executor 执行受 Schema、次数和共同 Deadline 限制的工具调用。
 7. AgentDef、Prompt、决策提供方和 Tool Schema 版本在运行开始时冻结并进入 Trace。运行只产生 `RESULTS_READY`、`NEED_CLARIFICATION`、`FALLBACK_REQUIRED`、`CANCELLED`、`FAILED` 等稳定终态。
 8. Search Tool 只能调用 `SearchUseCase`。Runtime 要求回退时，由 Agent Orchestration Infrastructure Adapter 调用同一个 Direct Search Use Case，返回 `AGENT_TO_DIRECT_FALLBACK`，不绕过 Search Context。
@@ -28,7 +28,7 @@
 
 Phase 1 已实现单进程同步请求中的有限步 Loop、Redis 执行权、PostgreSQL Session/Run 事件、Redis 热投影、取消入口、两个 AgentDef、Search Tool、Direct Fallback 与对照 Eval。
 
-Phase 2 后续完成了 Provider Adapter、Query Mode Router、多轮 `ConstraintPatch`、动态工具集和并行 Tool fan-out，具体决策见 [ADR-005](ADR-005-complex-search-agent-routing-and-state.md)。Phase 3 又完成 fencing、失主接管、跨实例取消、事务 Outbox、故障注入、Shadow 和成本计量，具体决策与 Ark-Leto 反向核对见 [ADR-006](ADR-006-agent-reliability-fencing-outbox-shadow.md)。仍未完成的是 steer 先入队后取消、pending Tool Checkpoint、写 Tool 副作用账本、上下文压缩、SSE/流式 Push、HITL、子 Agent、Handoff、MCP 和完整 OpenTelemetry 串联。
+Phase 2 后续完成了 Provider Adapter、Query Mode Router、多轮 `ConstraintPatch`、动态工具集和并行 Tool fan-out，具体决策见 [ADR-005](ADR-005-complex-search-agent-routing-and-state.md)。Phase 3 又完成 fencing、失主接管、跨实例取消、事务 Outbox、故障注入、Shadow 和成本计量，具体决策与 Ark-Leto 反向核对见 [ADR-006](ADR-006-agent-reliability-fencing-outbox-shadow.md)。2026-09-13 又补齐了 Assistant/ToolResult Workspace 事实、多视图契约和仅凭事实重建的完整多轮历史。仍未完成的是 steer 先入队后取消、pending Tool Checkpoint、写 Tool 副作用账本、上下文压缩、SSE/流式 Push、HITL、子 Agent、Handoff、MCP 和完整 OpenTelemetry 串联。
 
 ## 后果
 
@@ -37,5 +37,6 @@ Phase 2 后续完成了 Provider Adapter、Query Mode Router、多轮 `Constrain
 - 业务接入方既可以调用 Runtime API，也可以实现、替换或装饰 Runtime SPI；默认实现不是业务必须接受的固定行为。
 - Runtime 与自身拥有的通用默认 Adapter 内聚在一个 Maven 模块；Agent Orchestration 与其业务及模型厂商 Adapter 内聚在另一个 Maven 模块。包级依赖规则保证 Domain/Application 不引用 Infrastructure，可部署 Server 只负责接口与装配。
 - Session 真相、执行过程和客户端进度有明确的数据职责，后续恢复与审计可以演进而不破坏 API。
+- 一轮 Assistant/ToolResult 与终态在同一 fencing 事务提交，读取方不会观察到孤立 ToolResult 或半轮消息；代价是 AR-3 完成前崩溃恢复仍以整轮重跑为边界，不能从已完成的单个 Tool 继续。
 - Redis 承担执行权、取消信号、Shadow 开关与热投影；PostgreSQL 保留事实源。多副本恢复正确性由 fencing、强一致重放、事务 Outbox 和故障测试共同保证，而不是只依赖租约。
 - 默认决策结果是确定性的，适合学习和回归；OpenAI-compatible Adapter 的存在仍不等于已经证明真实大模型理解效果。

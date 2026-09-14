@@ -21,7 +21,8 @@ Phase 2 证明了 Agent 的编排增量，但租约过期、实例退出、重�
 - 失主接管时从 WorkspaceEvent 强一致恢复，相同请求的崩溃中轮次可生成新 attempt；
 - 原因化 Redis 跨实例取消、旧信号过滤、Session → batch → Tool 分层传播和有宽限期的优雅停机；
 - 真实 `DefaultAgentLoop` 在模型/Tool 调用期间响应取消；`USER_CANCEL`、`STEER`、`AUTHORITY_LOST`、`SHUTDOWN` 统一进入 `CANCELLED`，Run、Trace、Push、HTTP 和 PostgreSQL 记录同一 `cancellationReason`，不会误触发 Direct Fallback；
-- Session 终态、WorkspaceEvent、确定性 Agent Outbox 同事务提交；
+- User/Assistant/ToolResult/终态 WorkspaceEvent 与确定性 Agent Outbox 同一 fencing 事务提交；完整多轮历史可只从 PostgreSQL 事实重建；
+- Assistant 正文/reasoning/tool calls 分离，ToolResult 保存 raw/model/display/structured/resources 多视图并用稳定 call ID 强制一一配对；Clarification 投影为 `SUSPENDED`；
 - 四类 Agent 终态 Topic 与按 `eventId` 幂等的审计消费者；
 - 模型/Tool 独立 Bulkhead、稳定错误、确定性 Tool Call ID 和效果类型；
 - 模型、Tool、失主、跨实例取消及 Bulkhead 故障测试；
@@ -54,7 +55,8 @@ Phase 2 证明了 Agent 的编排增量，但租约过期、实例退出、重�
 | `platform/agent-runtime/.../application/spi/capability/` | Session、LLM、执行权、记录和事件等能力 SPI |
 | `platform/agent-runtime/.../domain/service/execution/SessionExecutor.java` | fencing、续租、恢复、跨实例取消、优雅停机 |
 | `platform/agent-runtime/.../infrastructure/redis/RedisExecutionAuthorityStore.java` | 原子 fencing 计数与 owner-CAS Lua |
-| `platform/persistence/.../JdbcAgentSessionStore.java` | 受 fencing 保护的 Session/Outcome/Outbox 事务 |
+| `platform/persistence/.../JdbcAgentSessionStore.java` | 受 fencing 保护的消息/Outcome/Outbox 事务与 Workspace 重放 |
+| `platform/persistence/.../WorkspaceMessageCodec.java` | 版本化 Assistant/ToolResult payload 的 JSON 边界映射 |
 | `platform/agent-runtime/.../domain/service/execution/AgentCallGuard.java` | 模型/Tool Bulkhead 与故障注入边界 |
 | `platform/agent-runtime/.../infrastructure/llm/ShadowingLlmClient.java` | 不影响主链的 Shadow 执行 |
 | `platform/agent-runtime/.../infrastructure/redis/RedisShadowSettingsStore.java` | 跨实例 Shadow 开关 |
@@ -68,6 +70,7 @@ Phase 2 证明了 Agent 的编排增量，但租约过期、实例退出、重�
 - 2026-09-13 Adapter 按所有者收敛后，Agent Runtime 26 个测试、Agent Orchestration Context 7 个测试通过；包含 Server、Worker 及依赖在内的 17 个 Reactor 模块 clean 回归无失败；
 - 2026-09-13 模型 Provider 所有权修正后，OpenAI-compatible Adapter 及其 3 个协议测试迁入 Agent Orchestration Context；Agent Runtime 23 个测试、Agent Orchestration Context 10 个测试通过，17 个 Reactor 模块共 76 个测试 clean 回归无失败；
 - 2026-09-13 AR-1 取消闭环后，JDK 21 下 Agent Runtime 31 个测试通过；Agent Orchestration Context 及依赖、Persistence + Agent Server 及依赖两组回归通过。固定测试覆盖模型前取消、模型中断、Tool 中断、取消后禁止下一模型轮、跨实例 `USER_CANCEL`、停机 `SHUTDOWN`、失权禁止提交、OpenAI 调用中断及取消响应不触发 Direct Fallback；
+- 2026-09-13 AR-2 消息历史闭环后，JDK 21 下 Agent Runtime 36 个、Persistence 3 个、Agent Orchestration Context 12 个测试无失败，Agent Server 编译通过；隔离 PostgreSQL 17 顺序执行 V1～V9 成功。固定测试覆盖跨 JSON 进程边界的第二轮历史恢复、稳定消息/Tool Call ID、并行顺序、取消 ToolResult、旧 UserMessage、未知字段兼容以及孤立/缺失结果拒绝；
 - `agent-reliability-v1` 使用真实 Content → Outbox/Kafka → Worker → Elasticsearch → Agent 链路，12 次请求可用性 `1.0`，P95 `226.402 ms`，Fallback Rate `0.0`；
 - 单写者、fencing 单调、重复请求无额外 Run/Tool 事件、终态 Outbox、幂等审计消费、Shadow 主结果不变和快速关闭全部为 `true`；
 - 固定单测证明旧 owner 不能提交、另一个实例写取消能停止 Loop、模型/Tool 故障稳定回退、Bulkhead 饱和快速拒绝；
@@ -80,7 +83,7 @@ Phase 2 证明了 Agent 的编排增量，但租约过期、实例退出、重�
 
 核心执行红线已完成：固定主链、先获权后提交、强恢复、fencing 全区间、owner-CAS、清理顺序、事件分层、分布式取消、有限并发和确定性回退。完整矩阵见 [ADR-006](../adr/ADR-006-agent-reliability-fencing-outbox-shadow.md)。
 
-仍未实现的能力包括：Assistant/ToolResult 完整消息历史、steer 排队语义、pending Tool Checkpoint、写 Tool 的持久副作用账本、上下文压缩、OutputGuard 修复、HITL、Handoff、子 Agent、MCP、Chained/Graph Agent 和实时 Push。它们不是 Step 7 完成条件；其中 Checkpoint/副作用账本会在引入任何 `MUTATING` Tool 前升级为硬门槛。当前中断只对协作式调用和晚到结果隔离负责，不能撤销外部系统已经发生的写副作用。
+仍未实现的能力包括：steer 排队语义、pending Tool Checkpoint、写 Tool 的持久副作用账本、上下文压缩、OutputGuard 修复、HITL、Handoff、子 Agent、MCP、Chained/Graph Agent 和实时 Push。它们不是 Step 7 完成条件；其中 Checkpoint/副作用账本会在引入任何 `MUTATING` Tool 前升级为硬门槛。当前消息只在 Outcome 事务中成组提交，尚不能从模型完成或单个 Tool 完成的中间点继续；中断也不能撤销外部系统已经发生的写副作用。
 
 真实 Provider 已做单次本地功能联调，但 Token/成本/质量基线仍未建立。仓库已经具备计量、定价、Trace、Metrics 与报告字段；后续必须用固定数据集、固定 Provider/模型/Prompt 版本另生成可复现的运行环境基线，不能用一次成功请求替代评测。
 

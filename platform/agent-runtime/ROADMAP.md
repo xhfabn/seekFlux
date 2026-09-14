@@ -1,6 +1,6 @@
 # Agent Runtime 演进路线与交付记录
 
-> 文档状态：**AR-1 取消语义闭环已完成**；当前实施目标为 **AR-2 完整消息事件与多轮历史**。
+> 文档状态：**AR-1、AR-2 已完成**；当前实施目标为 **AR-3 Checkpoint、pending Tool 与恢复协议**。
 >
 > 本文只记录 `platform/agent-runtime` 后续演进的实施顺序、完成门槛和交付证据。写进计划不代表已经实现；只有代码、自动化测试以及必要的真实验收或固定评测共同证明后，阶段状态才能改为“已完成”。
 
@@ -34,10 +34,11 @@
 - 原因化的进程内/Redis 取消信号、Session → batch → Tool 分层传播、同步取消入口和优雅停机；
 - 真实 Loop 在模型与 Tool 调用期间响应取消，并把 `USER_CANCEL`、`STEER`、`AUTHORITY_LOST`、`SHUTDOWN` 一致映射为独立 `CANCELLED` 终态；
 - Run、Trace、Push、HTTP 响应和 PostgreSQL Run 记录均携带 `cancellationReason`，取消不再触发 Direct Fallback。
+- Workspace 已持久化版本化 User/Assistant/ToolResult 消息；下一轮可仅凭按 position 重放的事实恢复完整历史；
+- Tool Call 与 ToolResult 使用稳定 ID 一一配对，ToolResult 保存 raw/model/display/structured/resources 多视图，`NEED_CLARIFICATION` 投影为 `SUSPENDED`。
 
 目前关键缺口是：
 
-- Workspace 事实主要覆盖用户消息、状态和运行终态，缺少可重放的 `AssistantMessage`、`ToolResultMessage` 及完整多轮历史；
 - 接管恢复仍以重跑当前轮为主，没有 pending Tool Checkpoint；
 - `MUTATING` Tool 已有副作用元数据和稳定 Call ID，但没有持久化副作用账本与回执；
 - 没有 Steer Queue/Drain、上下文压缩、413 溢出修复、OutputGuard、实时流式 Push；
@@ -65,8 +66,8 @@ flowchart TD
 | 阶段 | 目标 | 状态 | 相对工作量 | 主要前置 |
 | --- | --- | --- | --- | --- |
 | AR-1 | 真实 Loop 取消终态和在途调用取消 | 已完成 | 中 | 当前基线 |
-| AR-2 | 消息事件、Session 投影与 Tool 结果契约 | 下一步 | 大 | AR-1 |
-| AR-3 | Checkpoint、pending Tool 与恢复协议 | 未开始 | 大 | AR-2 |
+| AR-2 | 消息事件、Session 投影与 Tool 结果契约 | 已完成 | 大 | AR-1 |
+| AR-3 | Checkpoint、pending Tool 与恢复协议 | 下一步 | 大 | AR-2 |
 | AR-4 | Mutating Tool 副作用账本 | 未开始 | 大 | AR-3 |
 | AR-5 | Steer Queue/Drain | 未开始 | 中到大 | AR-1、AR-2 |
 | AR-6 | 上下文压缩、413 重试和 OutputGuard | 未开始 | 大 | AR-2 |
@@ -137,21 +138,25 @@ flowchart TD
 
 ### AR-2：消息事件、Session 投影与 Tool 结果契约
 
+状态：**已完成（2026-09-13）**。
+
 目标：让下一轮上下文从持久化事实重建，而不是只依赖本次 Loop 的内存 observation。
 
 实施范围：
 
-- 先定义 WorkspaceEvent Envelope 和演进规则，再增加 `AssistantMessage`、`ToolResultMessage`；根据取消与排队语义补充 `QueuedUserMessage`、`UserMessageCancelled`；
+- 先定义 WorkspaceEvent Envelope 和演进规则，再增加 `AssistantMessage`、`ToolResultMessage`；`QueuedUserMessage`、`UserMessageCancelled` 随 AR-5 的真实 Queue/Drain 一起交付，避免只有事件空壳而没有状态机；
 - 每条消息拥有稳定 ID、Schema 版本、session 内单调且 set-once 的 position、request/attempt/segment/turn/call 关联信息；
 - Assistant 的正文、reasoning 和 tool calls 分字段保存，明确 reasoning 是否允许重放；
 - ToolResult 与 Tool Call 一一对应，至少区分成功、失败、超时、取消和未来等待类结果；保存模型文本视图、原始 contents、UI displayContents、错误和必要 structuredData/resources；
 - Tool Call AssistantMessage 必须先于对应 ToolResultMessage；并行结果按稳定 call/index 归并，不按线程完成顺序破坏历史；
-- Session 状态由事件投影，至少能表达 `IDLE/EXECUTING/SUSPENDED/COMPLETED`；排队消息用 messageId 升格并幂等出队；
+- Session 状态由事件投影，至少能表达 `IDLE/EXECUTING/SUSPENDED/COMPLETED`；排队消息的升格与幂等出队仍属于 AR-5；
 - Session 投影能按 position 重建 User/Assistant/Tool 完整历史，模型输入保持 provider 无关；Snapshot 与增量事件恢复遵循高水位，不允许旧快照覆盖新事件；
 - Tool 结果渲染明确“原始事实 → 模型文本 → 展示视图”的单向派生关系，渲染失败可降级且不篡改原始事实；
 - 明确并测试“事件已写、终态未写”“部分 Tool 完成”“取消发生在消息追加前后”等恢复边界。
 
 完成门槛：跨进程恢复后的第二轮请求能仅凭 Workspace 事实得到与原执行一致的有序消息历史；Tool Call/Result 不孤悬、不重复，原始/模型/UI 三种视图职责明确，历史兼容旧 Session，未知新字段不会导致旧事件无法重放。
+
+实现说明：本阶段选择在 `appendOutcome` 的同一 fencing 事务内按连续 position 写入本轮 Assistant/ToolResult 和终态，因此外部观察不到“消息已提交、终态未提交”的半轮历史；崩溃发生在该事务前时仍按 AR-3 之前的既有语义重跑整轮。并行 Tool 在内存中并发执行，但消息按稳定 call index 写入。Provider 返回的 reasoning 单独保存，只有显式标记 `reasoningReplayable=true` 才进入下一轮模型上下文；当前 OpenAI-compatible Adapter 固定为不可重放。
 
 ### AR-3：Checkpoint、pending Tool 与恢复协议
 
@@ -311,6 +316,17 @@ WorkspaceEvent 仍是恢复事实，PushEvent 只是过程投影；外部 SSE/We
 - 剩余边界：Steer 目前只有取消原因，没有消息入队/drain；Workspace 尚无 Assistant/ToolResult 完整历史；Checkpoint 和 `MUTATING` Tool 副作用账本仍未实现；非协作式外部 Tool 只能丢弃其晚到结果，不能撤销已经发生的外部副作用。
 - 下一步：AR-2 只实现版本化消息事件、Session 投影、ToolResult 多视图和仅凭 Workspace 事实重建的完整多轮历史。
 - 关联文档/ADR/契约：[`docs/agent-runtime.md`](../../docs/agent-runtime.md)、[ADR-006](../../docs/adr/ADR-006-agent-reliability-fencing-outbox-shadow.md)、[`contracts/openapi/seekflux-v1.yaml`](../../contracts/openapi/seekflux-v1.yaml)、`V8__agent_cancellation_reason.sql`。
+
+### 2026-09-13：完成 AR-2 完整消息事件与多轮历史
+
+- 阶段：AR-2（已完成）；AR-3 调整为下一步。
+- 本轮范围：补齐版本化 User/Assistant/ToolResult Workspace 事实、ToolResult 多视图、Session 状态投影和跨进程多轮历史恢复。
+- 实现事实与关键入口：新增 `AgentMessage`/`AgentAssistantContent`；消息关联 request/turn/segment/agentRun-attempt/call，当前无 Steer 时 `segmentId=turnId`；`AgentRuntime` 产出稳定 message/toolCall ID，并按 `Assistant(tool_calls) → ToolResult → Assistant(final)` 收敛成功、失败、超时和取消；`LlmCallResult` 保留正文与 reasoning；`DefaultContextEngine` 按 Workspace position 重建 provider-neutral User/Assistant/Tool 历史；`JdbcAgentSessionStore` 在同一 fencing 事务追加消息与终态，V9 增加 schema/message/tool-call 列、消息唯一索引和仅约束 UserMessage 的 request 幂等索引。
+- 失败/取消/恢复语义：Tool Call 必须且只能有一个后继 ToolResult，Session 重放拒绝孤立、重复或缺失结果；并行结果按 call index 归并；取消和 Deadline 分别写 `CANCELLED`/`TIMED_OUT`；`NEED_CLARIFICATION` 投影为 `SUSPENDED`；事务前崩溃仍整轮重跑，pending Tool 的精确恢复留给 AR-3。
+- 验证命令与结果：JDK 21 下 Runtime 36 个、Persistence 3 个、Agent Orchestration 12 个测试均无失败，Agent Server 编译通过；跨 JSON 序列化恢复测试证明第二轮只依赖 Workspace 事实；旧 UserMessage 构造、未知 payload 字段、稳定重试 ID、并行顺序、孤立/缺失 ToolResult 均有覆盖；隔离 PostgreSQL 17 顺序执行 V1–V9 成功并确认三列落库。
+- 剩余边界：消息只在本轮 Outcome 事务中落库，尚不能从模型后/Tool 前等中间安全点恢复；Queue/Drain、Checkpoint、pending Tool journal 和 `MUTATING` 副作用账本未实现；当前 display/structured 视图默认由 Tool 原始输出派生，业务专用渲染器后续可在 Adapter 扩展但不得改写 raw facts。
+- 下一步：AR-3A 先定义可序列化 RuntimeContext Checkpoint 与安全边界，再实现 AR-3B pending Tool journal 和 AR-3C 统一 ResumeAction/Internal Ingress。
+- 关联文档/ADR/契约：[`docs/agent-runtime.md`](../../docs/agent-runtime.md)、[ADR-004](../../docs/adr/ADR-004-ark-leto-inspired-agent-runtime.md)、[`agent-workspace-message-v1.schema.json`](../../contracts/events/agent-workspace-message-v1.schema.json)、`V9__agent_workspace_messages.sql`。
 
 ---
 

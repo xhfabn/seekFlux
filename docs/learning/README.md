@@ -18,7 +18,7 @@
 - 关键词搜索，以及热门、兴趣、相似内容召回、画像标签强匹配、规则排序、Cursor 和单路降级；
 - Direct Search 的 BM25/kNN 双路召回、RRF 融合、结构化约束、共同 Deadline、单路降级和版本化 Search Trace；
 - 自研 Agent Runtime 主链路 `Router → FeaturePipeline → SessionExecutor → AgentLoop`，以及有限步、共同 Deadline、Tool Schema、稳定终态和版本冻结；
-- PostgreSQL Session 追加事件与独立运行事件、Redis 执行权/热投影、重复请求保护和同步取消入口；
+- PostgreSQL Session 追加式 User/Assistant/ToolResult 完整消息事件与独立运行事件、Redis 执行权/热投影、重复请求保护和同步取消入口；
 - 两个配置化 AgentDef、Search Tool Adapter、追问、Agent → Direct Fallback、Agent/Search 双 Trace 和 Direct/Agent 对照 Eval；
 - 简单 Query 直达 Search、复杂 Query 进入 Agent 的 AUTO Router，结构化 SearchPlan 与版本化多轮 ConstraintPatch；
 - 请求级动态 Tool 集、宽搜/标签精搜并行 fan-out、参数修复、无进展检测、候选复用和复杂 Query Eval；
@@ -35,7 +35,7 @@
   视频的端到端验收；文本、图片、视频查询均能返回真实媒体与视频时间范围，但固定五向查询集、
   Recall@K 和通道消融尚未完成，因此 Step 11 仍是“下一步”。
 
-Agent Phase 3 已经完成，Phase 4 的行为事实与实时特征两个深化切片也已完成。Agent Runtime 后续演进中的 AR-1“取消语义闭环”已于 2026-09-13 完成，AR-2“完整消息事件与多轮历史”为下一步，实施记录见[模块路线](../../platform/agent-runtime/ROADMAP.md)。OpenAI-compatible Adapter 现兼容标准 `message.content` 与 LongCat 的 `message.reasoning_content`；本地已用 LongCat-2.0 跑通一次模型 → Agent → Search Tool → Web 的真实功能验收，并观测到 Provider 返回的 Token usage。默认固定评测仍使用可复现的确定性 Provider，这次验收不冒充质量或成本基线。HITL、Handoff、子 Agent、MCP、Checkpoint 精确恢复、写 Tool 副作用账本、上下文压缩、流式 Push 和完整 OpenTelemetry 仍未完成；Ark-Leto 反向核对矩阵见 [ADR-006](../adr/ADR-006-agent-reliability-fencing-outbox-shadow.md)。
+Agent Phase 3 已经完成，Phase 4 的行为事实与实时特征两个深化切片也已完成。Agent Runtime 后续演进中的 AR-1“取消语义闭环”和 AR-2“完整消息事件与多轮历史”已于 2026-09-13 完成，AR-3“Checkpoint、pending Tool 与恢复协议”为下一步，实施记录见[模块路线](../../platform/agent-runtime/ROADMAP.md)。OpenAI-compatible Adapter 现兼容标准 `message.content` 与 LongCat 的 `message.reasoning_content`；本地已用 LongCat-2.0 跑通一次模型 → Agent → Search Tool → Web 的真实功能验收，并观测到 Provider 返回的 Token usage。默认固定评测仍使用可复现的确定性 Provider，这次验收不冒充质量或成本基线。HITL、Handoff、子 Agent、MCP、Checkpoint 精确恢复、写 Tool 副作用账本、上下文压缩、流式 Push 和完整 OpenTelemetry 仍未完成；Ark-Leto 反向核对矩阵见 [ADR-006](../adr/ADR-006-agent-reliability-fencing-outbox-shadow.md)。
 
 运行模型决策见 [ADR-002：命令式应用运行模型与局部有界并发](../adr/ADR-002-imperative-application-runtime.md)。普通 Search/Feed 保持同步 JSON；未来 Agent 的模型调用和 Tool fan-out 只能在 Agent 边界内使用明确、有界、可观测的并发，不把 `Mono`/`Flux` 重新扩散到业务接口。
 

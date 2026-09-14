@@ -89,6 +89,8 @@ class OpenAiCompatibleLlmClientTest {
             assertThat(measured.usage().totalTokens()).isEqualTo(125);
             assertThat(measured.usage().costMicros()).isEqualTo(400);
             assertThat(measured.usage().measured()).isTrue();
+            assertThat(measured.assistantContent().content()).contains("call_tool");
+            assertThat(measured.assistantContent().reasoning()).isNull();
         } finally {
             server.stop(0);
         }
@@ -178,6 +180,9 @@ class OpenAiCompatibleLlmClientTest {
             assertThat(result.decision()).isEqualTo(new AgentDecision.Clarify("请补充主题"));
             assertThat(result.usage().totalTokens()).isEqualTo(32);
             assertThat(result.usage().measured()).isTrue();
+            assertThat(result.assistantContent().content()).contains("clarify");
+            assertThat(result.assistantContent().reasoning()).contains("请补充主题");
+            assertThat(result.assistantContent().reasoningReplayable()).isFalse();
         } finally {
             server.stop(0);
         }

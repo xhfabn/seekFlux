@@ -18,6 +18,7 @@ import io.seekflux.platform.agentruntime.domain.exception.AgentCancellationExcep
 import io.seekflux.platform.agentruntime.domain.model.execution.CancellationCause;
 import io.seekflux.platform.agentruntime.domain.model.execution.CancellationToken;
 import io.seekflux.platform.agentruntime.domain.model.feature.RuntimeContext;
+import io.seekflux.platform.agentruntime.domain.model.message.AgentMessage;
 import io.seekflux.platform.agentruntime.domain.model.run.AgentRunResult;
 import io.seekflux.platform.agentruntime.domain.model.run.AgentTerminalState;
 import io.seekflux.platform.agentruntime.domain.model.session.AgentSession;
@@ -161,6 +162,11 @@ class DefaultAgentLoopCancellationTest {
         assertEquals("CALL_TOOL", result.trace().steps().getLast().action());
         assertEquals("CANCELLED", result.trace().steps().getLast().status());
         assertEquals("STEER", result.trace().steps().getLast().errorCode());
+        assertEquals(2, result.messages().size());
+        assertTrue(result.messages().getFirst() instanceof AgentMessage.Assistant);
+        AgentMessage.ToolResult cancelled = (AgentMessage.ToolResult) result.messages().getLast();
+        assertEquals(AgentMessage.ToolResultStatus.CANCELLED, cancelled.status());
+        assertEquals("STEER", cancelled.errorCode());
         assertTrue(stopped.await(1, TimeUnit.SECONDS));
         assertTrue(toolSawCancellation.get());
     }

@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://seekflux.io/contracts/events/agent-workspace-message-v1.schema.json",
+  "title": "SeekFlux Agent workspace message v1",
+  "oneOf": [
+    { "$ref": "#/$defs/assistantMessage" },
+    { "$ref": "#/$defs/toolResultMessage" }
+  ],
+  "$defs": {
+    "messageEnvelope": {
+      "type": "object",
+      "required": [
+        "schemaVersion",
+        "messageId",
+        "requestId",
+        "turnId",
+        "segmentId",
+        "agentRunId",
+        "step"
+      ],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "messageId": { "type": "string", "minLength": 1 },
+        "requestId": { "type": "string", "minLength": 1 },
+        "turnId": { "type": "string", "minLength": 1 },
+        "segmentId": { "type": "string", "minLength": 1 },
+        "agentRunId": { "type": "string", "minLength": 1 },
+        "step": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "toolCall": {
+      "type": "object",
+      "required": ["toolCallId", "toolName", "index", "arguments"],
+      "properties": {
+        "toolCallId": { "type": "string", "minLength": 1 },
+        "toolName": { "type": "string", "minLength": 1 },
+        "index": { "type": "integer", "minimum": 0 },
+        "arguments": { "type": "object" }
+      },
+      "additionalProperties": true
+    },
+    "assistantMessage": {
+      "allOf": [
+        { "$ref": "#/$defs/messageEnvelope" },
+        {
+          "type": "object",
+          "required": ["messageType", "reasoningReplayable", "toolCalls"],
+          "properties": {
+            "messageType": { "const": "ASSISTANT" },
+            "content": { "type": ["string", "null"] },
+            "reasoning": { "type": ["string", "null"] },
+            "reasoningReplayable": { "type": "boolean" },
+            "toolCalls": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/toolCall" }
+            }
+          },
+          "additionalProperties": true
+        }
+      ]
+    },
+    "toolResultMessage": {
+      "allOf": [
+        { "$ref": "#/$defs/messageEnvelope" },
+        {
+          "type": "object",
+          "required": [
+            "messageType",
+            "toolCallId",
+            "toolName",
+            "toolSchemaVersion",
+            "status",
+            "rawContents",
+            "displayContents",
+            "structuredData",
+            "resources",
+            "argumentsRepaired",
+            "tookMillis"
+          ],
+          "properties": {
+            "messageType": { "const": "TOOL_RESULT" },
+            "toolCallId": { "type": "string", "minLength": 1 },
+            "toolName": { "type": "string", "minLength": 1 },
+            "toolSchemaVersion": { "type": "string", "minLength": 1 },
+            "status": {
+              "enum": ["SUCCEEDED", "FAILED", "CANCELLED", "TIMED_OUT", "WAITING"]
+            },
+            "modelContent": { "type": ["string", "null"] },
+            "rawContents": { "type": "object" },
+            "displayContents": { "type": "object" },
+            "structuredData": { "type": "object" },
+            "resources": { "type": "array", "items": { "type": "object" } },
+            "errorCode": { "type": ["string", "null"] },
+            "linkedTraceId": { "type": ["string", "null"] },
+            "argumentsRepaired": { "type": "boolean" },
+            "tookMillis": { "type": "integer", "minimum": 0 }
+          },
+          "additionalProperties": true
+        }
+      ]
+    }
+  }
+}

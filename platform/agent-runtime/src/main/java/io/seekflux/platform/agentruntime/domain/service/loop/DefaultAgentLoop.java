@@ -42,6 +42,7 @@ public final class DefaultAgentLoop implements AgentLoop {
                             contextEngine.assemble(session, context, decisionContext),
                             cancellationToken);
                     decisionContext.recordUsage(call.usage());
+                    decisionContext.recordAssistantContent(call.assistantContent());
                     return call.decision();
                 },
                 cancellationToken);

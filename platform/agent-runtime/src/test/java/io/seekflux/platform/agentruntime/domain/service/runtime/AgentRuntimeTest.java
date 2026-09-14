@@ -13,6 +13,7 @@ import io.seekflux.platform.agentruntime.domain.model.run.AgentRunEvent;
 import io.seekflux.platform.agentruntime.application.command.AgentRunRequest;
 import io.seekflux.platform.agentruntime.domain.model.run.AgentRunResult;
 import io.seekflux.platform.agentruntime.domain.model.run.AgentTerminalState;
+import io.seekflux.platform.agentruntime.domain.model.message.AgentMessage;
 import io.seekflux.platform.agentruntime.application.spi.business.tool.AgentTool;
 import io.seekflux.platform.agentruntime.application.spi.business.tool.model.AgentToolContext;
 import io.seekflux.platform.agentruntime.domain.model.tool.AgentToolParameter;
@@ -71,6 +72,45 @@ class AgentRuntimeTest {
         assertEquals(5, events.size());
         assertEquals(AgentRunEvent.Type.RUN_STARTED, events.getFirst().type());
         assertEquals(AgentRunEvent.Type.RUN_COMPLETED, events.getLast().type());
+        assertEquals(3, result.messages().size());
+        AgentMessage.Assistant toolCall = (AgentMessage.Assistant) result.messages().get(0);
+        AgentMessage.ToolResult toolResult = (AgentMessage.ToolResult) result.messages().get(1);
+        AgentMessage.Assistant completion = (AgentMessage.Assistant) result.messages().get(2);
+        assertEquals(toolCall.toolCalls().getFirst().toolCallId(), toolResult.toolCallId());
+        assertEquals(AgentMessage.ToolResultStatus.SUCCEEDED, toolResult.status());
+        assertEquals("ok", toolResult.structuredData().get("answer"));
+        assertTrue(completion.toolCalls().isEmpty());
+    }
+
+    @Test
+    void keepsMessageAndToolCallIdsStableAcrossRecoveryAttempts() {
+        AgentTool tool = tool(context -> AgentToolResult.success(Map.of("answer", "ok"), null));
+        AgentToolRegistry registry = new AgentToolRegistry(List.of(tool));
+        AgentRuntime runtime = new AgentRuntime(
+                registry,
+                new DefaultAgentToolExecutor(registry),
+                executor,
+                AgentRunRecorder.NOOP,
+                Clock.systemUTC());
+        io.seekflux.platform.agentruntime.application.spi.business.planner.AgentPlanner planner =
+                context -> context.observations().isEmpty()
+                        ? new AgentDecision.CallTool("search_direct", Map.of("query", "露营"))
+                        : new AgentDecision.Complete(Map.of("answer", "ok"));
+
+        AgentRunResult first = runtime.run(
+                definition(Duration.ofSeconds(1), 3), request(), planner);
+        AgentRunResult recovered = runtime.run(
+                definition(Duration.ofSeconds(1), 3), request(), planner);
+
+        assertTrue(!first.trace().agentRunId().equals(recovered.trace().agentRunId()));
+        assertEquals(
+                first.messages().stream().map(AgentMessage::messageId).toList(),
+                recovered.messages().stream().map(AgentMessage::messageId).toList());
+        AgentMessage.Assistant firstCall = (AgentMessage.Assistant) first.messages().getFirst();
+        AgentMessage.Assistant recoveredCall = (AgentMessage.Assistant) recovered.messages().getFirst();
+        assertEquals(
+                firstCall.toolCalls().getFirst().toolCallId(),
+                recoveredCall.toolCalls().getFirst().toolCallId());
     }
 
     @Test
@@ -96,6 +136,10 @@ class AgentRuntimeTest {
         assertEquals(AgentTerminalState.FALLBACK_REQUIRED, result.state());
         assertEquals("TOOL_ARGUMENT_INVALID", result.fallbackReason());
         assertEquals(0, invocations[0]);
+        assertEquals(1, result.messages().size());
+        AgentMessage.Assistant rejectedDecision =
+                (AgentMessage.Assistant) result.messages().getFirst();
+        assertTrue(rejectedDecision.toolCalls().isEmpty());
     }
 
     @Test
@@ -189,6 +233,14 @@ class AgentRuntimeTest {
         assertEquals(2, result.trace().steps().stream()
                 .filter(step -> "CALL_TOOL".equals(step.action()))
                 .count());
+        AgentMessage.Assistant calls = (AgentMessage.Assistant) result.messages().getFirst();
+        AgentMessage.ToolResult firstResult = (AgentMessage.ToolResult) result.messages().get(1);
+        AgentMessage.ToolResult secondResult = (AgentMessage.ToolResult) result.messages().get(2);
+        assertEquals(List.of(0, 1), calls.toolCalls().stream()
+                .map(AgentMessage.ToolCall::index)
+                .toList());
+        assertEquals(calls.toolCalls().get(0).toolCallId(), firstResult.toolCallId());
+        assertEquals(calls.toolCalls().get(1).toolCallId(), secondResult.toolCallId());
     }
 
     @Test

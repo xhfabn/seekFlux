@@ -30,7 +30,7 @@ Step 6 的 Runtime 能处理复杂 Query 和多轮约束，但 Redis 租约本�
 | owner-CAS 续租/释放与 fencing 全区间保护 | 已实现 | Redis Lua + PostgreSQL `active_fencing_token` + 提交前最终校验 |
 | 接管前强一致恢复 | 已实现 | 每轮从 PostgreSQL 追加事件重放；崩溃中的相同请求可由高 token 认领 |
 | 本地 token 先移除，再释放执行权 | 已实现 | `SessionExecutor.finally` 固定清理顺序 |
-| Workspace/Run/Push 三类事件分责 | 部分实现 | Workspace 与 Run 已持久化；项目按既定同步 JSON 边界不提供流式 Push |
+| Workspace/Run/Push 三类事件分责 | 部分实现 | Workspace 已持久化完整 User/Assistant/ToolResult 历史，Run 独立持久化；项目按既定同步 JSON 边界尚不提供流式 Push |
 | 分布式 cancel 与在途调用停止 | 已实现 | 原因化 Redis 信号按运行起始时间过滤；真实 Loop 的模型前/中、Tool 中、跨实例和停机测试通过，Run/Trace/Push/HTTP 使用同一原因 |
 | steer 先入队、再 cancel | 未实现 | 当前没有 QueuedUserMessage/插话 API，不能把 `steer=true` 误称为完整 steer |
 | Tool Schema、动态工具、并行调用、部分成功 | 已实现 | 共同 Deadline、稳定调用 ID、候选复用和 Bulkhead |

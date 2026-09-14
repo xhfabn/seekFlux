@@ -7,6 +7,7 @@ import io.seekflux.platform.agentruntime.domain.model.agent.definition.AgentDefi
 import io.seekflux.platform.agentruntime.application.command.AgentRunRequest;
 import io.seekflux.platform.agentruntime.domain.model.run.AgentRunResult;
 import io.seekflux.platform.agentruntime.domain.model.run.AgentTerminalState;
+import io.seekflux.platform.agentruntime.domain.model.message.AgentMessage;
 import io.seekflux.platform.agentruntime.domain.model.session.SessionStatePatch;
 import io.seekflux.platform.agentruntime.domain.exception.AgentExecutionFencedException;
 import io.seekflux.platform.agentruntime.domain.model.session.AgentSession;
@@ -35,6 +36,7 @@ public class JdbcAgentSessionStore implements AgentSessionStore {
 
     private final JdbcClient jdbcClient;
     private final ObjectMapper objectMapper;
+    private final WorkspaceMessageCodec messageCodec = new WorkspaceMessageCodec();
 
     public JdbcAgentSessionStore(JdbcClient jdbcClient, ObjectMapper objectMapper) {
         this.jdbcClient = jdbcClient;
@@ -44,7 +46,8 @@ public class JdbcAgentSessionStore implements AgentSessionStore {
     @Override
     public Optional<AgentSession> restoreFresh(String sessionId) {
         List<WorkspaceEvent> events = jdbcClient.sql("""
-                        SELECT event_position, event_type, request_id, turn_id, event_time, payload::text
+                        SELECT event_position, event_type, schema_version, message_id, tool_call_id,
+                               request_id, turn_id, event_time, payload::text
                         FROM agent.workspace_events
                         WHERE session_id = :sessionId
                         ORDER BY event_position
@@ -146,10 +149,16 @@ public class JdbcAgentSessionStore implements AgentSessionStore {
                             "state", statePatch.state()));
             position = advanced.eventPosition();
         }
+        String messageId = deterministicMessageId(
+                request.sessionId(), request.requestId(), request.turnId(), "user");
         insertWorkspaceEvent(
+                eventId(messageId),
                 request.sessionId(),
                 position,
                 "USER_MESSAGE",
+                1,
+                messageId,
+                null,
                 request.requestId(),
                 request.turnId(),
                 eventTime,
@@ -166,7 +175,12 @@ public class JdbcAgentSessionStore implements AgentSessionStore {
             case FAILED -> "RUN_FAILED";
             default -> "RUN_COMPLETED";
         };
-        long position = advanceOutcomePosition(sessionId, result, fencingToken, eventTime);
+        long position = advanceOutcomePosition(
+                sessionId, result, fencingToken, eventTime, result.messages().size() + 1);
+        long messagePosition = position - result.messages().size();
+        for (AgentMessage message : result.messages()) {
+            insertMessageEvent(sessionId, messagePosition++, message, eventTime);
+        }
         Map<String, Object> payload = new java.util.LinkedHashMap<>();
         payload.put("agentRunId", result.trace().agentRunId());
         payload.put("state", result.state().name());
@@ -246,19 +260,26 @@ public class JdbcAgentSessionStore implements AgentSessionStore {
             String sessionId,
             AgentRunResult result,
             long fencingToken,
-            Instant eventTime) {
+            Instant eventTime,
+            int eventCount) {
         return jdbcClient.sql("""
                         UPDATE agent.sessions
-                        SET event_position = event_position + 1,
-                            version = version + 1,
-                            status = 'COMPLETED',
+                        SET event_position = event_position + :eventCount,
+                            version = version + :eventCount,
+                            status = :status,
                             last_agent_run_id = :agentRunId,
+                            last_turn_id = :turnId,
                             updated_at = :eventTime
                         WHERE session_id = :sessionId
                           AND active_fencing_token = :fencingToken
                         RETURNING event_position
                         """)
                 .param("agentRunId", UUID.fromString(result.trace().agentRunId()))
+                .param("turnId", result.trace().turnId())
+                .param("eventCount", eventCount)
+                .param("status", result.state() == AgentTerminalState.NEED_CLARIFICATION
+                        ? "SUSPENDED"
+                        : "COMPLETED")
                 .param("eventTime", databaseTime(eventTime))
                 .param("sessionId", sessionId)
                 .param("fencingToken", fencingToken)
@@ -301,6 +322,7 @@ public class JdbcAgentSessionStore implements AgentSessionStore {
         payload.put("executionMode", result.trace().executionMode());
         payload.put("fallbackReason", result.fallbackReason());
         payload.put("cancellationReason", result.cancellationReason());
+        payload.put("messageCount", result.messages().size());
         payload.put("fencingToken", fencingToken);
         payload.put("definition", result.trace().definition());
         payload.put("tookMillis", result.trace().tookMillis());
@@ -330,19 +352,68 @@ public class JdbcAgentSessionStore implements AgentSessionStore {
             String turnId,
             Instant eventTime,
             Map<String, Object> payload) {
+        insertWorkspaceEvent(
+                UUID.randomUUID(),
+                sessionId,
+                position,
+                eventType,
+                1,
+                null,
+                null,
+                requestId,
+                turnId,
+                eventTime,
+                payload);
+    }
+
+    private void insertMessageEvent(
+            String sessionId,
+            long position,
+            AgentMessage message,
+            Instant eventTime) {
+        WorkspaceMessageCodec.EncodedMessage encoded = messageCodec.encode(message);
+        insertWorkspaceEvent(
+                encoded.eventId(),
+                sessionId,
+                position,
+                encoded.eventType(),
+                encoded.schemaVersion(),
+                encoded.messageId(),
+                encoded.toolCallId(),
+                encoded.requestId(),
+                encoded.turnId(),
+                eventTime,
+                encoded.payload());
+    }
+
+    private void insertWorkspaceEvent(
+            UUID eventId,
+            String sessionId,
+            long position,
+            String eventType,
+            int schemaVersion,
+            String messageId,
+            String toolCallId,
+            String requestId,
+            String turnId,
+            Instant eventTime,
+            Map<String, Object> payload) {
         int rows = jdbcClient.sql("""
                         INSERT INTO agent.workspace_events (
-                            event_id, session_id, event_position, event_type,
-                            request_id, turn_id, event_time, payload
+                            event_id, session_id, event_position, event_type, schema_version,
+                            message_id, tool_call_id, request_id, turn_id, event_time, payload
                         ) VALUES (
-                            :eventId, :sessionId, :eventPosition, :eventType,
-                            :requestId, :turnId, :eventTime, CAST(:payload AS jsonb)
+                            :eventId, :sessionId, :eventPosition, :eventType, :schemaVersion,
+                            :messageId, :toolCallId, :requestId, :turnId, :eventTime, CAST(:payload AS jsonb)
                         )
                         """)
-                .param("eventId", UUID.randomUUID())
+                .param("eventId", eventId)
                 .param("sessionId", sessionId)
                 .param("eventPosition", position)
                 .param("eventType", eventType)
+                .param("schemaVersion", schemaVersion)
+                .param("messageId", messageId, java.sql.Types.VARCHAR)
+                .param("toolCallId", toolCallId, java.sql.Types.VARCHAR)
                 .param("requestId", requestId, java.sql.Types.VARCHAR)
                 .param("turnId", turnId, java.sql.Types.VARCHAR)
                 .param("eventTime", databaseTime(eventTime))
@@ -353,12 +424,30 @@ public class JdbcAgentSessionStore implements AgentSessionStore {
         }
     }
 
+    private static UUID eventId(String messageId) {
+        try {
+            return UUID.fromString(messageId);
+        } catch (IllegalArgumentException invalidUuid) {
+            return UUID.nameUUIDFromBytes(messageId.getBytes(StandardCharsets.UTF_8));
+        }
+    }
+
+    private static String deterministicMessageId(
+            String sessionId,
+            String requestId,
+            String turnId,
+            String kind) {
+        String identity = sessionId + ":" + requestId + ":" + turnId + ":" + kind;
+        return UUID.nameUUIDFromBytes(identity.getBytes(StandardCharsets.UTF_8)).toString();
+    }
+
     private WorkspaceEvent mapEvent(ResultSet row, int rowNumber) throws SQLException {
         long position = row.getLong("event_position");
         Instant eventTime = row.getObject("event_time", OffsetDateTime.class).toInstant();
         Map<String, Object> payload = fromJson(row.getString("payload"));
         String agentRunId = string(payload, "agentRunId");
         String reason = string(payload, "reason");
+        int schemaVersion = row.getInt("schema_version");
         return switch (row.getString("event_type")) {
             case "SESSION_CREATED" -> new WorkspaceEvent.SessionCreated(
                     position,
@@ -368,9 +457,33 @@ public class JdbcAgentSessionStore implements AgentSessionStore {
             case "USER_MESSAGE" -> new WorkspaceEvent.UserMessage(
                     position,
                     eventTime,
+                    schemaVersion,
+                    row.getString("message_id"),
                     row.getString("request_id"),
                     row.getString("turn_id"),
                     string(payload, "text"));
+            case "ASSISTANT_MESSAGE" -> new WorkspaceEvent.AssistantMessage(
+                    position,
+                    eventTime,
+                    (AgentMessage.Assistant) messageCodec.decode(
+                            "ASSISTANT_MESSAGE",
+                            schemaVersion,
+                            row.getString("message_id"),
+                            null,
+                            row.getString("request_id"),
+                            row.getString("turn_id"),
+                            payload));
+            case "TOOL_RESULT_MESSAGE" -> new WorkspaceEvent.ToolResultMessage(
+                    position,
+                    eventTime,
+                    (AgentMessage.ToolResult) messageCodec.decode(
+                            "TOOL_RESULT_MESSAGE",
+                            schemaVersion,
+                            row.getString("message_id"),
+                            row.getString("tool_call_id"),
+                            row.getString("request_id"),
+                            row.getString("turn_id"),
+                            payload));
             case "STATE_PATCHED" -> new WorkspaceEvent.StatePatched(
                     position,
                     eventTime,
