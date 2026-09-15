@@ -7,11 +7,21 @@ import io.seekflux.platform.agentruntime.application.spi.capability.execution.Ex
 import io.seekflux.platform.agentruntime.application.spi.capability.execution.ExecutionAuthorityStore;
 import io.seekflux.platform.agentruntime.domain.model.run.AgentRunResult;
 import io.seekflux.platform.agentruntime.domain.exception.AgentExecutionFencedException;
+import io.seekflux.platform.agentruntime.domain.exception.UnsafeToolRecoveryException;
 import io.seekflux.platform.agentruntime.application.spi.capability.event.PushEventPublisher;
 import io.seekflux.platform.agentruntime.domain.model.feature.RuntimeContext;
 import io.seekflux.platform.agentruntime.domain.service.loop.AgentLoop;
 import io.seekflux.platform.agentruntime.domain.model.session.AgentSession;
 import io.seekflux.platform.agentruntime.application.spi.capability.session.AgentSessionStore;
+import io.seekflux.platform.agentruntime.application.spi.capability.session.AgentRecoveryStore;
+import io.seekflux.platform.agentruntime.domain.model.recovery.RecoveryPlan;
+import io.seekflux.platform.agentruntime.domain.model.recovery.ResumeAction;
+import io.seekflux.platform.agentruntime.domain.model.recovery.ResumeIngress;
+import io.seekflux.platform.agentruntime.domain.model.recovery.ResumeSource;
+import io.seekflux.platform.agentruntime.domain.model.recovery.ToolJournalStatus;
+import io.seekflux.platform.agentruntime.domain.model.session.IngressCommitResult;
+import io.seekflux.platform.agentruntime.domain.service.recovery.AgentRecoveryExecution;
+import io.seekflux.platform.agentruntime.domain.service.recovery.RecoveryFaultInjector;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -35,6 +45,8 @@ public final class SessionExecutor implements AutoCloseable {
     private final CancellationSignalStore cancellationSignals;
     private final Duration remoteCancelPollInterval;
     private final Duration shutdownGracePeriod;
+    private final AgentRecoveryStore recoveryStore;
+    private final RecoveryFaultInjector recoveryFaultInjector;
     private final Map<String, CancellationToken> cancellationTokens = new ConcurrentHashMap<>();
     private final Object activeMonitor = new Object();
     private int activeRuns;
@@ -47,7 +59,8 @@ public final class SessionExecutor implements AutoCloseable {
             ScheduledExecutorService renewalScheduler,
             Clock clock) {
         this(authorityStore, sessions, loop, renewalScheduler, clock,
-                CancellationSignalStore.NOOP, Duration.ZERO, Duration.ofSeconds(5));
+                CancellationSignalStore.NOOP, Duration.ZERO, Duration.ofSeconds(5),
+                AgentRecoveryStore.NOOP, RecoveryFaultInjector.NONE);
     }
 
     public SessionExecutor(
@@ -59,6 +72,22 @@ public final class SessionExecutor implements AutoCloseable {
             CancellationSignalStore cancellationSignals,
             Duration remoteCancelPollInterval,
             Duration shutdownGracePeriod) {
+        this(authorityStore, sessions, loop, renewalScheduler, clock, cancellationSignals,
+                remoteCancelPollInterval, shutdownGracePeriod,
+                AgentRecoveryStore.NOOP, RecoveryFaultInjector.NONE);
+    }
+
+    public SessionExecutor(
+            ExecutionAuthorityStore authorityStore,
+            AgentSessionStore sessions,
+            AgentLoop loop,
+            ScheduledExecutorService renewalScheduler,
+            Clock clock,
+            CancellationSignalStore cancellationSignals,
+            Duration remoteCancelPollInterval,
+            Duration shutdownGracePeriod,
+            AgentRecoveryStore recoveryStore,
+            RecoveryFaultInjector recoveryFaultInjector) {
         this.authorityStore = authorityStore;
         this.sessions = sessions;
         this.loop = loop;
@@ -67,6 +96,9 @@ public final class SessionExecutor implements AutoCloseable {
         this.cancellationSignals = cancellationSignals;
         this.remoteCancelPollInterval = remoteCancelPollInterval;
         this.shutdownGracePeriod = shutdownGracePeriod;
+        this.recoveryStore = recoveryStore == null ? AgentRecoveryStore.NOOP : recoveryStore;
+        this.recoveryFaultInjector = recoveryFaultInjector == null
+                ? RecoveryFaultInjector.NONE : recoveryFaultInjector;
     }
 
     public java.util.Optional<ExecutionAuthority> tryAcquireExecution(String sessionId) {
@@ -82,6 +114,15 @@ public final class SessionExecutor implements AutoCloseable {
             RuntimeContext context,
             PushEventPublisher publisher,
             ExecutionAuthority authority) {
+        return run(sessionId, context, publisher, authority, IngressCommitResult.COMMITTED);
+    }
+
+    public AgentRunResult run(
+            String sessionId,
+            RuntimeContext context,
+            PushEventPublisher publisher,
+            ExecutionAuthority authority,
+            IngressCommitResult ingressResult) {
         if (closing) {
             authority.close();
             throw new IllegalStateException("agent runtime is shutting down");
@@ -107,8 +148,50 @@ public final class SessionExecutor implements AutoCloseable {
             }
             AgentSession fresh = sessions.restoreFresh(sessionId)
                     .orElseThrow(() -> new IllegalStateException("agent session disappeared before execution"));
+            ResumeSource resumeSource = ingressResult == IngressCommitResult.RECOVERED
+                    ? ResumeSource.CRASH_RECOVERY
+                    : ResumeSource.USER_MESSAGE;
+            RecoveryPlan recoveryPlan = recoveryStore.commitResume(
+                    new ResumeIngress(
+                            1,
+                            sessionId,
+                            context.request().requestId(),
+                            context.request().turnId(),
+                            resumeSource),
+                    authority.fencingToken(),
+                    clock.instant());
+            if (recoveryPlan.checkpoint() != null
+                    && recoveryPlan.checkpoint().messageCutoff() != fresh.position()) {
+                throw new IllegalStateException(
+                        "checkpoint message cutoff no longer matches the Workspace high-water mark");
+            }
+            if (recoveryPlan.action() == ResumeAction.FAIL_UNSAFE_PENDING_TOOL) {
+                String unsafeCall = recoveryPlan.toolCalls().stream()
+                        .filter(call -> call.status() == ToolJournalStatus.UNKNOWN && !call.safeToRetry())
+                        .map(call -> call.toolCallId())
+                        .findFirst()
+                        .orElse("unknown");
+                throw new UnsafeToolRecoveryException(sessionId, unsafeCall);
+            }
+            RuntimeContext executionContext = recoveryPlan.checkpoint() == null
+                    ? context
+                    : context.withPersistentFeatures(
+                            recoveryPlan.checkpoint().persistentFeatures());
+            long messageCutoff = recoveryPlan.checkpoint() == null
+                    ? fresh.position()
+                    : recoveryPlan.checkpoint().messageCutoff();
+            AgentRecoveryExecution recovery = new AgentRecoveryExecution(
+                    recoveryStore,
+                    recoveryPlan,
+                    authority.fencingToken(),
+                    messageCutoff,
+                    executionContext.features(),
+                    clock,
+                    recoveryFaultInjector);
             //loop 启动入口
-            AgentRunResult result = loop.run(fresh, context, publisher, token);
+            AgentRunResult result = recoveryPlan.action() == ResumeAction.COMMIT_TERMINAL
+                    ? recoveryPlan.checkpoint().terminalResult()
+                    : loop.run(fresh, executionContext, publisher, token, recovery);
             if (!authority.renew(AUTHORITY_TTL_MILLIS)) {
                 token.cancel(CancellationCause.AUTHORITY_LOST);
                 throw new AgentExecutionFencedException(sessionId, authority.fencingToken());

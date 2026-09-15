@@ -192,6 +192,7 @@ public class JdbcAgentSessionStore implements AgentSessionStore {
         }
         insertWorkspaceEvent(sessionId, position, eventType, null, null, eventTime, payload);
         insertOutcomeOutbox(sessionId, position, result, fencingToken, eventTime);
+        clearRecoveryState(sessionId, result.trace().requestId(), fencingToken);
     }
 
     private long advancePosition(
@@ -341,6 +342,36 @@ public class JdbcAgentSessionStore implements AgentSessionStore {
                 .param("eventType", eventType)
                 .param("eventTime", databaseTime(eventTime))
                 .param("payload", toJson(payload))
+                .update();
+    }
+
+    private void clearRecoveryState(String sessionId, String requestId, long fencingToken) {
+        int authorized = jdbcClient.sql("""
+                        SELECT count(*)
+                        FROM agent.sessions
+                        WHERE session_id = :sessionId
+                          AND active_fencing_token = :fencingToken
+                        """)
+                .param("sessionId", sessionId)
+                .param("fencingToken", fencingToken)
+                .query(Integer.class)
+                .single();
+        if (authorized != 1) {
+            throw new AgentExecutionFencedException(sessionId, fencingToken);
+        }
+        jdbcClient.sql("""
+                        DELETE FROM agent.tool_call_journal
+                        WHERE session_id = :sessionId AND request_id = :requestId
+                        """)
+                .param("sessionId", sessionId)
+                .param("requestId", requestId)
+                .update();
+        jdbcClient.sql("""
+                        DELETE FROM agent.runtime_checkpoints
+                        WHERE session_id = :sessionId AND request_id = :requestId
+                        """)
+                .param("sessionId", sessionId)
+                .param("requestId", requestId)
                 .update();
     }
 

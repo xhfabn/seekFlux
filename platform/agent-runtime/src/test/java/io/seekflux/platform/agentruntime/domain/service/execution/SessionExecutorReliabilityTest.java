@@ -13,6 +13,7 @@ import io.seekflux.platform.agentruntime.domain.model.run.AgentRunResult;
 import io.seekflux.platform.agentruntime.domain.model.run.AgentRunTrace;
 import io.seekflux.platform.agentruntime.domain.model.run.AgentTerminalState;
 import io.seekflux.platform.agentruntime.domain.exception.AgentExecutionFencedException;
+import io.seekflux.platform.agentruntime.domain.exception.UnsafeToolRecoveryException;
 import io.seekflux.platform.agentruntime.application.spi.capability.execution.CancellationSignalStore;
 import io.seekflux.platform.agentruntime.application.spi.capability.execution.ExecutionAuthority;
 import io.seekflux.platform.agentruntime.application.spi.capability.execution.ExecutionAuthorityStore;
@@ -22,6 +23,17 @@ import io.seekflux.platform.agentruntime.application.spi.capability.llm.LlmClien
 import io.seekflux.platform.agentruntime.domain.service.loop.AgentLoop;
 import io.seekflux.platform.agentruntime.domain.model.session.AgentSession;
 import io.seekflux.platform.agentruntime.application.spi.capability.session.AgentSessionStore;
+import io.seekflux.platform.agentruntime.application.spi.capability.session.AgentRecoveryStore;
+import io.seekflux.platform.agentruntime.application.spi.business.tool.AgentTool;
+import io.seekflux.platform.agentruntime.domain.model.message.AgentMessage;
+import io.seekflux.platform.agentruntime.domain.model.recovery.CheckpointBoundary;
+import io.seekflux.platform.agentruntime.domain.model.recovery.RecoveryPlan;
+import io.seekflux.platform.agentruntime.domain.model.recovery.ResumeAction;
+import io.seekflux.platform.agentruntime.domain.model.recovery.ResumeIngress;
+import io.seekflux.platform.agentruntime.domain.model.recovery.RuntimeCheckpoint;
+import io.seekflux.platform.agentruntime.domain.model.recovery.ToolCallJournalEntry;
+import io.seekflux.platform.agentruntime.domain.model.recovery.ToolJournalStatus;
+import io.seekflux.platform.agentruntime.domain.service.recovery.RecoveryFaultInjector;
 import io.seekflux.platform.agentruntime.domain.model.session.IngressCommitResult;
 import io.seekflux.platform.agentruntime.domain.model.session.WorkspaceEvent;
 import java.time.Clock;
@@ -101,8 +113,86 @@ class SessionExecutorReliabilityTest {
         assertEquals("SHUTDOWN", result.cancellationReason());
     }
 
+    @Test
+    void terminalCheckpointCommitsOutcomeWithoutDispatchingLoopAgain() {
+        AtomicBoolean outcomeAppended = new AtomicBoolean();
+        AtomicBoolean loopCalled = new AtomicBoolean();
+        FakeSessions sessions = new FakeSessions(outcomeAppended);
+        RuntimeContext context = runtimeContext();
+        AgentRunResult terminal = outcome(context, AgentTerminalState.RESULTS_READY);
+        RuntimeCheckpoint checkpoint = terminalCheckpoint(terminal);
+        AgentRecoveryStore recovery = new AgentRecoveryStore() {
+            @Override public boolean enabled() { return true; }
+            @Override public RecoveryPlan commitResume(ResumeIngress ingress, long token, Instant time) {
+                return new RecoveryPlan(ResumeAction.COMMIT_TERMINAL, checkpoint, List.of());
+            }
+        };
+        AgentLoop loop = new AgentLoop() {
+            @Override public String loopType() { return "test"; }
+            @Override public AgentRunResult run(AgentSession session, RuntimeContext runtime,
+                    PushEventPublisher publisher, CancellationToken token) {
+                loopCalled.set(true);
+                return terminal;
+            }
+        };
+        SessionExecutor executor = executor(sessions, loop, CancellationSignalStore.NOOP, recovery);
+        try {
+            AgentRunResult result = executor.run(
+                    "session", context, PushEventPublisher.NOOP, authority(20),
+                    IngressCommitResult.RECOVERED);
+
+            assertEquals(terminal, result);
+            assertTrue(outcomeAppended.get());
+            assertFalse(loopCalled.get());
+        } finally {
+            executor.close();
+        }
+    }
+
+    @Test
+    void unknownMutatingToolFailsClosedBeforeLoopDispatch() {
+        AtomicBoolean outcomeAppended = new AtomicBoolean();
+        AtomicBoolean loopCalled = new AtomicBoolean();
+        FakeSessions sessions = new FakeSessions(outcomeAppended);
+        RuntimeCheckpoint checkpoint = preTurnCheckpoint();
+        ToolCallJournalEntry unsafe = unsafeUnknownTool(checkpoint);
+        AgentRecoveryStore recovery = new AgentRecoveryStore() {
+            @Override public boolean enabled() { return true; }
+            @Override public RecoveryPlan commitResume(ResumeIngress ingress, long token, Instant time) {
+                return new RecoveryPlan(
+                        ResumeAction.FAIL_UNSAFE_PENDING_TOOL, checkpoint, List.of(unsafe));
+            }
+        };
+        AgentLoop loop = new AgentLoop() {
+            @Override public String loopType() { return "test"; }
+            @Override public AgentRunResult run(AgentSession session, RuntimeContext runtime,
+                    PushEventPublisher publisher, CancellationToken token) {
+                loopCalled.set(true);
+                return outcome(runtime, AgentTerminalState.RESULTS_READY);
+            }
+        };
+        SessionExecutor executor = executor(sessions, loop, CancellationSignalStore.NOOP, recovery);
+        try {
+            assertThrows(UnsafeToolRecoveryException.class, () -> executor.run(
+                    "session", runtimeContext(), PushEventPublisher.NOOP, authority(21),
+                    IngressCommitResult.RECOVERED));
+            assertFalse(loopCalled.get());
+            assertFalse(outcomeAppended.get());
+        } finally {
+            executor.close();
+        }
+    }
+
     private static SessionExecutor executor(
             FakeSessions sessions, AgentLoop loop, CancellationSignalStore signals) {
+        return executor(sessions, loop, signals, AgentRecoveryStore.NOOP);
+    }
+
+    private static SessionExecutor executor(
+            FakeSessions sessions,
+            AgentLoop loop,
+            CancellationSignalStore signals,
+            AgentRecoveryStore recovery) {
         return new SessionExecutor(
                 new ExecutionAuthorityStore() {
                     @Override public Optional<ExecutionAuthority> acquire(
@@ -118,7 +208,9 @@ class SessionExecutorReliabilityTest {
                 Clock.fixed(Instant.parse("2026-08-10T00:00:00Z"), ZoneOffset.UTC),
                 signals,
                 Duration.ZERO,
-                Duration.ofSeconds(1));
+                Duration.ofSeconds(1),
+                recovery,
+                RecoveryFaultInjector.NONE);
     }
 
     private static ExecutionAuthority authority(long token) {
@@ -170,6 +262,37 @@ class SessionExecutorReliabilityTest {
             }
         };
         return new RuntimeContext(definition, request, llm, Map.of());
+    }
+
+    private static RuntimeCheckpoint terminalCheckpoint(AgentRunResult terminal) {
+        return new RuntimeCheckpoint(
+                1, "00000000-0000-0000-0000-000000000010", CheckpointBoundary.COMPLETED,
+                "session", "request", terminal.trace().agentRunId(), "turn", 20, 1,
+                terminal.trace().definition(), 1, 0, 900, Map.of(), List.of(), List.of(),
+                Set.of(), io.seekflux.platform.agentruntime.domain.model.run.LlmUsage.UNMEASURED,
+                List.of(), terminal, Instant.parse("2026-09-14T00:00:00Z"));
+    }
+
+    private static RuntimeCheckpoint preTurnCheckpoint() {
+        AgentRunResult terminal = outcome(runtimeContext(), AgentTerminalState.RESULTS_READY);
+        return new RuntimeCheckpoint(
+                1, "00000000-0000-0000-0000-000000000011", CheckpointBoundary.PRE_TURN,
+                "session", "request", terminal.trace().agentRunId(), "turn", 21, 1,
+                terminal.trace().definition(), 1, 0, 900, Map.of(), List.of(), List.of(),
+                Set.of(), io.seekflux.platform.agentruntime.domain.model.run.LlmUsage.UNMEASURED,
+                List.of(), null, Instant.parse("2026-09-14T00:00:00Z"));
+    }
+
+    private static ToolCallJournalEntry unsafeUnknownTool(RuntimeCheckpoint checkpoint) {
+        AgentMessage.Assistant assistant = new AgentMessage.Assistant(
+                1, "assistant", "request", "turn", checkpoint.attemptId(), 1,
+                "publish", null, false,
+                List.of(new AgentMessage.ToolCall("call", "publish", 0, Map.of())));
+        return new ToolCallJournalEntry(
+                1, "session", "request", "turn", checkpoint.attemptId(), 1, 0,
+                "call", "publish", "publish-v1", AgentTool.Effect.MUTATING,
+                ToolJournalStatus.UNKNOWN, Map.of(), "digest", false,
+                assistant, null, Instant.parse("2026-09-14T00:00:00Z"));
     }
 
     private static AgentRunResult outcome(RuntimeContext context, AgentTerminalState state) {

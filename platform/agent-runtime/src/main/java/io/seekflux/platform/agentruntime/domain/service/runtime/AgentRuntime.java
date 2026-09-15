@@ -17,19 +17,29 @@ import io.seekflux.platform.agentruntime.domain.model.execution.CancellationCaus
 import io.seekflux.platform.agentruntime.domain.model.execution.CancellationToken;
 import io.seekflux.platform.agentruntime.domain.model.message.AgentAssistantContent;
 import io.seekflux.platform.agentruntime.domain.model.message.AgentMessage;
+import io.seekflux.platform.agentruntime.domain.model.recovery.CheckpointBoundary;
+import io.seekflux.platform.agentruntime.domain.model.recovery.RecoveryPlan;
+import io.seekflux.platform.agentruntime.domain.model.recovery.ResumeAction;
+import io.seekflux.platform.agentruntime.domain.model.recovery.RuntimeCheckpoint;
+import io.seekflux.platform.agentruntime.domain.model.recovery.ToolCallJournalEntry;
+import io.seekflux.platform.agentruntime.domain.model.recovery.ToolJournalStatus;
 import io.seekflux.platform.agentruntime.application.spi.business.tool.AgentTool;
 import io.seekflux.platform.agentruntime.application.spi.business.tool.model.AgentToolContext;
 import io.seekflux.platform.agentruntime.domain.model.tool.AgentToolInvocation;
 import io.seekflux.platform.agentruntime.domain.model.tool.AgentToolObservation;
 import io.seekflux.platform.agentruntime.domain.model.tool.AgentToolResult;
 import io.seekflux.platform.agentruntime.domain.service.execution.AgentCallGuard;
+import io.seekflux.platform.agentruntime.domain.service.recovery.AgentRecoveryExecution;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
 import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.HashMap;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -92,15 +102,37 @@ public final class AgentRuntime {
             AgentRunRequest request,
             AgentPlanner planner,
             CancellationToken cancellationToken) {
+        return run(definition, request, planner, cancellationToken, AgentRecoveryExecution.DISABLED);
+    }
+
+    public AgentRunResult run(
+            AgentDefinition definition,
+            AgentRunRequest request,
+            AgentPlanner planner,
+            CancellationToken cancellationToken,
+            AgentRecoveryExecution recovery) {
         Objects.requireNonNull(definition, "agent definition must not be null");
         Objects.requireNonNull(request, "agent run request must not be null");
         Objects.requireNonNull(planner, "agent planner must not be null");
         Objects.requireNonNull(cancellationToken, "cancellation token must not be null");
+        Objects.requireNonNull(recovery, "recovery execution must not be null");
+
+        RecoveryPlan recoveryPlan = recovery.plan();
+        if (recoveryPlan.action() == ResumeAction.COMMIT_TERMINAL) {
+            return recoveryPlan.checkpoint().terminalResult();
+        }
+        if (recoveryPlan.action() == ResumeAction.FAIL_UNSAFE_PENDING_TOOL) {
+            throw new IllegalStateException("unsafe pending Tool must be rejected before Loop dispatch");
+        }
 
         String runId = UUID.randomUUID().toString();
         Instant startedAt = clock.instant();
         long startedNanos = System.nanoTime();
-        long deadlineNanos = saturatingAdd(startedNanos, definition.timeout().toNanos());
+        RuntimeCheckpoint restored = recoveryPlan.checkpoint();
+        long budgetMillis = restored == null
+                ? definition.timeout().toMillis()
+                : restored.remainingBudgetMillis();
+        long deadlineNanos = saturatingAdd(startedNanos, Duration.ofMillis(budgetMillis).toNanos());
         Set<String> effectiveTools = effectiveTools(definition, request);
         AgentRunTrace.DefinitionSnapshot snapshot = new AgentRunTrace.DefinitionSnapshot(
                 definition.id(),
@@ -112,7 +144,11 @@ public final class AgentRuntime {
                 definition.maxToolCalls(),
                 definition.timeout().toMillis(),
                 tools.versionsFor(effectiveTools));
-        RunState run = new RunState(runId, request, snapshot, startedAt, startedNanos);
+        if (restored != null) {
+            validateCheckpoint(restored, request, snapshot);
+        }
+        RunState run = new RunState(
+                runId, request, snapshot, startedAt, startedNanos, deadlineNanos, recovery, restored);
         run.record(AgentRunEvent.Type.RUN_STARTED, Map.of("definition", snapshot));
 
         CancellationCause initialCancellation = cancellationToken.cause();
@@ -120,10 +156,37 @@ public final class AgentRuntime {
             return finishCancelled(run, initialCancellation);
         }
 
-        List<AgentToolObservation> observations = new ArrayList<>();
-        Set<String> completedInvocations = new HashSet<>();
-        int toolCalls = 0;
-        for (int step = 1; step <= definition.maxSteps(); step++) {
+        List<AgentToolObservation> observations = new ArrayList<>(
+                restored == null ? List.of() : restored.observations());
+        Set<String> completedInvocations = new HashSet<>(
+                restored == null ? Set.of() : restored.completedInvocations());
+        int toolCalls = restored == null ? 0 : restored.toolCallCount();
+        int startStep = restored == null ? 1 : restored.nextStep();
+
+        if (recoveryPlan.action() == ResumeAction.RESUME_PENDING_TOOLS) {
+            ResumeBatch resumed = resumePendingTools(
+                    run,
+                    recoveryPlan.toolCalls(),
+                    observations,
+                    completedInvocations,
+                    deadlineNanos,
+                    cancellationToken);
+            toolCalls = Math.max(toolCalls, resumed.toolCallCount());
+            startStep = resumed.nextStep();
+            if (resumed.cancellationCause() != null) {
+                return finishCancelled(run, resumed.cancellationCause());
+            }
+            if (resumed.failureCode() != null) {
+                return finishFailure(run, definition, resumed.failureCode(), null);
+            }
+            run.savePostTurn(
+                    startStep,
+                    toolCalls,
+                    observations,
+                    completedInvocations);
+        }
+
+        for (int step = startStep; step <= definition.maxSteps(); step++) {
             CancellationCause stepCancellation = cancellationToken.cause();
             if (stepCancellation != null) {
                 return finishCancelled(run, stepCancellation);
@@ -131,6 +194,12 @@ public final class AgentRuntime {
             if (remainingNanos(deadlineNanos) <= 0) {
                 return finishFailure(run, definition, "AGENT_DEADLINE_EXCEEDED", null);
             }
+
+            RuntimeCheckpoint preTurnCheckpoint = run.savePreTurn(
+                    step,
+                    toolCalls,
+                    observations,
+                    completedInvocations);
 
             AgentDecision decision;
             long decisionStarted = System.nanoTime();
@@ -213,7 +282,13 @@ public final class AgentRuntime {
                 run.recordAssistant(step, decision, List.of());
                 return finishFailure(run, definition, "TOOL_ARGUMENT_INVALID", null);
             }
-            run.recordAssistant(step, decision, prepared);
+            AgentMessage.Assistant assistant = run.recordAssistant(step, decision, prepared);
+            int journalStep = step;
+            List<ToolCallJournalEntry> journalEntries = prepared.stream()
+                    .map(call -> run.journalEntry(
+                            journalStep, call, assistant, ToolJournalStatus.DECIDED, null))
+                    .toList();
+            run.recordToolDecision(preTurnCheckpoint, journalEntries);
             boolean noProgress = false;
             for (PreparedToolCall call : prepared) {
                 String fingerprint = call.tool().name() + ":" + new TreeMap<>(call.arguments());
@@ -238,12 +313,17 @@ public final class AgentRuntime {
                             call,
                             AgentMessage.ToolResultStatus.FAILED,
                             "NO_PROGRESS_DETECTED");
+                    AgentToolObservation failed = failedObservation(
+                            call, "NO_PROGRESS_DETECTED", 0);
+                    run.recordJournalResult(journalEntries.get(call.index()).withStatus(
+                            ToolJournalStatus.FAILED, failed, clock.instant()));
                 }
                 return finishFailure(run, definition, "NO_PROGRESS_DETECTED", null);
             }
 
             List<AgentToolObservation> completed;
             try {
+                run.markToolExecuting(journalEntries);
                 completed = executeBatch(runId, request, prepared, deadlineNanos, cancellationToken);
             } catch (CallFailure failure) {
                 if (failure.cancellationCause != null
@@ -269,6 +349,13 @@ public final class AgentRuntime {
                                 "status", messageStatus.name(),
                                 "errorCode", failure.code));
                         run.recordToolResult(step, call, messageStatus, failure.code);
+                        ToolJournalStatus journalStatus = failure.cancellationCause == null
+                                ? ToolJournalStatus.TIMED_OUT
+                                : ToolJournalStatus.CANCELLED;
+                        run.recordJournalResult(journalEntries.get(call.index()).withStatus(
+                                journalStatus,
+                                failedObservation(call, failure.code, 0),
+                                clock.instant()));
                     }
                 }
                 if (failure.cancellationCause != null) {
@@ -294,6 +381,10 @@ public final class AgentRuntime {
                             call,
                             AgentMessage.ToolResultStatus.CANCELLED,
                             afterTools.name());
+                    run.recordJournalResult(journalEntries.get(call.index()).withStatus(
+                            ToolJournalStatus.CANCELLED,
+                            failedObservation(call, afterTools.name(), 0),
+                            clock.instant()));
                 }
                 return finishCancelled(run, afterTools);
             }
@@ -313,11 +404,22 @@ public final class AgentRuntime {
                         toolResult.errorCode()));
                 run.record(AgentRunEvent.Type.TOOL_COMPLETED, toolPayload(step, observation));
                 run.recordToolResult(step, observation);
+                ToolJournalStatus journalStatus = toolResult.success()
+                        ? ToolJournalStatus.SUCCEEDED
+                        : ToolJournalStatus.FAILED;
+                int callIndex = indexOfCall(prepared, observation.toolCallId());
+                run.recordJournalResult(journalEntries.get(callIndex).withStatus(
+                        journalStatus, observation, clock.instant()));
             }
             if (completed.stream().noneMatch(observation -> observation.result().success())) {
                 AgentToolResult first = completed.getFirst().result();
                 return finishFailure(run, definition, first.errorCode(), first.linkedTraceId());
             }
+            run.savePostTurn(
+                    step + 1,
+                    toolCalls,
+                    observations,
+                    completedInvocations);
         }
         return finishFailure(run, definition, "STEP_LIMIT_REACHED", null);
     }
@@ -404,9 +506,11 @@ public final class AgentRuntime {
             payload.put("cancellationReason", cancellationReason);
         }
         run.record(AgentRunEvent.Type.RUN_COMPLETED, payload);
-        return new AgentRunResult(
+        AgentRunResult result = new AgentRunResult(
                 state, output, clarification, fallbackReason, cancellationReason, degraded,
                 run.messages, trace);
+        run.saveTerminal(result);
+        return result;
     }
 
     private static Map<String, Object> decisionPayload(int step, AgentDecision decision) {
@@ -438,6 +542,254 @@ public final class AgentRuntime {
             payload.put("linkedTraceId", observation.result().linkedTraceId());
         }
         return payload;
+    }
+
+    private ResumeBatch resumePendingTools(
+            RunState run,
+            List<ToolCallJournalEntry> journalEntries,
+            List<AgentToolObservation> observations,
+            Set<String> completedInvocations,
+            long deadlineNanos,
+            CancellationToken cancellationToken) {
+        if (journalEntries.isEmpty()) {
+            throw new IllegalStateException("pending Tool recovery requires journal entries");
+        }
+        int step = journalEntries.getFirst().step();
+        if (journalEntries.stream().anyMatch(entry -> entry.step() != step)) {
+            throw new IllegalStateException("a recovery batch cannot span multiple steps");
+        }
+        AgentMessage.Assistant assistant = journalEntries.getFirst().assistantMessage();
+        if (journalEntries.stream().anyMatch(entry ->
+                !entry.assistantMessage().messageId().equals(assistant.messageId()))) {
+            throw new IllegalStateException("a recovery batch must reference one assistant message");
+        }
+        if (run.messages.stream().noneMatch(message -> message.messageId().equals(assistant.messageId()))) {
+            run.messages.add(assistant);
+        }
+
+        List<PreparedToolCall> pending = new ArrayList<>();
+        boolean anySucceeded = false;
+        String firstFailure = null;
+        CancellationCause recoveredCancellation = null;
+        boolean recoveredTimeout = false;
+        for (ToolCallJournalEntry entry : journalEntries) {
+            String fingerprint = entry.toolName() + ":" + new TreeMap<>(entry.arguments());
+            if (!completedInvocations.add(fingerprint)) {
+                return new ResumeBatch(
+                        step + 1,
+                        Math.max(run.latestToolCallCount, 0) + journalEntries.size(),
+                        "NO_PROGRESS_DETECTED",
+                        null);
+            }
+            if (!entry.status().terminal()) {
+                if (entry.status() == ToolJournalStatus.UNKNOWN && !entry.safeToRetry()) {
+                    throw new IllegalStateException("unsafe Tool reached runtime recovery dispatch");
+                }
+                pending.add(restorePrepared(entry));
+            }
+        }
+
+        Map<String, AgentToolObservation> newlyCompleted = new HashMap<>();
+        CallFailure batchFailure = null;
+        if (!pending.isEmpty()) {
+            run.recovery.markToolExecuting(
+                    run.request.sessionId(),
+                    run.request.requestId(),
+                    run.runId,
+                    pending.stream().map(PreparedToolCall::toolCallId).toList());
+            try {
+                for (AgentToolObservation observation : executeBatch(
+                        run.runId,
+                        run.request,
+                        pending,
+                        deadlineNanos,
+                        cancellationToken)) {
+                    newlyCompleted.put(observation.toolCallId(), observation);
+                }
+            } catch (CallFailure failure) {
+                batchFailure = failure;
+            }
+        }
+
+        for (ToolCallJournalEntry entry : journalEntries) {
+            AgentToolObservation observation = entry.observation();
+            ToolJournalStatus journalStatus = entry.status();
+            if (!entry.status().terminal()) {
+                observation = newlyCompleted.get(entry.toolCallId());
+                if (observation == null) {
+                    String errorCode = batchFailure == null
+                            ? "TOOL_RECOVERY_RESULT_MISSING" : batchFailure.code;
+                    observation = failedObservation(restorePrepared(entry), errorCode, 0);
+                    journalStatus = batchFailure != null && batchFailure.cancellationCause != null
+                            ? ToolJournalStatus.CANCELLED
+                            : "AGENT_DEADLINE_EXCEEDED".equals(errorCode)
+                                    ? ToolJournalStatus.TIMED_OUT
+                                    : ToolJournalStatus.FAILED;
+                } else {
+                    journalStatus = observation.result().success()
+                            ? ToolJournalStatus.SUCCEEDED
+                            : ToolJournalStatus.FAILED;
+                }
+                run.recordJournalResult(entry.forAttempt(
+                        run.runId, journalStatus, observation, clock.instant()));
+            }
+            observations.add(observation);
+            AgentMessage.ToolResultStatus messageStatus = messageStatus(journalStatus);
+            anySucceeded |= journalStatus == ToolJournalStatus.SUCCEEDED;
+            if (firstFailure == null && observation.result().errorCode() != null) {
+                firstFailure = observation.result().errorCode();
+            }
+            if (journalStatus == ToolJournalStatus.CANCELLED) {
+                recoveredCancellation = cancellationCause(observation.result().errorCode());
+            }
+            recoveredTimeout |= journalStatus == ToolJournalStatus.TIMED_OUT;
+            if (run.messages.stream().noneMatch(message ->
+                    message instanceof AgentMessage.ToolResult result
+                            && result.toolCallId().equals(entry.toolCallId()))) {
+                run.messages.add(run.toolResultMessage(
+                        entry.status().terminal() ? entry.attemptId() : run.runId,
+                        step,
+                        entry.toolCallId(),
+                        entry.toolName(),
+                        entry.toolSchemaVersion(),
+                        messageStatus,
+                        observation.result().output(),
+                        observation.result().errorCode(),
+                        observation.result().linkedTraceId(),
+                        entry.argumentsRepaired(),
+                        observation.tookMillis()));
+            }
+            run.steps.add(new AgentRunTrace.StepTrace(
+                    step,
+                    "CALL_TOOL",
+                    entry.status().terminal()
+                            ? "RECOVERED_" + journalStatus.name()
+                            : journalStatus.name(),
+                    entry.toolCallId(),
+                    entry.toolName(),
+                    observation.result().linkedTraceId(),
+                    observation.tookMillis(),
+                    observation.result().errorCode()));
+            run.record(AgentRunEvent.Type.TOOL_COMPLETED, toolPayload(step, observation));
+        }
+        String recoveredFailure = null;
+        if (batchFailure != null && batchFailure.cancellationCause == null) {
+            recoveredFailure = batchFailure.code;
+        } else if (recoveredTimeout) {
+            recoveredFailure = "AGENT_DEADLINE_EXCEEDED";
+        } else if (!anySucceeded && recoveredCancellation == null) {
+            recoveredFailure = firstFailure == null ? "TOOL_RECOVERY_FAILED" : firstFailure;
+        }
+        CancellationCause cancellation = batchFailure != null
+                ? batchFailure.cancellationCause
+                : recoveredCancellation;
+        return new ResumeBatch(
+                step + 1,
+                Math.max(run.latestToolCallCount, 0) + journalEntries.size(),
+                recoveredFailure,
+                cancellation);
+    }
+
+    private PreparedToolCall restorePrepared(ToolCallJournalEntry entry) {
+        AgentTool tool = tools.require(entry.toolName());
+        if (!tool.schema().version().equals(entry.toolSchemaVersion())) {
+            throw new IllegalStateException("checkpoint Tool schema version no longer matches");
+        }
+        if (tool.effect() != entry.effect()) {
+            throw new IllegalStateException("checkpoint Tool effect no longer matches");
+        }
+        tool.schema().validate(entry.arguments());
+        if (!argumentsDigest(entry.arguments()).equals(entry.argumentsDigest())) {
+            throw new IllegalStateException("checkpoint Tool arguments digest does not match");
+        }
+        return new PreparedToolCall(
+                entry.toolCallId(),
+                tool,
+                entry.arguments(),
+                entry.argumentsRepaired(),
+                entry.callIndex());
+    }
+
+    private static AgentMessage.ToolResultStatus messageStatus(ToolJournalStatus status) {
+        return switch (status) {
+            case SUCCEEDED -> AgentMessage.ToolResultStatus.SUCCEEDED;
+            case FAILED -> AgentMessage.ToolResultStatus.FAILED;
+            case CANCELLED -> AgentMessage.ToolResultStatus.CANCELLED;
+            case TIMED_OUT -> AgentMessage.ToolResultStatus.TIMED_OUT;
+            case DECIDED, EXECUTING, UNKNOWN -> AgentMessage.ToolResultStatus.WAITING;
+        };
+    }
+
+    private static CancellationCause cancellationCause(String value) {
+        try {
+            return CancellationCause.valueOf(value);
+        } catch (IllegalArgumentException | NullPointerException unknown) {
+            return CancellationCause.SHUTDOWN;
+        }
+    }
+
+    private static AgentToolObservation failedObservation(
+            PreparedToolCall call,
+            String errorCode,
+            long tookMillis) {
+        return new AgentToolObservation(
+                call.toolCallId(),
+                call.tool().name(),
+                call.tool().schema().version(),
+                call.arguments(),
+                call.argumentsRepaired(),
+                AgentToolResult.failure(errorCode),
+                tookMillis);
+    }
+
+    private static int indexOfCall(List<PreparedToolCall> calls, String toolCallId) {
+        for (int index = 0; index < calls.size(); index++) {
+            if (calls.get(index).toolCallId().equals(toolCallId)) {
+                return index;
+            }
+        }
+        throw new IllegalStateException("completed Tool did not belong to the prepared batch");
+    }
+
+    private static void validateCheckpoint(
+            RuntimeCheckpoint checkpoint,
+            AgentRunRequest request,
+            AgentRunTrace.DefinitionSnapshot definition) {
+        if (!checkpoint.sessionId().equals(request.sessionId())
+                || !checkpoint.requestId().equals(request.requestId())
+                || !checkpoint.turnId().equals(request.turnId())) {
+            throw new IllegalStateException("checkpoint identity does not match the execution request");
+        }
+        if (!checkpoint.definition().equals(definition)) {
+            throw new IllegalStateException("checkpoint frozen definition no longer matches");
+        }
+    }
+
+    private static String argumentsDigest(Map<String, Object> arguments) {
+        try {
+            byte[] digest = MessageDigest.getInstance("SHA-256").digest(
+                    canonicalValue(arguments).getBytes(StandardCharsets.UTF_8));
+            return HexFormat.of().formatHex(digest);
+        } catch (NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException("SHA-256 is unavailable", impossible);
+        }
+    }
+
+    private static String canonicalValue(Object value) {
+        if (value instanceof Map<?, ?> map) {
+            return map.entrySet().stream()
+                    .sorted(Map.Entry.comparingByKey((left, right) ->
+                            String.valueOf(left).compareTo(String.valueOf(right))))
+                    .map(entry -> String.valueOf(entry.getKey()) + "="
+                            + canonicalValue(entry.getValue()))
+                    .collect(java.util.stream.Collectors.joining(",", "{", "}"));
+        }
+        if (value instanceof List<?> list) {
+            return list.stream()
+                    .map(AgentRuntime::canonicalValue)
+                    .collect(java.util.stream.Collectors.joining(",", "[", "]"));
+        }
+        return String.valueOf(value);
     }
 
     private List<AgentToolObservation> executeBatch(
@@ -702,15 +1054,28 @@ public final class AgentRuntime {
             String immediateError) {
     }
 
+    private record ResumeBatch(
+            int nextStep,
+            int toolCallCount,
+            String failureCode,
+            CancellationCause cancellationCause) {
+    }
+
     private final class RunState {
         private final String runId;
         private final AgentRunRequest request;
         private final AgentRunTrace.DefinitionSnapshot snapshot;
         private final Instant startedAt;
         private final long startedNanos;
+        private final long deadlineNanos;
+        private final AgentRecoveryExecution recovery;
         private final List<AgentRunTrace.StepTrace> steps = new ArrayList<>();
         private final List<AgentMessage> messages = new ArrayList<>();
         private final Map<Integer, AgentAssistantContent> assistantContents = new ConcurrentHashMap<>();
+        private List<AgentToolObservation> latestObservations = List.of();
+        private Set<String> latestCompletedInvocations = Set.of();
+        private int latestNextStep = 1;
+        private int latestToolCallCount;
         private io.seekflux.platform.agentruntime.domain.model.run.LlmUsage llmUsage =
                 io.seekflux.platform.agentruntime.domain.model.run.LlmUsage.UNMEASURED;
         private int sequence;
@@ -720,12 +1085,26 @@ public final class AgentRuntime {
                 AgentRunRequest request,
                 AgentRunTrace.DefinitionSnapshot snapshot,
                 Instant startedAt,
-                long startedNanos) {
+                long startedNanos,
+                long deadlineNanos,
+                AgentRecoveryExecution recovery,
+                RuntimeCheckpoint restored) {
             this.runId = runId;
             this.request = request;
             this.snapshot = snapshot;
             this.startedAt = startedAt;
             this.startedNanos = startedNanos;
+            this.deadlineNanos = deadlineNanos;
+            this.recovery = recovery;
+            if (restored != null) {
+                this.steps.addAll(restored.steps());
+                this.messages.addAll(restored.messages());
+                this.llmUsage = restored.llmUsage();
+                this.latestObservations = restored.observations();
+                this.latestCompletedInvocations = restored.completedInvocations();
+                this.latestNextStep = restored.nextStep();
+                this.latestToolCallCount = restored.toolCallCount();
+            }
         }
 
         private void record(AgentRunEvent.Type type, Map<String, Object> payload) {
@@ -749,7 +1128,7 @@ public final class AgentRuntime {
             assistantContents.put(step, content == null ? AgentAssistantContent.EMPTY : content);
         }
 
-        private void recordAssistant(
+        private AgentMessage.Assistant recordAssistant(
                 int step,
                 AgentDecision decision,
                 List<PreparedToolCall> preparedCalls) {
@@ -765,7 +1144,7 @@ public final class AgentRuntime {
                             call.index(),
                             call.arguments()))
                     .toList();
-            messages.add(new AgentMessage.Assistant(
+            AgentMessage.Assistant message = new AgentMessage.Assistant(
                     1,
                     messageId("assistant:" + step),
                     request.requestId(),
@@ -775,7 +1154,143 @@ public final class AgentRuntime {
                     content,
                     captured.reasoning(),
                     captured.reasoningReplayable(),
-                    messageCalls));
+                    messageCalls);
+            messages.add(message);
+            return message;
+        }
+
+        private ToolCallJournalEntry journalEntry(
+                int step,
+                PreparedToolCall call,
+                AgentMessage.Assistant assistant,
+                ToolJournalStatus status,
+                AgentToolObservation observation) {
+            return new ToolCallJournalEntry(
+                    1,
+                    request.sessionId(),
+                    request.requestId(),
+                    request.turnId(),
+                    runId,
+                    step,
+                    call.index(),
+                    call.toolCallId(),
+                    call.tool().name(),
+                    call.tool().schema().version(),
+                    call.tool().effect(),
+                    status,
+                    call.arguments(),
+                    argumentsDigest(call.arguments()),
+                    call.argumentsRepaired(),
+                    assistant,
+                    observation,
+                    clock.instant());
+        }
+
+        private RuntimeCheckpoint savePreTurn(
+                int nextStep,
+                int toolCallCount,
+                List<AgentToolObservation> observations,
+                Set<String> completedInvocations) {
+            RuntimeCheckpoint checkpoint = checkpoint(
+                    CheckpointBoundary.PRE_TURN,
+                    nextStep,
+                    toolCallCount,
+                    observations,
+                    completedInvocations,
+                    null);
+            recovery.savePreTurn(checkpoint);
+            remember(checkpoint);
+            return checkpoint;
+        }
+
+        private void recordToolDecision(
+                RuntimeCheckpoint checkpoint,
+                List<ToolCallJournalEntry> calls) {
+            recovery.recordToolDecision(checkpoint, calls);
+        }
+
+        private void markToolExecuting(List<ToolCallJournalEntry> calls) {
+            recovery.markToolExecuting(
+                    request.sessionId(),
+                    request.requestId(),
+                    runId,
+                    calls.stream().map(ToolCallJournalEntry::toolCallId).toList());
+        }
+
+        private void recordJournalResult(ToolCallJournalEntry call) {
+            recovery.recordToolResult(call);
+        }
+
+        private void savePostTurn(
+                int nextStep,
+                int toolCallCount,
+                List<AgentToolObservation> observations,
+                Set<String> completedInvocations) {
+            RuntimeCheckpoint checkpoint = checkpoint(
+                    CheckpointBoundary.POST_TURN,
+                    nextStep,
+                    toolCallCount,
+                    observations,
+                    completedInvocations,
+                    null);
+            recovery.savePostTurn(checkpoint);
+            remember(checkpoint);
+        }
+
+        private void saveTerminal(AgentRunResult result) {
+            CheckpointBoundary boundary = result.state() == AgentTerminalState.NEED_CLARIFICATION
+                    ? CheckpointBoundary.SUSPENDED
+                    : CheckpointBoundary.COMPLETED;
+            RuntimeCheckpoint checkpoint = checkpoint(
+                    boundary,
+                    latestNextStep,
+                    latestToolCallCount,
+                    latestObservations,
+                    latestCompletedInvocations,
+                    result);
+            recovery.saveTerminal(checkpoint);
+        }
+
+        private RuntimeCheckpoint checkpoint(
+                CheckpointBoundary boundary,
+                int nextStep,
+                int toolCallCount,
+                List<AgentToolObservation> observations,
+                Set<String> completedInvocations,
+                AgentRunResult terminalResult) {
+            String checkpointIdentity = request.sessionId() + ":" + request.requestId() + ":"
+                    + boundary + ":" + nextStep + ":" + messages.size();
+            String checkpointId = UUID.nameUUIDFromBytes(
+                    checkpointIdentity.getBytes(StandardCharsets.UTF_8)).toString();
+            return new RuntimeCheckpoint(
+                    1,
+                    checkpointId,
+                    boundary,
+                    request.sessionId(),
+                    request.requestId(),
+                    runId,
+                    request.turnId(),
+                    recovery.fencingToken(),
+                    recovery.messageCutoff(),
+                    snapshot,
+                    nextStep,
+                    toolCallCount,
+                    TimeUnit.NANOSECONDS.toMillis(remainingNanos(deadlineNanos)),
+                    recovery.persistentFeatures(),
+                    observations,
+                    messages,
+                    completedInvocations,
+                    llmUsage,
+                    steps,
+                    terminalResult,
+                    clock.instant());
+        }
+
+        private void remember(RuntimeCheckpoint checkpoint) {
+            latestNextStep = checkpoint.nextStep();
+            latestToolCallCount = checkpoint.toolCallCount();
+            latestObservations = checkpoint.observations();
+            latestCompletedInvocations = checkpoint.completedInvocations();
         }
 
         private void recordToolResult(int step, AgentToolObservation observation) {
@@ -824,6 +1339,23 @@ public final class AgentRuntime {
                 String linkedTraceId,
                 boolean argumentsRepaired,
                 long tookMillis) {
+            return toolResultMessage(
+                    runId, step, toolCallId, toolName, schemaVersion, status, output,
+                    errorCode, linkedTraceId, argumentsRepaired, tookMillis);
+        }
+
+        private AgentMessage.ToolResult toolResultMessage(
+                String resultAttemptId,
+                int step,
+                String toolCallId,
+                String toolName,
+                String schemaVersion,
+                AgentMessage.ToolResultStatus status,
+                Map<String, Object> output,
+                String errorCode,
+                String linkedTraceId,
+                boolean argumentsRepaired,
+                long tookMillis) {
             Map<String, Object> contents = output == null ? Map.of() : output;
             String modelContent = status == AgentMessage.ToolResultStatus.SUCCEEDED
                     ? toolName + ":" + new TreeMap<>(contents)
@@ -833,7 +1365,7 @@ public final class AgentRuntime {
                     messageId("tool-result:" + toolCallId),
                     request.requestId(),
                     request.turnId(),
-                    runId,
+                    resultAttemptId,
                     step,
                     toolCallId,
                     toolName,

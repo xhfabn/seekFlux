@@ -8,6 +8,7 @@ import io.seekflux.platform.agentruntime.application.spi.capability.event.PushEv
 import io.seekflux.platform.agentruntime.domain.model.execution.CancellationToken;
 import io.seekflux.platform.agentruntime.domain.model.feature.RuntimeContext;
 import io.seekflux.platform.agentruntime.domain.model.session.AgentSession;
+import io.seekflux.platform.agentruntime.domain.service.recovery.AgentRecoveryExecution;
 import java.time.Clock;
 
 public final class DefaultAgentLoop implements AgentLoop {
@@ -33,6 +34,16 @@ public final class DefaultAgentLoop implements AgentLoop {
             RuntimeContext context,
             PushEventPublisher publisher,
             CancellationToken cancellationToken) {
+        return run(session, context, publisher, cancellationToken, AgentRecoveryExecution.DISABLED);
+    }
+
+    @Override
+    public AgentRunResult run(
+            AgentSession session,
+            RuntimeContext context,
+            PushEventPublisher publisher,
+            CancellationToken cancellationToken,
+            AgentRecoveryExecution recovery) {
         AgentRunResult result = finiteStepRuntime.run(
                 context.definition(),
                 context.request(),
@@ -45,7 +56,8 @@ public final class DefaultAgentLoop implements AgentLoop {
                     decisionContext.recordAssistantContent(call.assistantContent());
                     return call.decision();
                 },
-                cancellationToken);
+                cancellationToken,
+                recovery);
         publisher.publish(new PushEvent.LoopStarted(
                 result.trace().agentRunId(),
                 result.trace().startedAt(),

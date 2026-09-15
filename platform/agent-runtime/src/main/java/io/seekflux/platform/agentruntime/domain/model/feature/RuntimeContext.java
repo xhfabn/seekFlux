@@ -44,4 +44,8 @@ public final class RuntimeContext {
     public Map<String, Object> params() {
         return params;
     }
+
+    public RuntimeContext withPersistentFeatures(Map<String, Object> restoredFeatures) {
+        return new RuntimeContext(definition, request, llmClient, restoredFeatures);
+    }
 }

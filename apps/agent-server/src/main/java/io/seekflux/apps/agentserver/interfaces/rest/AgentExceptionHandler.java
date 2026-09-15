@@ -5,6 +5,7 @@ import io.seekflux.agent.application.exception.DuplicateAgentRequestException;
 import io.seekflux.agent.domain.ConstraintVersionConflictException;
 import io.seekflux.platform.agentruntime.domain.exception.AgentSessionStateConflictException;
 import io.seekflux.platform.agentruntime.domain.exception.AgentExecutionFencedException;
+import io.seekflux.platform.agentruntime.domain.exception.UnsafeToolRecoveryException;
 import jakarta.servlet.http.HttpServletRequest;
 import java.time.Instant;
 import java.util.Map;
@@ -41,6 +42,12 @@ public class AgentExceptionHandler {
     @ExceptionHandler(AgentExecutionFencedException.class)
     public Map<String, Object> fenced(AgentExecutionFencedException error) {
         return error("AGENT_EXECUTION_FENCED", error.getMessage());
+    }
+
+    @ResponseStatus(HttpStatus.CONFLICT)
+    @ExceptionHandler(UnsafeToolRecoveryException.class)
+    public Map<String, Object> unsafeToolRecovery(UnsafeToolRecoveryException error) {
+        return error("MUTATING_TOOL_STATE_UNKNOWN", error.getMessage());
     }
 
     @ResponseStatus(HttpStatus.BAD_REQUEST)

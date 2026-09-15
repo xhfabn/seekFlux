@@ -1,6 +1,6 @@
 # Agent Runtime 演进路线与交付记录
 
-> 文档状态：**AR-1、AR-2 已完成**；当前实施目标为 **AR-3 Checkpoint、pending Tool 与恢复协议**。
+> 文档状态：**AR-1、AR-2、AR-3 已完成**；当前实施目标为 **AR-4 Mutating Tool 副作用账本**。
 >
 > 本文只记录 `platform/agent-runtime` 后续演进的实施顺序、完成门槛和交付证据。写进计划不代表已经实现；只有代码、自动化测试以及必要的真实验收或固定评测共同证明后，阶段状态才能改为“已完成”。
 
@@ -39,7 +39,7 @@
 
 目前关键缺口是：
 
-- 接管恢复仍以重跑当前轮为主，没有 pending Tool Checkpoint；
+- Checkpoint、pending Tool journal 与有限 ResumeAction 已支持从安全边界继续；`MUTATING` Tool 状态不明时保持失败关闭，尚无副作用对账账本；
 - `MUTATING` Tool 已有副作用元数据和稳定 Call ID，但没有持久化副作用账本与回执；
 - 没有 Steer Queue/Drain、上下文压缩、413 溢出修复、OutputGuard、实时流式 Push；
 - HITL、异步等待点、Handoff、子 Agent、MCP 和 Graph 尚未实现。
@@ -67,8 +67,8 @@ flowchart TD
 | --- | --- | --- | --- | --- |
 | AR-1 | 真实 Loop 取消终态和在途调用取消 | 已完成 | 中 | 当前基线 |
 | AR-2 | 消息事件、Session 投影与 Tool 结果契约 | 已完成 | 大 | AR-1 |
-| AR-3 | Checkpoint、pending Tool 与恢复协议 | 下一步 | 大 | AR-2 |
-| AR-4 | Mutating Tool 副作用账本 | 未开始 | 大 | AR-3 |
+| AR-3 | Checkpoint、pending Tool 与恢复协议 | 已完成 | 大 | AR-2 |
+| AR-4 | Mutating Tool 副作用账本 | 下一步 | 大 | AR-3 |
 | AR-5 | Steer Queue/Drain | 未开始 | 中到大 | AR-1、AR-2 |
 | AR-6 | 上下文压缩、413 重试和 OutputGuard | 未开始 | 大 | AR-2 |
 | AR-7 | 流式调用、实时 Push 与跨实例订阅 | 未开始 | 大 | AR-6 |
@@ -160,6 +160,8 @@ flowchart TD
 
 ### AR-3：Checkpoint、pending Tool 与恢复协议
 
+状态：**已完成（2026-09-14）**。
+
 目标：把“接管后整轮重跑”升级为从安全边界继续，尤其避免重复发起已完成或状态未知的 Tool Call。
 
 先区分三个概念：Session snapshot 用于加速 Workspace 重放；Checkpoint 保存可恢复的 RuntimeContext；pending Tool journal 判断一次具体 Tool 是否已开始、已完成或状态未知。三者不能共用一个模糊的“快照”模型。
@@ -173,6 +175,8 @@ flowchart TD
 Checkpoint、journal、Workspace/Run 事件的事务边界和写入顺序必须清晰，禁止出现无法判定先后关系的双写；每个安全边界都加入固定崩溃注入点。
 
 完成门槛：在模型完成、Tool 提交前、Tool 进行中、Tool 完成后和 Checkpoint 写入前后等固定崩溃点接管时，系统能确定恢复位置；AR-3 只承诺 `READ_ONLY/IDEMPOTENT` Tool 的自动恢复，`MUTATING` Tool 在 AR-4 完成前必须拒绝自动重试。
+
+实现说明：`RuntimeCheckpoint` 保存 `PRE_TURN/POST_TURN/COMPLETED/SUSPENDED` 四类边界、Workspace cutoff、冻结定义、剩余预算、持久 features、observation、消息、调用指纹、usage 和 Step Trace；终态 Checkpoint 保存完整 Outcome，接管后可直接提交而不重复调用模型。`tool_call_journal` 在模型决策事务中写 `DECIDED`，提交 Tool 前写 `EXECUTING`，接管时原子转为 `UNKNOWN`，结果成功落为终态。当前 Step 的已完成结果直接复用；`READ_ONLY/IDEMPOTENT` 的 `DECIDED/UNKNOWN` 调用使用原 Tool Call ID 恢复，未知 `MUTATING` 调用返回 `FAIL_UNSAFE_PENDING_TOOL`，不进入 Loop。Workspace Outcome/Outbox 提交成功时在同一事务清理 Checkpoint 与 journal。
 
 ### AR-4：Mutating Tool 副作用账本
 
@@ -327,6 +331,17 @@ WorkspaceEvent 仍是恢复事实，PushEvent 只是过程投影；外部 SSE/We
 - 剩余边界：消息只在本轮 Outcome 事务中落库，尚不能从模型后/Tool 前等中间安全点恢复；Queue/Drain、Checkpoint、pending Tool journal 和 `MUTATING` 副作用账本未实现；当前 display/structured 视图默认由 Tool 原始输出派生，业务专用渲染器后续可在 Adapter 扩展但不得改写 raw facts。
 - 下一步：AR-3A 先定义可序列化 RuntimeContext Checkpoint 与安全边界，再实现 AR-3B pending Tool journal 和 AR-3C 统一 ResumeAction/Internal Ingress。
 - 关联文档/ADR/契约：[`docs/agent-runtime.md`](../../docs/agent-runtime.md)、[ADR-004](../../docs/adr/ADR-004-ark-leto-inspired-agent-runtime.md)、[`agent-workspace-message-v1.schema.json`](../../contracts/events/agent-workspace-message-v1.schema.json)、`V9__agent_workspace_messages.sql`。
+
+### 2026-09-14：完成 AR-3 Checkpoint、pending Tool 与恢复协议
+
+- 阶段：AR-3（已完成）；AR-4 调整为下一步。
+- 本轮范围：增加可序列化 Runtime Checkpoint、pending Tool journal、有限 `ResumeAction`/`ResumeIngress`，并把接管从整轮重跑升级为安全边界恢复。
+- 实现事实与关键入口：`AgentRuntime` 在模型轮次前后及终态保存 `PRE_TURN/POST_TURN/COMPLETED/SUSPENDED`；`JdbcAgentRecoveryStore` 在 fencing 下提交恢复入口、把失联 `EXECUTING` Tool 转成 `UNKNOWN`、保存 Tool 决策/开始/结果；`SessionExecutor` 先续租、`restoreFresh`、校验 Workspace cutoff，再执行 `commitResume → dispatch`；终态 Workspace/Outbox 事务同时清理恢复状态。V10 新增 `agent.runtime_checkpoints` 与 `agent.tool_call_journal`。
+- 失败/取消/恢复语义：模型后但 Tool 前的 `DECIDED` 不重复模型；进行中的安全 Tool 以原 call ID 重试；已经提交结果的 Tool 不重复执行；POST_TURN 从下一模型步继续；终态 Checkpoint 直接提交 Outcome；恢复到 `CANCELLED/TIMED_OUT` Tool 不继续模型；状态不明的 `MUTATING` Tool 在 Loop 前以 `MUTATING_TOOL_STATE_UNKNOWN` 失败关闭并保留恢复事实。
+- 验证命令与结果：JDK 21 下 Agent Runtime 48 个、Persistence 5 个、Agent Orchestration Context 12 个测试无失败，Agent Server 编译通过；新增固定故障测试覆盖 PRE_TURN 写入前后、模型决策提交后、Tool EXECUTING 提交后、Tool 结果提交后、POST_TURN 后、终态写入前后、取消恢复和未知写 Tool；Checkpoint/journal 经真实 JSON 序列化边界往返；隔离 PostgreSQL 17 按版本顺序执行 V1～V10 成功并确认两张表和唯一约束。
+- 剩余边界：AR-3 不提供写 Tool 外部回执、对账、补偿或人工 reconciliation；`MUTATING` 的 `UNKNOWN` 会持续失败关闭。HITL/Async/Waitpoint/Child 只预留了 ResumeSource，真实状态机和回调入口仍属 AR-8；Steer Queue/Drain 属 AR-5。
+- 下一步：AR-4 建立 `MUTATING` Tool 副作用账本、稳定幂等键、外部回执和 `UNKNOWN → RECONCILED` 对账协议。
+- 关联文档/ADR/契约：[`docs/agent-runtime.md`](../../docs/agent-runtime.md)、[ADR-006](../../docs/adr/ADR-006-agent-reliability-fencing-outbox-shadow.md)、[`agent-recovery-v1.schema.json`](../../contracts/events/agent-recovery-v1.schema.json)、`V10__agent_runtime_checkpoints.sql`。
 
 ---
 

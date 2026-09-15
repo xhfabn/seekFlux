@@ -53,7 +53,8 @@ public final class DefaultRouter implements Router {
                     sessionId,
                     context.runtimeContext(),
                     publisher,
-                    authority));
+                    authority,
+                    commit));
         } catch (RuntimeException error) {
             authority.close();
             throw error;

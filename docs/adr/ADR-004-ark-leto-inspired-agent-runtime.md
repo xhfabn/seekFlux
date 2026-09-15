@@ -2,7 +2,7 @@
 
 - 状态：Accepted
 - 日期：2026-08-08
-- 最近更新：2026-09-13
+- 最近更新：2026-09-14
 
 ## 背景
 
@@ -28,7 +28,7 @@
 
 Phase 1 已实现单进程同步请求中的有限步 Loop、Redis 执行权、PostgreSQL Session/Run 事件、Redis 热投影、取消入口、两个 AgentDef、Search Tool、Direct Fallback 与对照 Eval。
 
-Phase 2 后续完成了 Provider Adapter、Query Mode Router、多轮 `ConstraintPatch`、动态工具集和并行 Tool fan-out，具体决策见 [ADR-005](ADR-005-complex-search-agent-routing-and-state.md)。Phase 3 又完成 fencing、失主接管、跨实例取消、事务 Outbox、故障注入、Shadow 和成本计量，具体决策与 Ark-Leto 反向核对见 [ADR-006](ADR-006-agent-reliability-fencing-outbox-shadow.md)。2026-09-13 又补齐了 Assistant/ToolResult Workspace 事实、多视图契约和仅凭事实重建的完整多轮历史。仍未完成的是 steer 先入队后取消、pending Tool Checkpoint、写 Tool 副作用账本、上下文压缩、SSE/流式 Push、HITL、子 Agent、Handoff、MCP 和完整 OpenTelemetry 串联。
+Phase 2 后续完成了 Provider Adapter、Query Mode Router、多轮 `ConstraintPatch`、动态工具集和并行 Tool fan-out，具体决策见 [ADR-005](ADR-005-complex-search-agent-routing-and-state.md)。Phase 3 又完成 fencing、失主接管、跨实例取消、事务 Outbox、故障注入、Shadow 和成本计量，具体决策与 Ark-Leto 反向核对见 [ADR-006](ADR-006-agent-reliability-fencing-outbox-shadow.md)。2026-09-13 补齐了 Assistant/ToolResult Workspace 事实、多视图契约和完整多轮历史，2026-09-14 又完成 PRE/POST/终态 Checkpoint、pending Tool journal 与有限恢复动作。仍未完成的是 steer 先入队后取消、写 Tool 副作用账本、上下文压缩、SSE/流式 Push、HITL、子 Agent、Handoff、MCP 和完整 OpenTelemetry 串联。
 
 ## 后果
 
@@ -37,6 +37,6 @@ Phase 2 后续完成了 Provider Adapter、Query Mode Router、多轮 `Constrain
 - 业务接入方既可以调用 Runtime API，也可以实现、替换或装饰 Runtime SPI；默认实现不是业务必须接受的固定行为。
 - Runtime 与自身拥有的通用默认 Adapter 内聚在一个 Maven 模块；Agent Orchestration 与其业务及模型厂商 Adapter 内聚在另一个 Maven 模块。包级依赖规则保证 Domain/Application 不引用 Infrastructure，可部署 Server 只负责接口与装配。
 - Session 真相、执行过程和客户端进度有明确的数据职责，后续恢复与审计可以演进而不破坏 API。
-- 一轮 Assistant/ToolResult 与终态在同一 fencing 事务提交，读取方不会观察到孤立 ToolResult 或半轮消息；代价是 AR-3 完成前崩溃恢复仍以整轮重跑为边界，不能从已完成的单个 Tool 继续。
+- 一轮 Assistant/ToolResult 与终态仍在同一 fencing 事务提交，读取方不会观察到孤立 ToolResult 或半轮消息；提交前的模型/Tool 进度由独立 Checkpoint 和 journal 恢复，已完成 Tool 不再要求整轮重跑。两类恢复事实只有在 Outcome/Outbox 同事务成功后才清理。
 - Redis 承担执行权、取消信号、Shadow 开关与热投影；PostgreSQL 保留事实源。多副本恢复正确性由 fencing、强一致重放、事务 Outbox 和故障测试共同保证，而不是只依赖租约。
 - 默认决策结果是确定性的，适合学习和回归；OpenAI-compatible Adapter 的存在仍不等于已经证明真实大模型理解效果。

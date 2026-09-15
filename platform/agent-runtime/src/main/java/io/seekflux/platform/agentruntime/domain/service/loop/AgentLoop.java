@@ -5,6 +5,7 @@ import io.seekflux.platform.agentruntime.application.spi.capability.event.PushEv
 import io.seekflux.platform.agentruntime.domain.model.execution.CancellationToken;
 import io.seekflux.platform.agentruntime.domain.model.feature.RuntimeContext;
 import io.seekflux.platform.agentruntime.domain.model.session.AgentSession;
+import io.seekflux.platform.agentruntime.domain.service.recovery.AgentRecoveryExecution;
 
 public interface AgentLoop {
 
@@ -15,4 +16,13 @@ public interface AgentLoop {
             RuntimeContext context,
             PushEventPublisher publisher,
             CancellationToken cancellationToken);
+
+    default AgentRunResult run(
+            AgentSession session,
+            RuntimeContext context,
+            PushEventPublisher publisher,
+            CancellationToken cancellationToken,
+            AgentRecoveryExecution recovery) {
+        return run(session, context, publisher, cancellationToken);
+    }
 }

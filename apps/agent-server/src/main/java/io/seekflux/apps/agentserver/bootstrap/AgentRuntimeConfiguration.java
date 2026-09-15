@@ -52,6 +52,7 @@ import io.seekflux.platform.agentruntime.domain.service.loop.DefaultAgentLoop;
 import io.seekflux.platform.agentruntime.domain.service.router.DefaultRouter;
 import io.seekflux.platform.agentruntime.application.api.Router;
 import io.seekflux.platform.agentruntime.application.spi.capability.session.AgentSessionStore;
+import io.seekflux.platform.agentruntime.application.spi.capability.session.AgentRecoveryStore;
 import io.seekflux.search.port.in.SearchUseCase;
 import java.time.Clock;
 import java.time.Duration;
@@ -241,6 +242,7 @@ class AgentRuntimeConfiguration {
             AgentLoop defaultAgentLoop,
             ScheduledExecutorService agentAuthorityRenewalScheduler,
             CancellationSignalStore cancellationSignalStore,
+            AgentRecoveryStore agentRecoveryStore,
             @Value("${seekflux.agent.cancel.poll-interval-ms:100}") long cancelPollMillis,
             @Value("${seekflux.agent.shutdown-grace-ms:5000}") long shutdownGraceMillis,
             Clock agentClock) {
@@ -252,7 +254,9 @@ class AgentRuntimeConfiguration {
                 agentClock,
                 cancellationSignalStore,
                 Duration.ofMillis(cancelPollMillis),
-                Duration.ofMillis(shutdownGraceMillis));
+                Duration.ofMillis(shutdownGraceMillis),
+                agentRecoveryStore,
+                io.seekflux.platform.agentruntime.domain.service.recovery.RecoveryFaultInjector.NONE);
     }
 
     @Bean(name = "agentSessionLoadFeatureNode")

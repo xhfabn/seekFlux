@@ -1,0 +1,99 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://seekflux.io/contracts/events/agent-recovery-v1.schema.json",
+  "title": "SeekFlux Agent recovery persistence contract v1",
+  "oneOf": [
+    { "$ref": "#/$defs/runtimeCheckpoint" },
+    { "$ref": "#/$defs/toolCallJournal" },
+    { "$ref": "#/$defs/resumeIngress" }
+  ],
+  "$defs": {
+    "runtimeCheckpoint": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "schemaVersion", "checkpointId", "boundary", "sessionId", "requestId",
+        "attemptId", "turnId", "fencingToken", "messageCutoff", "definition",
+        "nextStep", "toolCallCount", "remainingBudgetMillis", "persistentFeatures",
+        "observations", "messages", "completedInvocations", "llmUsage", "steps",
+        "createdAt"
+      ],
+      "properties": {
+        "schemaVersion": { "type": "integer", "minimum": 1 },
+        "checkpointId": { "type": "string", "minLength": 1 },
+        "boundary": {
+          "enum": ["PRE_TURN", "POST_TURN", "COMPLETED", "SUSPENDED"]
+        },
+        "sessionId": { "type": "string", "minLength": 1 },
+        "requestId": { "type": "string", "minLength": 1 },
+        "attemptId": { "type": "string", "minLength": 1 },
+        "turnId": { "type": "string", "minLength": 1 },
+        "fencingToken": { "type": "integer", "minimum": 0 },
+        "messageCutoff": { "type": "integer", "minimum": 0 },
+        "definition": { "type": "object" },
+        "nextStep": { "type": "integer", "minimum": 1 },
+        "toolCallCount": { "type": "integer", "minimum": 0 },
+        "remainingBudgetMillis": { "type": "integer", "minimum": 0 },
+        "persistentFeatures": { "type": "object" },
+        "observations": { "type": "array", "items": { "type": "object" } },
+        "messages": { "type": "array", "items": { "type": "object" } },
+        "completedInvocations": { "type": "array", "items": { "type": "string" } },
+        "llmUsage": { "type": "object" },
+        "steps": { "type": "array", "items": { "type": "object" } },
+        "terminalResult": { "type": ["object", "null"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "toolCallJournal": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "schemaVersion", "sessionId", "requestId", "turnId", "attemptId", "step",
+        "callIndex", "toolCallId", "toolName", "toolSchemaVersion", "effect", "status",
+        "arguments", "argumentsDigest", "argumentsRepaired", "assistantMessage", "updatedAt"
+      ],
+      "properties": {
+        "schemaVersion": { "type": "integer", "minimum": 1 },
+        "sessionId": { "type": "string", "minLength": 1 },
+        "requestId": { "type": "string", "minLength": 1 },
+        "turnId": { "type": "string", "minLength": 1 },
+        "attemptId": { "type": "string", "minLength": 1 },
+        "step": { "type": "integer", "minimum": 1 },
+        "callIndex": { "type": "integer", "minimum": 0 },
+        "toolCallId": { "type": "string", "minLength": 1 },
+        "toolName": { "type": "string", "minLength": 1 },
+        "toolSchemaVersion": { "type": "string", "minLength": 1 },
+        "effect": { "enum": ["READ_ONLY", "IDEMPOTENT", "MUTATING"] },
+        "status": {
+          "enum": [
+            "DECIDED", "EXECUTING", "UNKNOWN", "SUCCEEDED", "FAILED",
+            "CANCELLED", "TIMED_OUT"
+          ]
+        },
+        "arguments": { "type": "object" },
+        "argumentsDigest": { "type": "string", "minLength": 1 },
+        "argumentsRepaired": { "type": "boolean" },
+        "assistantMessage": { "type": "object" },
+        "observation": { "type": ["object", "null"] },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "resumeIngress": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "sessionId", "requestId", "turnId", "source"],
+      "properties": {
+        "schemaVersion": { "type": "integer", "minimum": 1 },
+        "sessionId": { "type": "string", "minLength": 1 },
+        "requestId": { "type": "string", "minLength": 1 },
+        "turnId": { "type": "string", "minLength": 1 },
+        "source": {
+          "enum": [
+            "USER_MESSAGE", "CRASH_RECOVERY", "HITL_CALLBACK", "ASYNC_CALLBACK",
+            "WAITPOINT_CALLBACK", "CHILD_AGENT_CALLBACK"
+          ]
+        }
+      }
+    }
+  }
+}
