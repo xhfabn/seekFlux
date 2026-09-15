@@ -14,6 +14,7 @@ import io.seekflux.agent.infrastructure.llm.DeterministicSearchLlmClient;
 import io.seekflux.agent.infrastructure.llm.openai.OpenAiCompatibleLlmClient;
 import io.seekflux.agent.infrastructure.observability.AgentExecutionMetrics;
 import io.seekflux.agent.infrastructure.observability.MicrometerAgentExecutionMetrics;
+import io.seekflux.agent.infrastructure.observability.MicrometerToolExecutionObserver;
 import io.seekflux.agent.infrastructure.projection.RedisAgentSessionProjection;
 import io.seekflux.agent.infrastructure.runtime.AgentRuntimeExecutionAdapter;
 import io.seekflux.agent.infrastructure.search.DirectSearchExecutionAdapter;
@@ -25,6 +26,9 @@ import io.seekflux.platform.agentruntime.application.spi.capability.event.AgentR
 import io.seekflux.platform.agentruntime.domain.service.execution.AgentCallGuard;
 import io.seekflux.platform.agentruntime.domain.service.runtime.AgentRuntime;
 import io.seekflux.platform.agentruntime.application.spi.business.tool.AgentTool;
+import io.seekflux.platform.agentruntime.application.spi.business.tool.AgentToolRegistrationPolicy;
+import io.seekflux.platform.agentruntime.application.spi.business.tool.ToolExecutionPolicy;
+import io.seekflux.platform.agentruntime.application.spi.capability.tool.ToolExecutionObserver;
 import io.seekflux.platform.agentruntime.application.spi.capability.tool.AgentToolExecutor;
 import io.seekflux.platform.agentruntime.domain.service.tool.AgentToolRegistry;
 import io.seekflux.platform.agentruntime.infrastructure.tool.DefaultAgentToolExecutor;
@@ -161,8 +165,24 @@ class AgentRuntimeConfiguration {
 
     @Bean
     AgentToolRegistry agentToolRegistry(
-            @Qualifier("seekFluxAgentTools") List<AgentTool> tools) {
-        return new AgentToolRegistry(tools);
+            @Qualifier("seekFluxAgentTools") List<AgentTool> tools,
+            AgentToolRegistrationPolicy agentToolRegistrationPolicy) {
+        return new AgentToolRegistry(tools, agentToolRegistrationPolicy);
+    }
+
+    @Bean
+    AgentToolRegistrationPolicy agentToolRegistrationPolicy() {
+        return AgentToolRegistrationPolicy.SAFE_ONLY;
+    }
+
+    @Bean
+    ToolExecutionPolicy toolExecutionPolicy() {
+        return ToolExecutionPolicy.ALLOW_ALL;
+    }
+
+    @Bean
+    ToolExecutionObserver toolExecutionObserver(MeterRegistry meterRegistry) {
+        return new MicrometerToolExecutionObserver(meterRegistry);
     }
 
     @Bean
@@ -204,8 +224,12 @@ class AgentRuntimeConfiguration {
             @Qualifier("agentExecutionExecutor") ExecutorService executor,
             AgentRunRecorder recorder,
             AgentCallGuard agentCallGuard,
+            ToolExecutionPolicy toolExecutionPolicy,
+            ToolExecutionObserver toolExecutionObserver,
             Clock agentClock) {
-        return new AgentRuntime(tools, toolExecutor, executor, recorder, agentClock, agentCallGuard);
+        return new AgentRuntime(
+                tools, toolExecutor, executor, recorder, agentClock, agentCallGuard,
+                toolExecutionPolicy, toolExecutionObserver);
     }
 
     @Bean

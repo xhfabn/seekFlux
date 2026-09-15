@@ -1,6 +1,6 @@
 # Agent Runtime 演进路线与交付记录
 
-> 文档状态：**AR-1、AR-2、AR-3 已完成**；当前实施目标为 **AR-4 Mutating Tool 副作用账本**。
+> 文档状态：**AR-1、AR-2、AR-3、AR-4 已完成**；当前实施目标为 **AR-5 Steer Queue / Drain**。
 >
 > 本文只记录 `platform/agent-runtime` 后续演进的实施顺序、完成门槛和交付证据。写进计划不代表已经实现；只有代码、自动化测试以及必要的真实验收或固定评测共同证明后，阶段状态才能改为“已完成”。
 
@@ -39,8 +39,8 @@
 
 目前关键缺口是：
 
-- Checkpoint、pending Tool journal 与有限 ResumeAction 已支持从安全边界继续；`MUTATING` Tool 状态不明时保持失败关闭，尚无副作用对账账本；
-- `MUTATING` Tool 已有副作用元数据和稳定 Call ID，但没有持久化副作用账本与回执；
+- Checkpoint、pending Tool journal 与有限 ResumeAction 已支持从安全边界继续；`MUTATING` Tool 通过持久副作用账本、稳定幂等键和 Tool 专属 reconciliation 恢复；
+- `MUTATING` Tool 已有注册/执行双层策略、外部回执、请求/结果摘要及 `PREPARED → EXECUTING → SUCCEEDED/FAILED/UNKNOWN/RECONCILED` 状态机；
 - 没有 Steer Queue/Drain、上下文压缩、413 溢出修复、OutputGuard、实时流式 Push；
 - HITL、异步等待点、Handoff、子 Agent、MCP 和 Graph 尚未实现。
 
@@ -68,8 +68,8 @@ flowchart TD
 | AR-1 | 真实 Loop 取消终态和在途调用取消 | 已完成 | 中 | 当前基线 |
 | AR-2 | 消息事件、Session 投影与 Tool 结果契约 | 已完成 | 大 | AR-1 |
 | AR-3 | Checkpoint、pending Tool 与恢复协议 | 已完成 | 大 | AR-2 |
-| AR-4 | Mutating Tool 副作用账本 | 下一步 | 大 | AR-3 |
-| AR-5 | Steer Queue/Drain | 未开始 | 中到大 | AR-1、AR-2 |
+| AR-4 | Mutating Tool 副作用账本 | 已完成 | 大 | AR-3 |
+| AR-5 | Steer Queue/Drain | 下一步 | 中到大 | AR-1、AR-2 |
 | AR-6 | 上下文压缩、413 重试和 OutputGuard | 未开始 | 大 | AR-2 |
 | AR-7 | 流式调用、实时 Push 与跨实例订阅 | 未开始 | 大 | AR-6 |
 | AR-8 | HITL、异步等待点、Handoff 与子 Agent | 未开始 | 多个独立大阶段 | AR-3、AR-4、AR-7 |
@@ -180,6 +180,8 @@ Checkpoint、journal、Workspace/Run 事件的事务边界和写入顺序必须�
 
 ### AR-4：Mutating Tool 副作用账本
 
+状态：**已完成（2026-09-15）**。
+
 目标：在允许发布、通知、支付或其他写 Tool 进入生产前，为外部副作用建立可查询、可幂等、可对账的事实记录。
 
 实施范围：
@@ -190,10 +192,12 @@ Checkpoint、journal、Workspace/Run 事件的事务边界和写入顺序必须�
 - Checkpoint、账本和 Session 事件之间建立明确的提交/恢复顺序；
 - 状态为 `UNKNOWN` 时禁止自动重复执行不可幂等写操作，转为查询外部状态、补偿或人工处理；
 - Tool 注册级权限过滤与执行级策略形成两道防线；执行决策至少支持 allow/modify/deny，并为后续 need-approval 预留稳定契约；
-- before/after/failure Tool 观测事件必须携带 call/source/effect/attempt/耗时等低基数字段，并在并行执行时复制独立 ToolContext；
-- Runtime 在账本能力未配置时拒绝注册或调用 `MUTATING` Tool。
+- before/after/failure Tool 观测事件必须携带 call/source/effect/attempt/耗时，并在并行执行时复制独立 ToolContext；Micrometer 标签只使用 tool/effect/source/phase/outcome 等低基数字段，不使用 call/attempt；
+- 默认注册策略拒绝暴露 `MUTATING` Tool；宿主显式放行后，Runtime 在账本能力未配置时仍拒绝调用。
 
 完成门槛：固定故障测试覆盖“请求发出前崩溃、外部已成功但本地未确认、账本成功但 Session 未推进、重复恢复”，并证明不会产生未受控的重复副作用。
+
+实现说明：默认 `AgentToolRegistry` 拒绝 `MUTATING` 注册，只有宿主显式授予注册权限后才可暴露；Runtime 仍在每次调用前校验当前恢复存储是否提供副作用账本。执行策略先做 Schema 修复和 `ALLOW/MODIFY/DENY/NEED_APPROVAL` 策略判定，再以稳定 Tool Call ID 派生幂等键。写调用按 journal `DECIDED` → 账本 `PREPARED` → journal `EXECUTING` → 账本 `EXECUTING` → 外部请求 → 账本结果/回执 → journal 结果 → Checkpoint → Session Outcome 的顺序推进。接管和取消把遗留写调用标成 `UNKNOWN`；`AgentToolReconciler` 只能查询外部事实或执行 Tool 自己定义的补偿，不能重复原写请求，结论落为 `RECONCILED`。无 reconciler 或仍不确定时持续抛出 `MUTATING_TOOL_STATE_UNKNOWN`，保留账本供人工处理。`NEED_APPROVAL` 目前是稳定的失败关闭结论，真实挂起/回调属于 AR-8。
 
 ### AR-5：Steer Queue/Drain
 
@@ -342,6 +346,17 @@ WorkspaceEvent 仍是恢复事实，PushEvent 只是过程投影；外部 SSE/We
 - 剩余边界：AR-3 不提供写 Tool 外部回执、对账、补偿或人工 reconciliation；`MUTATING` 的 `UNKNOWN` 会持续失败关闭。HITL/Async/Waitpoint/Child 只预留了 ResumeSource，真实状态机和回调入口仍属 AR-8；Steer Queue/Drain 属 AR-5。
 - 下一步：AR-4 建立 `MUTATING` Tool 副作用账本、稳定幂等键、外部回执和 `UNKNOWN → RECONCILED` 对账协议。
 - 关联文档/ADR/契约：[`docs/agent-runtime.md`](../../docs/agent-runtime.md)、[ADR-006](../../docs/adr/ADR-006-agent-reliability-fencing-outbox-shadow.md)、[`agent-recovery-v1.schema.json`](../../contracts/events/agent-recovery-v1.schema.json)、`V10__agent_runtime_checkpoints.sql`。
+
+### 2026-09-15：完成 AR-4 Mutating Tool 副作用账本
+
+- 阶段：AR-4（已完成）；AR-5 调整为下一步。
+- 本轮范围：实现写 Tool 的注册/执行双层策略、fencing 持久账本、稳定幂等键、外部回执、UNKNOWN 对账和 Tool 调用观察。
+- 实现事实与关键入口：`AgentToolRegistry` 默认只允许安全 Tool，显式注册权限才能暴露 `MUTATING`；`ToolExecutionPolicy` 支持 `ALLOW/MODIFY/DENY/NEED_APPROVAL`；`AgentRuntime` 为每个调用创建独立 `AgentToolContext` 并携带稳定 idempotency key；`AgentRecoveryExecution/JdbcAgentRecoveryStore` 在 fencing 下维护 `SideEffectLedgerEntry`；V11 新增 `agent.tool_side_effect_ledger`，保存 request/result digest、attempt、外部 receipt 和 reconciliation 事实；`ToolExecutionObserver` 提供 before/after/failure 与 initial/recovery/reconciliation 来源。
+- 失败/取消/恢复语义：`READ_ONLY/IDEMPOTENT` 仍按原 Call ID 安全恢复；`MUTATING` 只有账本为 `PREPARED` 才允许首次发出，已知结果直接复用，遗留 `EXECUTING` 在接管或取消时变为 `UNKNOWN`；`UNKNOWN` 只允许 Tool 专属的外部状态查询/补偿后写 `RECONCILED`，不能再次执行原写操作；没有 reconciler 或仍无法判定时持续返回 `MUTATING_TOOL_STATE_UNKNOWN`。账本未配置时 Runtime 拒绝调用，默认注册策略也拒绝写 Tool。`NEED_APPROVAL` 暂时返回稳定 `TOOL_APPROVAL_REQUIRED`，不冒充 AR-8 的挂起流程。
+- 验证命令与结果：JDK 21 下 Agent Runtime 56 个、Persistence 6 个、Agent Orchestration Context 13 个测试无失败，`mvn test` 全仓 26 个 Reactor 模块回归通过；新增 8 个 AR-4 Runtime 测试覆盖请求前崩溃、外部成功未确认、账本成功但 journal/Session 未推进、reconciliation 后再次崩溃并重复恢复、无 reconciler 失败关闭、外部写后异常保持 UNKNOWN、无权限/无账本拒绝和执行策略 modify/deny/need-approval；既有并行 Tool 测试新增独立 Context/token 断言，Micrometer 测试确认指标不使用 call/attempt 高基数标签。隔离 PostgreSQL 17 顺序执行 V1～V11 成功，并确认账本主键、Call ID/幂等键唯一约束、状态/结果检查约束。
+- 剩余边界：Runtime 提供的是副作用恢复协议，不是跨外部系统分布式事务；每个真实写 Tool 仍必须根据目标系统实现可靠幂等、状态查询或补偿。当前产品只注册两个 `READ_ONLY` Search Tool，尚无生产写 Tool。真实审批挂起、人工处理工作台和后台 reconciliation 扫描器分别属于 AR-8 或具体产品运维能力。
+- 下一步：AR-5 先明确 busy/steer 产品入口、队列上限和合并规则，再实现 `QueuedUserMessage → STEER cancel → owner drain`。
+- 关联文档/ADR/契约：[`docs/agent-runtime.md`](../../docs/agent-runtime.md)、[ADR-006](../../docs/adr/ADR-006-agent-reliability-fencing-outbox-shadow.md)、[`agent-tool-side-effect-ledger-v1.schema.json`](../../contracts/events/agent-tool-side-effect-ledger-v1.schema.json)、`V11__agent_tool_side_effect_ledger.sql`。
 
 ---
 

@@ -142,6 +142,11 @@ class DefaultContextEngineTest {
             }
 
             @Override
+            public Effect effect() {
+                return Effect.READ_ONLY;
+            }
+
+            @Override
             public AgentToolResult execute(io.seekflux.platform.agentruntime.application.spi.business.tool.model.AgentToolContext context) {
                 return AgentToolResult.success(Map.of(), null);
             }

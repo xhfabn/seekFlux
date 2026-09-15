@@ -35,6 +35,9 @@ public final class DefaultAgentToolExecutor implements AgentToolExecutor {
         } catch (AgentCancellationException cancelled) {
             throw cancelled;
         } catch (RuntimeException error) {
+            if (tool.effect() == AgentTool.Effect.MUTATING) {
+                throw error;
+            }
             return new AgentToolInvocation(
                     tool.name(),
                     tool.schema().version(),

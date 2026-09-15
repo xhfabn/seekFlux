@@ -2,6 +2,7 @@ package io.seekflux.platform.agentruntime.domain.service.runtime;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNotSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import io.seekflux.platform.agentruntime.domain.service.execution.AgentCallGuard;
@@ -196,7 +197,9 @@ class AgentRuntimeTest {
         CyclicBarrier barrier = new CyclicBarrier(2);
         AtomicInteger active = new AtomicInteger();
         AtomicInteger maxActive = new AtomicInteger();
+        List<AgentToolContext> contexts = java.util.Collections.synchronizedList(new ArrayList<>());
         java.util.function.Function<AgentToolContext, AgentToolResult> action = context -> {
+            contexts.add(context);
             int running = active.incrementAndGet();
             maxActive.accumulateAndGet(running, Math::max);
             try {
@@ -230,6 +233,10 @@ class AgentRuntimeTest {
         assertEquals(AgentTerminalState.RESULTS_READY, result.state());
         assertEquals(2, result.output().get("observations"));
         assertEquals(2, maxActive.get());
+        assertEquals(2, contexts.size());
+        assertNotSame(contexts.get(0), contexts.get(1));
+        assertNotSame(contexts.get(0).cancellationToken(), contexts.get(1).cancellationToken());
+        assertTrue(!contexts.get(0).toolCallId().equals(contexts.get(1).toolCallId()));
         assertEquals(2, result.trace().steps().stream()
                 .filter(step -> "CALL_TOOL".equals(step.action()))
                 .count());
@@ -411,6 +418,11 @@ class AgentRuntimeTest {
                         Map.of(
                                 "query", AgentToolParameter.requiredString(500),
                                 "page", AgentToolParameter.optionalInteger(0, 199)));
+            }
+
+            @Override
+            public Effect effect() {
+                return Effect.READ_ONLY;
             }
 
             @Override

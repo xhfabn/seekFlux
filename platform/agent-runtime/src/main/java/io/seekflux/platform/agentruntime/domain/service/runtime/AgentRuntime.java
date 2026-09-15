@@ -2,6 +2,7 @@ package io.seekflux.platform.agentruntime.domain.service.runtime;
 
 import io.seekflux.platform.agentruntime.application.spi.capability.event.AgentRunRecorder;
 import io.seekflux.platform.agentruntime.application.spi.capability.tool.AgentToolExecutor;
+import io.seekflux.platform.agentruntime.application.spi.capability.tool.ToolExecutionObserver;
 import io.seekflux.platform.agentruntime.domain.service.tool.AgentToolRegistry;
 import io.seekflux.platform.agentruntime.domain.model.decision.AgentDecision;
 import io.seekflux.platform.agentruntime.application.spi.business.planner.model.AgentDecisionContext;
@@ -24,10 +25,16 @@ import io.seekflux.platform.agentruntime.domain.model.recovery.RuntimeCheckpoint
 import io.seekflux.platform.agentruntime.domain.model.recovery.ToolCallJournalEntry;
 import io.seekflux.platform.agentruntime.domain.model.recovery.ToolJournalStatus;
 import io.seekflux.platform.agentruntime.application.spi.business.tool.AgentTool;
+import io.seekflux.platform.agentruntime.application.spi.business.tool.AgentToolReconciler;
+import io.seekflux.platform.agentruntime.application.spi.business.tool.ToolExecutionPolicy;
 import io.seekflux.platform.agentruntime.application.spi.business.tool.model.AgentToolContext;
 import io.seekflux.platform.agentruntime.domain.model.tool.AgentToolInvocation;
 import io.seekflux.platform.agentruntime.domain.model.tool.AgentToolObservation;
 import io.seekflux.platform.agentruntime.domain.model.tool.AgentToolResult;
+import io.seekflux.platform.agentruntime.domain.model.sideeffect.SideEffectLedgerEntry;
+import io.seekflux.platform.agentruntime.domain.model.sideeffect.SideEffectReconciliation;
+import io.seekflux.platform.agentruntime.domain.model.sideeffect.SideEffectStatus;
+import io.seekflux.platform.agentruntime.domain.exception.UnsafeToolRecoveryException;
 import io.seekflux.platform.agentruntime.domain.service.execution.AgentCallGuard;
 import io.seekflux.platform.agentruntime.domain.service.recovery.AgentRecoveryExecution;
 import java.time.Clock;
@@ -65,6 +72,8 @@ public final class AgentRuntime {
     private final AgentRunRecorder recorder;
     private final Clock clock;
     private final AgentCallGuard callGuard;
+    private final ToolExecutionPolicy toolPolicy;
+    private final ToolExecutionObserver toolObserver;
 
     public AgentRuntime(
             AgentToolRegistry tools,
@@ -82,12 +91,27 @@ public final class AgentRuntime {
             AgentRunRecorder recorder,
             Clock clock,
             AgentCallGuard callGuard) {
+        this(tools, toolExecutor, executor, recorder, clock, callGuard,
+                ToolExecutionPolicy.ALLOW_ALL, ToolExecutionObserver.NOOP);
+    }
+
+    public AgentRuntime(
+            AgentToolRegistry tools,
+            AgentToolExecutor toolExecutor,
+            ExecutorService executor,
+            AgentRunRecorder recorder,
+            Clock clock,
+            AgentCallGuard callGuard,
+            ToolExecutionPolicy toolPolicy,
+            ToolExecutionObserver toolObserver) {
         this.tools = Objects.requireNonNull(tools, "tool registry must not be null");
         this.toolExecutor = Objects.requireNonNull(toolExecutor, "tool executor must not be null");
         this.executor = Objects.requireNonNull(executor, "agent executor must not be null");
         this.recorder = Objects.requireNonNull(recorder, "run recorder must not be null");
         this.clock = Objects.requireNonNull(clock, "clock must not be null");
         this.callGuard = Objects.requireNonNull(callGuard, "call guard must not be null");
+        this.toolPolicy = Objects.requireNonNull(toolPolicy, "Tool policy must not be null");
+        this.toolObserver = Objects.requireNonNull(toolObserver, "Tool observer must not be null");
     }
 
     public AgentRunResult run(
@@ -124,7 +148,6 @@ public final class AgentRuntime {
         if (recoveryPlan.action() == ResumeAction.FAIL_UNSAFE_PENDING_TOOL) {
             throw new IllegalStateException("unsafe pending Tool must be rejected before Loop dispatch");
         }
-
         String runId = UUID.randomUUID().toString();
         Instant startedAt = clock.instant();
         long startedNanos = System.nanoTime();
@@ -134,6 +157,10 @@ public final class AgentRuntime {
                 : restored.remainingBudgetMillis();
         long deadlineNanos = saturatingAdd(startedNanos, Duration.ofMillis(budgetMillis).toNanos());
         Set<String> effectiveTools = effectiveTools(definition, request);
+        if (tools.containsMutating(effectiveTools) && !recovery.sideEffectLedgerEnabled()) {
+            throw new IllegalStateException(
+                    "MUTATING Tool requires a configured side-effect ledger");
+        }
         AgentRunTrace.DefinitionSnapshot snapshot = new AgentRunTrace.DefinitionSnapshot(
                 definition.id(),
                 definition.version(),
@@ -278,6 +305,9 @@ public final class AgentRuntime {
                             calls.get(callIndex), effectiveTools, request, step, callIndex));
                 }
                 prepared = List.copyOf(preparedCalls);
+            } catch (ToolPolicyFailure policyFailure) {
+                run.recordAssistant(step, decision, List.of());
+                return finishFailure(run, definition, policyFailure.code, null);
             } catch (IllegalArgumentException invalidArguments) {
                 run.recordAssistant(step, decision, List.of());
                 return finishFailure(run, definition, "TOOL_ARGUMENT_INVALID", null);
@@ -323,8 +353,9 @@ public final class AgentRuntime {
 
             List<AgentToolObservation> completed;
             try {
-                run.markToolExecuting(journalEntries);
-                completed = executeBatch(runId, request, prepared, deadlineNanos, cancellationToken);
+                completed = executeBatch(
+                        run, request, prepared, deadlineNanos, cancellationToken,
+                        ToolExecutionObserver.Source.INITIAL);
             } catch (CallFailure failure) {
                 if (failure.cancellationCause != null
                         || "AGENT_DEADLINE_EXCEEDED".equals(failure.code)) {
@@ -568,6 +599,7 @@ public final class AgentRuntime {
         }
 
         List<PreparedToolCall> pending = new ArrayList<>();
+        Map<String, AgentToolObservation> reconciled = new HashMap<>();
         boolean anySucceeded = false;
         String firstFailure = null;
         CancellationCause recoveredCancellation = null;
@@ -582,28 +614,32 @@ public final class AgentRuntime {
                         null);
             }
             if (!entry.status().terminal()) {
-                if (entry.status() == ToolJournalStatus.UNKNOWN && !entry.safeToRetry()) {
-                    throw new IllegalStateException("unsafe Tool reached runtime recovery dispatch");
+                PreparedToolCall call = restorePrepared(entry);
+                if (entry.effect() == AgentTool.Effect.MUTATING) {
+                    AgentToolObservation recovered = recoverMutatingSideEffect(
+                            run, entry, call, deadlineNanos, cancellationToken);
+                    if (recovered != null) {
+                        reconciled.put(entry.toolCallId(), recovered);
+                    } else {
+                        pending.add(call);
+                    }
+                } else {
+                    pending.add(call);
                 }
-                pending.add(restorePrepared(entry));
             }
         }
 
-        Map<String, AgentToolObservation> newlyCompleted = new HashMap<>();
+        Map<String, AgentToolObservation> newlyCompleted = new HashMap<>(reconciled);
         CallFailure batchFailure = null;
         if (!pending.isEmpty()) {
-            run.recovery.markToolExecuting(
-                    run.request.sessionId(),
-                    run.request.requestId(),
-                    run.runId,
-                    pending.stream().map(PreparedToolCall::toolCallId).toList());
             try {
                 for (AgentToolObservation observation : executeBatch(
-                        run.runId,
+                        run,
                         run.request,
                         pending,
                         deadlineNanos,
-                        cancellationToken)) {
+                        cancellationToken,
+                        ToolExecutionObserver.Source.RECOVERY)) {
                     newlyCompleted.put(observation.toolCallId(), observation);
                 }
             } catch (CallFailure failure) {
@@ -626,9 +662,7 @@ public final class AgentRuntime {
                                     ? ToolJournalStatus.TIMED_OUT
                                     : ToolJournalStatus.FAILED;
                 } else {
-                    journalStatus = observation.result().success()
-                            ? ToolJournalStatus.SUCCEEDED
-                            : ToolJournalStatus.FAILED;
+                    journalStatus = recoveredJournalStatus(observation.result());
                 }
                 run.recordJournalResult(entry.forAttempt(
                         run.runId, journalStatus, observation, clock.instant()));
@@ -707,6 +741,7 @@ public final class AgentRuntime {
                 tool,
                 entry.arguments(),
                 entry.argumentsRepaired(),
+                entry.step(),
                 entry.callIndex());
     }
 
@@ -792,31 +827,140 @@ public final class AgentRuntime {
         return String.valueOf(value);
     }
 
+    private AgentToolObservation recoverMutatingSideEffect(
+            RunState run,
+            ToolCallJournalEntry journal,
+            PreparedToolCall call,
+            long deadlineNanos,
+            CancellationToken cancellationToken) {
+        SideEffectLedgerEntry ledger = run.recovery.findSideEffect(call.toolCallId()).orElse(null);
+        if (ledger == null) {
+            if (journal.status() == ToolJournalStatus.DECIDED) {
+                return null;
+            }
+            throw new UnsafeToolRecoveryException(run.request.sessionId(), call.toolCallId());
+        }
+        if (!ledger.requestDigest().equals(argumentsDigest(call.arguments()))) {
+            throw new IllegalStateException("side-effect ledger request digest does not match");
+        }
+        if (ledger.status() == SideEffectStatus.PREPARED) {
+            return null;
+        }
+        if (ledger.status().terminal()) {
+            return observationFromLedger(call, ledger, 0);
+        }
+        if (ledger.status() != SideEffectStatus.UNKNOWN
+                && ledger.status() != SideEffectStatus.EXECUTING) {
+            throw new UnsafeToolRecoveryException(run.request.sessionId(), call.toolCallId());
+        }
+        if (!(call.tool() instanceof AgentToolReconciler reconciler)) {
+            throw new UnsafeToolRecoveryException(run.request.sessionId(), call.toolCallId());
+        }
+
+        long started = System.nanoTime();
+        observe(call, run.runId, ToolExecutionObserver.Source.RECONCILIATION,
+                ToolExecutionObserver.Phase.BEFORE, 0, "STARTED");
+        SideEffectReconciliation reconciliation;
+        try {
+            CancellationToken toolToken = cancellationToken.child();
+            AgentToolContext context = new AgentToolContext(
+                    run.runId,
+                    call.toolCallId(),
+                    ledger.idempotencyKey(),
+                    run.request,
+                    call.arguments(),
+                    Duration.ofNanos(remainingNanos(deadlineNanos)),
+                    toolToken);
+            reconciliation = invoke(
+                    () -> callGuard.execute(
+                            AgentCallGuard.CallType.TOOL,
+                            () -> reconciler.reconcile(ledger, context)),
+                    deadlineNanos,
+                    cancellationToken);
+        } catch (CallFailure failure) {
+            observe(call, run.runId, ToolExecutionObserver.Source.RECONCILIATION,
+                    ToolExecutionObserver.Phase.FAILURE, elapsedMillis(started), failure.code);
+            if (failure.cancellationCause != null
+                    || "AGENT_DEADLINE_EXCEEDED".equals(failure.code)) {
+                return failedObservation(call, failure.code, elapsedMillis(started));
+            }
+            throw new UnsafeToolRecoveryException(run.request.sessionId(), call.toolCallId());
+        }
+        if (reconciliation == null
+                || reconciliation.resolution() == SideEffectReconciliation.Resolution.UNKNOWN) {
+            observe(call, run.runId, ToolExecutionObserver.Source.RECONCILIATION,
+                    ToolExecutionObserver.Phase.FAILURE, elapsedMillis(started), "STILL_UNKNOWN");
+            throw new UnsafeToolRecoveryException(run.request.sessionId(), call.toolCallId());
+        }
+        AgentToolResult result = reconciliation.result();
+        SideEffectLedgerEntry resolved = ledger.forAttempt(
+                run.runId,
+                SideEffectStatus.RECONCILED,
+                resultDigest(result),
+                result,
+                reconciliation.method(),
+                reconciliation.note(),
+                clock.instant());
+        run.recovery.recordSideEffectResult(resolved);
+        long tookMillis = elapsedMillis(started);
+        observe(call, run.runId, ToolExecutionObserver.Source.RECONCILIATION,
+                result.success() ? ToolExecutionObserver.Phase.AFTER : ToolExecutionObserver.Phase.FAILURE,
+                tookMillis,
+                result.success() ? "RECONCILED_SUCCEEDED" : result.errorCode());
+        return observationFromLedger(call, resolved, tookMillis);
+    }
+
+    private static AgentToolObservation observationFromLedger(
+            PreparedToolCall call,
+            SideEffectLedgerEntry ledger,
+            long tookMillis) {
+        return new AgentToolObservation(
+                call.toolCallId(), call.tool().name(), call.tool().schema().version(),
+                call.arguments(), call.argumentsRepaired(), ledger.result(), tookMillis);
+    }
+
     private List<AgentToolObservation> executeBatch(
-            String runId,
+            RunState run,
             AgentRunRequest request,
             List<PreparedToolCall> calls,
             long deadlineNanos,
-            CancellationToken cancellationToken) throws CallFailure {
+            CancellationToken cancellationToken,
+            ToolExecutionObserver.Source source) throws CallFailure {
         CancellationToken batchToken = cancellationToken.child();
         List<PendingToolCall> pending = new ArrayList<>();
         for (PreparedToolCall call : calls) {
             CancellationCause cause = batchToken.cause();
             if (cause != null) {
-                cancelPending(pending);
+                abandonPending(run, request, pending);
                 throw CallFailure.cancelled(cause, null);
             }
             long started = System.nanoTime();
+            SideEffectLedgerEntry ledger = null;
             if (remainingNanos(deadlineNanos) <= 0) {
-                pending.add(new PendingToolCall(call, started, null, "AGENT_DEADLINE_EXCEEDED"));
+                pending.add(new PendingToolCall(
+                        call, started, null, "AGENT_DEADLINE_EXCEEDED", null, source));
                 continue;
             }
             try {
+                if (call.tool().effect() == AgentTool.Effect.MUTATING) {
+                    ledger = prepareSideEffect(run, call);
+                }
+                run.recovery.markToolExecuting(
+                        request.sessionId(), request.requestId(), run.runId,
+                        List.of(call.toolCallId()));
+                if (ledger != null) {
+                    ledger = run.recovery.markSideEffectExecuting(ledger, run.runId);
+                }
                 CancellationToken toolToken = batchToken.child();
+                SideEffectLedgerEntry executingLedger = ledger;
+                observe(call, run.runId, source, ToolExecutionObserver.Phase.BEFORE, 0, "STARTED");
                 Future<AgentToolInvocation> future = executor.submit(() -> {
                     AgentToolContext context = new AgentToolContext(
-                            runId,
+                            run.runId,
                             call.toolCallId(),
+                            executingLedger == null
+                                    ? "tool-call:" + call.toolCallId()
+                                    : executingLedger.idempotencyKey(),
                             request,
                             call.arguments(),
                             Duration.ofNanos(remainingNanos(deadlineNanos)),
@@ -825,21 +969,23 @@ public final class AgentRuntime {
                             AgentCallGuard.CallType.TOOL,
                             () -> toolExecutor.execute(call.tool().name(), call.arguments(), context));
                 });
-                pending.add(new PendingToolCall(call, started, future, null));
+                pending.add(new PendingToolCall(call, started, future, null, ledger, source));
             } catch (RejectedExecutionException rejected) {
-                pending.add(new PendingToolCall(call, started, null, "RUNTIME_SATURATED"));
+                pending.add(new PendingToolCall(
+                        call, started, null, "RUNTIME_SATURATED", ledger, source));
             }
         }
 
         List<AgentToolObservation> observations = new ArrayList<>();
         for (PendingToolCall item : pending) {
             AgentToolResult result;
+            boolean sideEffectUnknown = false;
             if (item.immediateError() != null) {
                 result = AgentToolResult.failure(item.immediateError());
             } else {
                 long remaining = remainingNanos(deadlineNanos);
                 if (remaining <= 0) {
-                    cancelPending(pending);
+                    abandonPending(run, request, pending);
                     throw CallFailure.failed("AGENT_DEADLINE_EXCEEDED", null);
                 } else {
                     try {
@@ -847,14 +993,36 @@ public final class AgentRuntime {
                     } catch (CallFailure failure) {
                         if (failure.cancellationCause != null
                                 || "AGENT_DEADLINE_EXCEEDED".equals(failure.code)) {
-                            cancelPending(pending);
+                            abandonPending(run, request, pending);
                             throw failure;
                         }
-                        result = AgentToolResult.failure(failure.code);
+                        if (item.ledger() != null) {
+                            run.recovery.markSideEffectsUnknown(
+                                    request.sessionId(), request.requestId(),
+                                    List.of(item.call().toolCallId()));
+                            result = AgentToolResult.failure("MUTATING_TOOL_STATE_UNKNOWN");
+                            sideEffectUnknown = true;
+                        } else {
+                            result = AgentToolResult.failure(failure.code);
+                        }
                     }
                 }
             }
             PreparedToolCall call = item.call();
+            long tookMillis = elapsedMillis(item.startedNanos());
+            if (item.ledger() != null && !sideEffectUnknown) {
+                run.recovery.afterMutatingToolReturn();
+                SideEffectStatus ledgerStatus = result.success()
+                        ? SideEffectStatus.SUCCEEDED : SideEffectStatus.FAILED;
+                SideEffectLedgerEntry terminal = item.ledger().forAttempt(
+                        run.runId, ledgerStatus, resultDigest(result), result,
+                        null, null, clock.instant());
+                run.recovery.recordSideEffectResult(terminal);
+            }
+            observe(call, run.runId, item.source(),
+                    result.success() ? ToolExecutionObserver.Phase.AFTER : ToolExecutionObserver.Phase.FAILURE,
+                    tookMillis,
+                    result.success() ? "SUCCEEDED" : result.errorCode());
             observations.add(new AgentToolObservation(
                     call.toolCallId(),
                     call.tool().name(),
@@ -862,9 +1030,55 @@ public final class AgentRuntime {
                     call.arguments(),
                     call.argumentsRepaired(),
                     result,
-                    elapsedMillis(item.startedNanos())));
+                    tookMillis));
         }
         return List.copyOf(observations);
+    }
+
+    private SideEffectLedgerEntry prepareSideEffect(RunState run, PreparedToolCall call) {
+        if (!run.recovery.sideEffectLedgerEnabled()) {
+            throw new IllegalStateException("MUTATING Tool requires a configured side-effect ledger");
+        }
+        Instant now = clock.instant();
+        SideEffectLedgerEntry entry = new SideEffectLedgerEntry(
+                1,
+                UUID.nameUUIDFromBytes(("side-effect:" + call.toolCallId())
+                        .getBytes(StandardCharsets.UTF_8)).toString(),
+                run.request.sessionId(),
+                run.request.requestId(),
+                run.request.turnId(),
+                run.runId,
+                call.step(),
+                call.index(),
+                call.toolCallId(),
+                call.tool().name(),
+                call.tool().schema().version(),
+                "tool-call:" + call.toolCallId(),
+                SideEffectStatus.PREPARED,
+                argumentsDigest(call.arguments()),
+                null,
+                null,
+                null,
+                null,
+                now,
+                now);
+        return run.recovery.prepareSideEffect(entry);
+    }
+
+    private void observe(
+            PreparedToolCall call,
+            String attemptId,
+            ToolExecutionObserver.Source source,
+            ToolExecutionObserver.Phase phase,
+            long durationMillis,
+            String outcome) {
+        try {
+            toolObserver.observe(new ToolExecutionObserver.Event(
+                    phase, source, call.toolCallId(), call.tool().name(), call.tool().effect(),
+                    attemptId, durationMillis, outcome));
+        } catch (RuntimeException ignored) {
+            // Observation must never change Tool execution or recovery semantics.
+        }
     }
 
     private static void cancelPending(List<PendingToolCall> pending) {
@@ -873,6 +1087,19 @@ public final class AgentRuntime {
                 item.future().cancel(true);
             }
         }
+    }
+
+    private static void abandonPending(
+            RunState run,
+            AgentRunRequest request,
+            List<PendingToolCall> pending) {
+        cancelPending(pending);
+        List<String> mutating = pending.stream()
+                .filter(item -> item.ledger() != null)
+                .map(item -> item.call().toolCallId())
+                .toList();
+        run.recovery.markSideEffectsUnknown(
+                request.sessionId(), request.requestId(), mutating);
     }
 
     private PreparedToolCall prepare(
@@ -894,11 +1121,33 @@ public final class AgentRuntime {
             tool.schema().validate(arguments);
             repaired = true;
         }
+        ToolExecutionPolicy.Decision policyDecision;
+        try {
+            policyDecision = toolPolicy.evaluate(new ToolExecutionPolicy.Context(
+                    request, tool.name(), tool.schema().version(), tool.effect(),
+                    step, callIndex, arguments));
+        } catch (RuntimeException policyError) {
+            throw new ToolPolicyFailure("TOOL_POLICY_FAILED");
+        }
+        if (policyDecision == null) {
+            throw new ToolPolicyFailure("TOOL_POLICY_INVALID");
+        }
+        if (policyDecision.action() == ToolExecutionPolicy.Action.DENY) {
+            throw new ToolPolicyFailure("TOOL_POLICY_DENIED");
+        }
+        if (policyDecision.action() == ToolExecutionPolicy.Action.NEED_APPROVAL) {
+            throw new ToolPolicyFailure("TOOL_APPROVAL_REQUIRED");
+        }
+        if (policyDecision.action() == ToolExecutionPolicy.Action.MODIFY) {
+            arguments = policyDecision.arguments();
+            tool.schema().validate(arguments);
+            repaired = true;
+        }
         String identity = request.requestId() + ":" + step + ":" + callIndex + ":"
                 + tool.name() + ":" + new TreeMap<>(arguments);
         String toolCallId = UUID.nameUUIDFromBytes(
                 identity.getBytes(java.nio.charset.StandardCharsets.UTF_8)).toString();
-        return new PreparedToolCall(toolCallId, tool, arguments, repaired, callIndex);
+        return new PreparedToolCall(toolCallId, tool, arguments, repaired, step, callIndex);
     }
 
     private static List<AgentDecision.ToolCall> toolCalls(AgentDecision decision) {
@@ -1015,6 +1264,30 @@ public final class AgentRuntime {
         return fallback;
     }
 
+    private static String resultDigest(AgentToolResult result) {
+        return argumentsDigest(Map.of(
+                "success", result.success(),
+                "output", result.output(),
+                "errorCode", result.errorCode() == null ? "" : result.errorCode(),
+                "linkedTraceId", result.linkedTraceId() == null ? "" : result.linkedTraceId(),
+                "externalReceipt", result.externalReceipt()));
+    }
+
+    private static ToolJournalStatus recoveredJournalStatus(AgentToolResult result) {
+        if (result.success()) {
+            return ToolJournalStatus.SUCCEEDED;
+        }
+        if ("AGENT_DEADLINE_EXCEEDED".equals(result.errorCode())) {
+            return ToolJournalStatus.TIMED_OUT;
+        }
+        for (CancellationCause cause : CancellationCause.values()) {
+            if (cause.name().equals(result.errorCode())) {
+                return ToolJournalStatus.CANCELLED;
+            }
+        }
+        return ToolJournalStatus.FAILED;
+    }
+
     @FunctionalInterface
     private interface CheckedSupplier<T> {
         T get() throws Exception;
@@ -1039,11 +1312,21 @@ public final class AgentRuntime {
         }
     }
 
+    private static final class ToolPolicyFailure extends RuntimeException {
+        private final String code;
+
+        private ToolPolicyFailure(String code) {
+            super(code);
+            this.code = code;
+        }
+    }
+
     private record PreparedToolCall(
             String toolCallId,
             AgentTool tool,
             Map<String, Object> arguments,
             boolean argumentsRepaired,
+            int step,
             int index) {
     }
 
@@ -1051,7 +1334,9 @@ public final class AgentRuntime {
             PreparedToolCall call,
             long startedNanos,
             Future<AgentToolInvocation> future,
-            String immediateError) {
+            String immediateError,
+            SideEffectLedgerEntry ledger,
+            ToolExecutionObserver.Source source) {
     }
 
     private record ResumeBatch(
@@ -1207,14 +1492,6 @@ public final class AgentRuntime {
                 RuntimeCheckpoint checkpoint,
                 List<ToolCallJournalEntry> calls) {
             recovery.recordToolDecision(checkpoint, calls);
-        }
-
-        private void markToolExecuting(List<ToolCallJournalEntry> calls) {
-            recovery.markToolExecuting(
-                    request.sessionId(),
-                    request.requestId(),
-                    runId,
-                    calls.stream().map(ToolCallJournalEntry::toolCallId).toList());
         }
 
         private void recordJournalResult(ToolCallJournalEntry call) {

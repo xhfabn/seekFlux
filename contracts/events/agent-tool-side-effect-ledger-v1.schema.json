@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://seekflux.io/contracts/events/agent-tool-side-effect-ledger-v1.schema.json",
+  "title": "SeekFlux mutating Tool side-effect ledger contract v1",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schemaVersion", "ledgerId", "sessionId", "requestId", "turnId",
+    "attemptId", "step", "callIndex", "toolCallId", "toolName",
+    "toolSchemaVersion", "idempotencyKey", "status", "requestDigest",
+    "createdAt", "updatedAt"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "ledgerId": { "type": "string", "minLength": 1 },
+    "sessionId": { "type": "string", "minLength": 1 },
+    "requestId": { "type": "string", "minLength": 1 },
+    "turnId": { "type": "string", "minLength": 1 },
+    "attemptId": { "type": "string", "minLength": 1 },
+    "step": { "type": "integer", "minimum": 1 },
+    "callIndex": { "type": "integer", "minimum": 0 },
+    "toolCallId": { "type": "string", "minLength": 1 },
+    "toolName": { "type": "string", "minLength": 1 },
+    "toolSchemaVersion": { "type": "string", "minLength": 1 },
+    "idempotencyKey": { "type": "string", "minLength": 1 },
+    "status": {
+      "enum": [
+        "PREPARED", "EXECUTING", "SUCCEEDED", "FAILED", "UNKNOWN", "RECONCILED"
+      ]
+    },
+    "requestDigest": { "type": "string", "minLength": 1 },
+    "resultDigest": { "type": ["string", "null"] },
+    "result": {
+      "type": ["object", "null"],
+      "properties": {
+        "success": { "type": "boolean" },
+        "output": { "type": "object" },
+        "errorCode": { "type": ["string", "null"] },
+        "linkedTraceId": { "type": ["string", "null"] },
+        "externalReceipt": { "type": "object" }
+      }
+    },
+    "reconciliationMethod": { "type": ["string", "null"] },
+    "reconciliationNote": { "type": ["string", "null"] },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "updatedAt": { "type": "string", "format": "date-time" }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": { "enum": ["SUCCEEDED", "FAILED", "RECONCILED"] }
+        }
+      },
+      "then": { "required": ["resultDigest", "result"] }
+    }
+  ]
+}

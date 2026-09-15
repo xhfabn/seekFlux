@@ -4,9 +4,12 @@ import io.seekflux.platform.agentruntime.application.spi.capability.session.Agen
 import io.seekflux.platform.agentruntime.domain.model.recovery.RecoveryPlan;
 import io.seekflux.platform.agentruntime.domain.model.recovery.RuntimeCheckpoint;
 import io.seekflux.platform.agentruntime.domain.model.recovery.ToolCallJournalEntry;
+import io.seekflux.platform.agentruntime.domain.model.sideeffect.SideEffectLedgerEntry;
+import io.seekflux.platform.agentruntime.domain.model.sideeffect.SideEffectStatus;
 import java.time.Clock;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 
 public final class AgentRecoveryExecution {
 
@@ -46,6 +49,10 @@ public final class AgentRecoveryExecution {
 
     public boolean enabled() {
         return store.enabled();
+    }
+
+    public boolean sideEffectLedgerEnabled() {
+        return store.sideEffectLedgerEnabled();
     }
 
     public RecoveryPlan plan() {
@@ -90,6 +97,49 @@ public final class AgentRecoveryExecution {
     public void recordToolResult(ToolCallJournalEntry call) {
         store.recordToolResult(call, fencingToken, clock.instant());
         faultInjector.at(RecoveryPoint.AFTER_TOOL_RESULT_COMMIT);
+    }
+
+    public SideEffectLedgerEntry prepareSideEffect(SideEffectLedgerEntry entry) {
+        SideEffectLedgerEntry prepared = store.prepareSideEffect(
+                entry, fencingToken, clock.instant());
+        faultInjector.at(RecoveryPoint.AFTER_SIDE_EFFECT_PREPARED);
+        return prepared;
+    }
+
+    public SideEffectLedgerEntry markSideEffectExecuting(
+            SideEffectLedgerEntry entry,
+            String attemptId) {
+        SideEffectLedgerEntry executing = entry.forAttempt(
+                attemptId, SideEffectStatus.EXECUTING, null, null, null, null, clock.instant());
+        SideEffectLedgerEntry recorded = store.markSideEffectExecuting(
+                executing, fencingToken, clock.instant());
+        faultInjector.at(RecoveryPoint.AFTER_SIDE_EFFECT_EXECUTING);
+        return recorded;
+    }
+
+    public void afterMutatingToolReturn() {
+        faultInjector.at(RecoveryPoint.AFTER_MUTATING_TOOL_RETURN_BEFORE_LEDGER_RESULT);
+    }
+
+    public SideEffectLedgerEntry recordSideEffectResult(SideEffectLedgerEntry entry) {
+        SideEffectLedgerEntry recorded = store.recordSideEffectResult(
+                entry, fencingToken, clock.instant());
+        faultInjector.at(RecoveryPoint.AFTER_SIDE_EFFECT_RESULT_COMMIT);
+        return recorded;
+    }
+
+    public void markSideEffectsUnknown(
+            String sessionId,
+            String requestId,
+            List<String> toolCallIds) {
+        if (!toolCallIds.isEmpty()) {
+            store.markSideEffectsUnknown(
+                    sessionId, requestId, toolCallIds, fencingToken, clock.instant());
+        }
+    }
+
+    public Optional<SideEffectLedgerEntry> findSideEffect(String toolCallId) {
+        return store.findSideEffect(toolCallId);
     }
 
     public void savePostTurn(RuntimeCheckpoint checkpoint) {

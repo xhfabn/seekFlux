@@ -12,6 +12,8 @@ import io.seekflux.platform.agentruntime.domain.model.recovery.ResumeIngress;
 import io.seekflux.platform.agentruntime.domain.model.recovery.RuntimeCheckpoint;
 import io.seekflux.platform.agentruntime.domain.model.recovery.ToolCallJournalEntry;
 import io.seekflux.platform.agentruntime.domain.model.recovery.ToolJournalStatus;
+import io.seekflux.platform.agentruntime.domain.model.sideeffect.SideEffectLedgerEntry;
+import io.seekflux.platform.agentruntime.domain.model.sideeffect.SideEffectStatus;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Instant;
@@ -46,6 +48,11 @@ public class JdbcAgentRecoveryStore implements AgentRecoveryStore {
     }
 
     @Override
+    public boolean sideEffectLedgerEnabled() {
+        return true;
+    }
+
+    @Override
     @Transactional
     public RecoveryPlan commitResume(
             ResumeIngress ingress, long fencingToken, Instant eventTime) {
@@ -54,6 +61,21 @@ public class JdbcAgentRecoveryStore implements AgentRecoveryStore {
                         UPDATE agent.tool_call_journal
                         SET status = 'UNKNOWN',
                             fencing_token = :fencingToken,
+                            updated_at = :eventTime
+                        WHERE session_id = :sessionId
+                          AND request_id = :requestId
+                          AND status = 'EXECUTING'
+                        """)
+                .param("sessionId", ingress.sessionId())
+                .param("requestId", ingress.requestId())
+                .param("fencingToken", fencingToken)
+                .param("eventTime", databaseTime(eventTime))
+                .update();
+        jdbcClient.sql("""
+                        UPDATE agent.tool_side_effect_ledger
+                        SET status = 'UNKNOWN',
+                            fencing_token = :fencingToken,
+                            payload = jsonb_set(payload, '{status}', '"UNKNOWN"'::jsonb),
                             updated_at = :eventTime
                         WHERE session_id = :sessionId
                           AND request_id = :requestId
@@ -107,7 +129,7 @@ public class JdbcAgentRecoveryStore implements AgentRecoveryStore {
                 .toList();
         boolean unsafeUnknown = currentStepCalls.stream().anyMatch(call ->
                 call.status() == ToolJournalStatus.UNKNOWN && !call.safeToRetry());
-        if (unsafeUnknown) {
+        if (unsafeUnknown && !sideEffectLedgerEnabled()) {
             return new RecoveryPlan(
                     ResumeAction.FAIL_UNSAFE_PENDING_TOOL, restored, currentStepCalls);
         }
@@ -342,6 +364,181 @@ public class JdbcAgentRecoveryStore implements AgentRecoveryStore {
         }
     }
 
+    @Override
+    @Transactional
+    public SideEffectLedgerEntry prepareSideEffect(
+            SideEffectLedgerEntry entry, long fencingToken, Instant eventTime) {
+        if (entry.status() != SideEffectStatus.PREPARED) {
+            throw new IllegalArgumentException("new side-effect ledger entry must be PREPARED");
+        }
+        int rows = jdbcClient.sql("""
+                        INSERT INTO agent.tool_side_effect_ledger (
+                            ledger_id, schema_version, session_id, request_id, turn_id,
+                            attempt_id, step, call_index, tool_call_id, tool_name,
+                            tool_schema_version, idempotency_key, status, request_digest,
+                            result_digest, fencing_token, payload, created_at, updated_at
+                        )
+                        SELECT :ledgerId, :schemaVersion, :sessionId, :requestId, :turnId,
+                               :attemptId, :step, :callIndex, :toolCallId, :toolName,
+                               :toolSchemaVersion, :idempotencyKey, 'PREPARED', :requestDigest,
+                               NULL, :fencingToken, CAST(:payload AS jsonb), :createdAt, :eventTime
+                        FROM agent.sessions
+                        WHERE session_id = :sessionId
+                          AND active_fencing_token = :fencingToken
+                        ON CONFLICT (tool_call_id) DO NOTHING
+                        """)
+                .param("ledgerId", UUID.fromString(entry.ledgerId()))
+                .param("schemaVersion", entry.schemaVersion())
+                .param("sessionId", entry.sessionId())
+                .param("requestId", entry.requestId())
+                .param("turnId", entry.turnId())
+                .param("attemptId", UUID.fromString(entry.attemptId()))
+                .param("step", entry.step())
+                .param("callIndex", entry.callIndex())
+                .param("toolCallId", entry.toolCallId())
+                .param("toolName", entry.toolName())
+                .param("toolSchemaVersion", entry.toolSchemaVersion())
+                .param("idempotencyKey", entry.idempotencyKey())
+                .param("requestDigest", entry.requestDigest())
+                .param("fencingToken", fencingToken)
+                .param("payload", sideEffectJson(entry))
+                .param("createdAt", databaseTime(entry.createdAt()))
+                .param("eventTime", databaseTime(eventTime))
+                .update();
+        SideEffectLedgerEntry persisted = findSideEffect(entry.toolCallId())
+                .orElseThrow(() -> new AgentExecutionFencedException(entry.sessionId(), fencingToken));
+        if (rows == 0 && (!persisted.requestDigest().equals(entry.requestDigest())
+                || !persisted.idempotencyKey().equals(entry.idempotencyKey()))) {
+            throw new IllegalStateException("side-effect ledger identity conflict");
+        }
+        assertAuthority(entry.sessionId(), fencingToken);
+        return persisted;
+    }
+
+    @Override
+    @Transactional
+    public SideEffectLedgerEntry markSideEffectExecuting(
+            SideEffectLedgerEntry entry, long fencingToken, Instant eventTime) {
+        if (entry.status() != SideEffectStatus.EXECUTING) {
+            throw new IllegalArgumentException("side-effect ledger dispatch must be EXECUTING");
+        }
+        int rows = jdbcClient.sql("""
+                        UPDATE agent.tool_side_effect_ledger ledger
+                        SET status = 'EXECUTING',
+                            attempt_id = :attemptId,
+                            fencing_token = :fencingToken,
+                            payload = CAST(:payload AS jsonb),
+                            updated_at = :eventTime
+                        WHERE ledger.tool_call_id = :toolCallId
+                          AND ledger.status = 'PREPARED'
+                          AND EXISTS (
+                              SELECT 1 FROM agent.sessions session
+                              WHERE session.session_id = ledger.session_id
+                                AND session.active_fencing_token = :fencingToken
+                          )
+                        """)
+                .param("attemptId", UUID.fromString(entry.attemptId()))
+                .param("fencingToken", fencingToken)
+                .param("payload", sideEffectJson(entry))
+                .param("eventTime", databaseTime(eventTime))
+                .param("toolCallId", entry.toolCallId())
+                .update();
+        SideEffectLedgerEntry persisted = findSideEffect(entry.toolCallId())
+                .orElseThrow(() -> new AgentExecutionFencedException(entry.sessionId(), fencingToken));
+        if (rows != 1 && !(persisted.status() == SideEffectStatus.EXECUTING
+                && persisted.attemptId().equals(entry.attemptId()))) {
+            throw new IllegalStateException("mutating Tool side effect is not dispatchable");
+        }
+        assertAuthority(entry.sessionId(), fencingToken);
+        return persisted;
+    }
+
+    @Override
+    @Transactional
+    public SideEffectLedgerEntry recordSideEffectResult(
+            SideEffectLedgerEntry entry, long fencingToken, Instant eventTime) {
+        if (!entry.status().terminal()) {
+            throw new IllegalArgumentException("side-effect result must be terminal");
+        }
+        int rows = jdbcClient.sql("""
+                        UPDATE agent.tool_side_effect_ledger ledger
+                        SET status = :status,
+                            attempt_id = :attemptId,
+                            result_digest = :resultDigest,
+                            fencing_token = :fencingToken,
+                            payload = CAST(:payload AS jsonb),
+                            updated_at = :eventTime
+                        WHERE ledger.tool_call_id = :toolCallId
+                          AND ledger.status IN ('EXECUTING', 'UNKNOWN')
+                          AND EXISTS (
+                              SELECT 1 FROM agent.sessions session
+                              WHERE session.session_id = ledger.session_id
+                                AND session.active_fencing_token = :fencingToken
+                          )
+                        """)
+                .param("status", entry.status().name())
+                .param("attemptId", UUID.fromString(entry.attemptId()))
+                .param("resultDigest", entry.resultDigest())
+                .param("fencingToken", fencingToken)
+                .param("payload", sideEffectJson(entry))
+                .param("eventTime", databaseTime(eventTime))
+                .param("toolCallId", entry.toolCallId())
+                .update();
+        SideEffectLedgerEntry persisted = findSideEffect(entry.toolCallId())
+                .orElseThrow(() -> new AgentExecutionFencedException(entry.sessionId(), fencingToken));
+        if (rows != 1 && !(persisted.status() == entry.status()
+                && persisted.resultDigest().equals(entry.resultDigest()))) {
+            throw new AgentExecutionFencedException(entry.sessionId(), fencingToken);
+        }
+        assertAuthority(entry.sessionId(), fencingToken);
+        return persisted;
+    }
+
+    @Override
+    @Transactional
+    public void markSideEffectsUnknown(
+            String sessionId,
+            String requestId,
+            List<String> toolCallIds,
+            long fencingToken,
+            Instant eventTime) {
+        assertAuthority(sessionId, fencingToken);
+        for (String toolCallId : toolCallIds) {
+            jdbcClient.sql("""
+                            UPDATE agent.tool_side_effect_ledger
+                            SET status = 'UNKNOWN',
+                                fencing_token = :fencingToken,
+                                payload = jsonb_set(payload, '{status}', '"UNKNOWN"'::jsonb),
+                                updated_at = :eventTime
+                            WHERE tool_call_id = :toolCallId
+                              AND session_id = :sessionId
+                              AND request_id = :requestId
+                              AND status = 'EXECUTING'
+                            """)
+                    .param("toolCallId", toolCallId)
+                    .param("sessionId", sessionId)
+                    .param("requestId", requestId)
+                    .param("fencingToken", fencingToken)
+                    .param("eventTime", databaseTime(eventTime))
+                    .update();
+        }
+    }
+
+    @Override
+    public Optional<SideEffectLedgerEntry> findSideEffect(String toolCallId) {
+        return jdbcClient.sql("""
+                        SELECT status, updated_at, payload::text
+                        FROM agent.tool_side_effect_ledger
+                        WHERE tool_call_id = :toolCallId
+                        """)
+                .param("toolCallId", toolCallId)
+                .query((row, rowNumber) -> sideEffectFromJson(row.getString("payload"))
+                        .withStoredState(
+                                SideEffectStatus.valueOf(row.getString("status")),
+                                row.getObject("updated_at", OffsetDateTime.class).toInstant()))
+                .optional();
+    }
+
     private void assertExistingDecision(ToolCallJournalEntry call, long fencingToken) {
         boolean same = jdbcClient.sql("""
                         SELECT EXISTS (
@@ -426,6 +623,22 @@ public class JdbcAgentRecoveryStore implements AgentRecoveryStore {
             return objectMapper.writeValueAsString(value);
         } catch (JsonProcessingException exception) {
             throw new IllegalStateException("checkpoint contains a non-serializable value", exception);
+        }
+    }
+
+    private String sideEffectJson(SideEffectLedgerEntry value) {
+        try {
+            return objectMapper.writeValueAsString(value);
+        } catch (JsonProcessingException exception) {
+            throw new IllegalStateException("side-effect ledger contains a non-serializable value", exception);
+        }
+    }
+
+    private SideEffectLedgerEntry sideEffectFromJson(String value) {
+        try {
+            return objectMapper.readValue(value, SideEffectLedgerEntry.class);
+        } catch (JsonProcessingException exception) {
+            throw new IllegalStateException("failed to deserialize side-effect ledger", exception);
         }
     }
 

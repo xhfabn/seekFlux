@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import io.seekflux.platform.agentruntime.application.command.AgentRunRequest;
 import io.seekflux.platform.agentruntime.application.spi.business.planner.AgentPlanner;
 import io.seekflux.platform.agentruntime.application.spi.business.tool.AgentTool;
+import io.seekflux.platform.agentruntime.application.spi.business.tool.AgentToolRegistrationPolicy;
 import io.seekflux.platform.agentruntime.application.spi.business.tool.model.AgentToolContext;
 import io.seekflux.platform.agentruntime.application.spi.capability.event.AgentRunRecorder;
 import io.seekflux.platform.agentruntime.application.spi.capability.session.AgentRecoveryStore;
@@ -23,6 +24,7 @@ import io.seekflux.platform.agentruntime.domain.model.recovery.ToolCallJournalEn
 import io.seekflux.platform.agentruntime.domain.model.recovery.ToolJournalStatus;
 import io.seekflux.platform.agentruntime.domain.model.run.AgentRunResult;
 import io.seekflux.platform.agentruntime.domain.model.run.AgentTerminalState;
+import io.seekflux.platform.agentruntime.domain.model.sideeffect.SideEffectLedgerEntry;
 import io.seekflux.platform.agentruntime.domain.model.tool.AgentToolParameter;
 import io.seekflux.platform.agentruntime.domain.model.tool.AgentToolResult;
 import io.seekflux.platform.agentruntime.domain.model.tool.AgentToolObservation;
@@ -222,7 +224,11 @@ class AgentRuntimeRecoveryTest {
                 return AgentToolResult.success(Map.of("answer", "ok"), "trace-1");
             }
         };
-        AgentToolRegistry registry = new AgentToolRegistry(List.of(tool));
+        AgentToolRegistry registry = new AgentToolRegistry(
+                List.of(tool),
+                effect == AgentTool.Effect.MUTATING
+                        ? AgentToolRegistrationPolicy.ALLOW_MUTATING
+                        : AgentToolRegistrationPolicy.SAFE_ONLY);
         return new AgentRuntime(
                 registry,
                 new DefaultAgentToolExecutor(registry),
@@ -288,6 +294,14 @@ class AgentRuntimeRecoveryTest {
         private final List<ToolCallJournalEntry> calls = new ArrayList<>();
 
         @Override public boolean enabled() { return true; }
+
+        @Override public boolean sideEffectLedgerEnabled() { return true; }
+
+        @Override
+        public SideEffectLedgerEntry prepareSideEffect(
+                SideEffectLedgerEntry entry, long token, Instant time) {
+            return entry;
+        }
 
         @Override
         public RecoveryPlan commitResume(ResumeIngress ingress, long token, Instant time) {

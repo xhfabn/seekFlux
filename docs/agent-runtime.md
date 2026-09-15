@@ -6,7 +6,7 @@
 
 SeekFlux 没有依赖 Ark-Leto 二进制或源码。当前实现参考《Ark-Leto 框架内核 与 Agentspark 主链路 原理详解》中的主链路、会话事件和执行权思想，自行实现内部 Runtime。类名相似只代表设计映射，不代表复制或集成了未提供的框架。
 
-Phase 1 已证明业务无关、有界、可追踪、能稳定回退的运行内核；Phase 2 完成 Query Mode、多轮约束、动态并行 Tool、OpenAI-compatible Provider Adapter 和复杂 Query Eval；Phase 3 已补齐 fencing、失主接管、跨实例取消、事务 Outbox、故障注入、Shadow 与成本计量边界。
+Phase 1 已证明业务无关、有界、可追踪、能稳定回退的运行内核；Phase 2 完成 Query Mode、多轮约束、动态并行 Tool、OpenAI-compatible Provider Adapter 和复杂 Query Eval；Phase 3 已补齐 fencing、失主接管、跨实例取消、事务 Outbox、故障注入、Shadow 与成本计量边界。后续 AR-1～AR-4 已进一步完成原因化取消、完整消息历史、精确恢复和 `MUTATING` Tool 副作用账本。
 
 ## 2. 模块职责
 
@@ -47,6 +47,7 @@ platform/agent-runtime/.../agentruntime/
 │   │   ├── run/               # Run 结果、事件、Trace、终态和 usage
 │   │   ├── session/           # Session、WorkspaceEvent、状态补丁与提交结果
 │   │   ├── tool/              # Tool Schema、参数、调用、结果和观察
+│   │   ├── sideeffect/        # 写 Tool 账本、状态与对账结论
 │   │   ├── feature/           # Feature 与 Runtime 执行上下文
 │   │   └── execution/         # 取消令牌等执行期领域状态
 │   ├── service/
@@ -173,6 +174,8 @@ PostgreSQL 的 `agent.sessions` 保存最新版本、状态版本、事件位置
 
 `agent.runtime_checkpoints` 和 `agent.tool_call_journal` 是执行恢复事实，不替代 Workspace。Checkpoint 使用 Workspace `messageCutoff` 防止旧运行态覆盖新历史；journal 使用稳定 Tool Call ID、参数 SHA-256 摘要、effect、attempt 和状态判断一次调用是否从未提交、正在进行、结果已知或状态不明。Outcome/Outbox 成功提交后，这两类临时恢复事实在同一数据库事务删除。
 
+`agent.tool_side_effect_ledger` 是长期保留的写副作用事实，不随 Session Outcome 清理。它只服务 `MUTATING` Tool：以稳定 Tool Call ID 派生全局唯一幂等键，在外部请求前依次持久化 `PREPARED` 和 `EXECUTING`，外部返回后先保存 `SUCCEEDED/FAILED`、结果摘要和外部回执，再推进 Tool journal、Checkpoint 与 Session。接管或取消把遗留 `EXECUTING` 收敛为 `UNKNOWN`；Runtime 不会重放该写操作，而是调用 Tool 的 `AgentToolReconciler` 查询外部状态或执行 Tool 自己定义的补偿，成功判定后写 `RECONCILED`。无 reconciler 或外部仍无法判定时抛出 `MUTATING_TOOL_STATE_UNKNOWN` 并保留账本，交由人工处理。逻辑契约见 [`agent-tool-side-effect-ledger-v1.schema.json`](../contracts/events/agent-tool-side-effect-ledger-v1.schema.json)。
+
 Assistant 正文、reasoning 和 tool calls 分字段持久化；当前 Provider reasoning 默认不可重放，只有事件显式允许时 ContextEngine 才把它加入后续模型输入。ToolResult 以 toolCallId 与 Assistant 调用一一对应，状态覆盖 `SUCCEEDED/FAILED/CANCELLED/TIMED_OUT/WAITING`，同时保存不可变 raw contents、模型文本、UI display contents、structured data、resources 和错误/Trace 信息。Session 重放拒绝孤立、重复或缺失的 ToolResult，并把 Clarification 终态投影为 `SUSPENDED`。逻辑契约见 [`agent-workspace-message-v1.schema.json`](../contracts/events/agent-workspace-message-v1.schema.json)。
 
 ## 6. 有限步 AgentLoop
@@ -191,13 +194,13 @@ Tool 参数校验失败后只做一次不改变业务意图的确定性修复；
 
 取消使用同一棵 Session → batch → individual Tool token 传播。`USER_CANCEL`、`STEER`、`AUTHORITY_LOST` 和 `SHUTDOWN` 采用 first-cause-wins，Redis 信号一次读出时间与原因并过滤旧任务残留；Runtime 在步骤边界以及模型/Tool 调用前后检查 token，等待 Future 时每 10ms 检查一次并在取消后发出线程中断。模型或 Tool 即使晚到返回也不能继续推进 Loop。取消结果固定为 `CANCELLED`，不会转成 `FAILED` 或 `FALLBACK_REQUIRED`，并在 Run、Trace、Push、HTTP 响应和 PostgreSQL `agent.runs.cancellation_reason` 中使用同一个 `cancellationReason`。Runtime 产出 Outcome 是取消与正常完成的线性化点，Session 提交前的 fencing 校验仍是防止旧 owner 晚到写入的最终屏障。
 
-模型和 Tool 还受两个独立 Bulkhead 保护，分别返回 `MODEL_BULKHEAD_FULL` 和 `TOOL_BULKHEAD_FULL`；故障注入只存在于 Runtime 调用边界，不要求业务 Tool 编写测试分支。Tool Call ID 由 request/step/tool/规范化参数确定性生成，Tool 同时声明副作用类型。当前两个 Search Tool 都是只读；尚未为写 Tool 实现持久化副作用账本。
+模型和 Tool 还受两个独立 Bulkhead 保护，分别返回 `MODEL_BULKHEAD_FULL` 和 `TOOL_BULKHEAD_FULL`；故障注入只存在于 Runtime 调用边界，不要求业务 Tool 编写测试分支。Tool Call ID 由 request/step/tool/规范化参数确定性生成，Tool 同时声明副作用类型。`READ_ONLY/IDEMPOTENT` 使用稳定 Call ID 安全重试；`MUTATING` 还要求注册权限、运行时 `ALLOW/MODIFY/DENY/NEED_APPROVAL` 策略、持久账本和稳定幂等键。每次调用建立独立不可变 `AgentToolContext`，before/after/failure 观察携带 source、effect、attempt 和耗时。
 
 ### 6.1 Checkpoint 与恢复协议
 
 Runtime 在每次模型调用前保存 `PRE_TURN`，完成一批 Tool 后保存 `POST_TURN`，返回 Outcome 前保存 `COMPLETED` 或 `SUSPENDED`。Checkpoint 只包含可序列化状态：request/turn/attempt、fencing token、Workspace cutoff、冻结定义和 Tool Schema 版本、下一 Step、Tool 次数、剩余预算、持久 features、observations、当前消息、调用指纹、usage 与 Step Trace；LLM client、Publisher、线程对象、临时参数和请求级瞬态 override 不进入 Checkpoint。序列化失败会阻止安全点提交，不会静默保存半份状态。
 
-Tool 决策与对应 Assistant 在 journal 中先落为 `DECIDED`；真正提交执行器前变为 `EXECUTING`；结果按单个 call 落为 `SUCCEEDED/FAILED/CANCELLED/TIMED_OUT`。新 owner 在续租和 `restoreFresh` 后，通过受 fencing 保护的 `commitResume` 把遗留 `EXECUTING` 原子改为 `UNKNOWN`，再得到有限 `ResumeAction`：从 PRE/POST 继续、恢复 pending Tool、直接提交终态，或对未知写 Tool 失败关闭。已完成 Tool 直接复用 observation；`READ_ONLY/IDEMPOTENT` 可用原 Tool Call ID 重试；`MUTATING + UNKNOWN` 返回 HTTP 409 和稳定错误 `MUTATING_TOOL_STATE_UNKNOWN`，AR-4 副作用账本完成前禁止自动重试。
+Tool 决策与对应 Assistant 在 journal 中先落为 `DECIDED`；真正提交执行器前变为 `EXECUTING`；结果按单个 call 落为 `SUCCEEDED/FAILED/CANCELLED/TIMED_OUT`。新 owner 在续租和 `restoreFresh` 后，通过受 fencing 保护的 `commitResume` 把遗留执行态原子改为 `UNKNOWN`，再得到有限 `ResumeAction`。已完成 Tool 直接复用 observation；`READ_ONLY/IDEMPOTENT` 可用原 Tool Call ID 重试；`MUTATING` 则按账本的 `PREPARED` 首次执行、已知终态复用或 `UNKNOWN` 对账三条路径恢复，绝不从 `UNKNOWN` 重放原写请求。
 
 当前统一内部入口由版本化 `ResumeIngress` 表达，已接入 `USER_MESSAGE` 与 `CRASH_RECOVERY`；HITL、异步任务、Waitpoint 和 Child Agent 只保留枚举扩展位，不宣称状态机已经实现。恢复逻辑契约见 [`agent-recovery-v1.schema.json`](../contracts/events/agent-recovery-v1.schema.json)。
 
@@ -250,6 +253,6 @@ python3 evals/run_agent_reliability_eval.py
 
 固定 `direct-search-v1` 六 Query 基线上，强制 Agent 与 Direct 的 `Recall@5/MRR@5/nDCG@5` 均为 `1.0`，证明基础复用没有回归。`complex-search-v1` 的六条关键词陷阱 Query 中，Direct `MRR@1/Recall@1=0.0`，Agent `MRR@1/Recall@1=1.0`；Tool 选择、任务完成、简单 Direct 路由和多轮版本测试全部通过。
 
-`agent-reliability-v1` 固定评测证明单写者、fencing 单调、重复请求无额外 Tool 事件、事务 Outbox、幂等审计、Shadow 主结果隔离和快速关闭；12 次样本可用性 `1.0`、P95 `226.402 ms`、Fallback `0.0`。旧 owner、跨实例取消、停机取消、模型/Tool 在途取消、取消后禁止下一轮、OpenAI 调用中断、模型/Tool 故障和 Bulkhead 另有自动化测试。AR-3 又增加 PRE/POST/终态 Checkpoint、模型后、Tool 提交/结果和未知写 Tool 的固定崩溃测试；隔离 PostgreSQL 17 已顺序执行 V1～V10。
+`agent-reliability-v1` 固定评测证明单写者、fencing 单调、重复请求无额外 Tool 事件、事务 Outbox、幂等审计、Shadow 主结果隔离和快速关闭；12 次样本可用性 `1.0`，P95 `226.402 ms`，Fallback `0.0`。旧 owner、跨实例取消、停机取消、模型/Tool 在途取消、取消后禁止下一轮、OpenAI 调用中断、模型/Tool 故障和 Bulkhead 另有自动化测试。AR-3 增加 PRE/POST/终态 Checkpoint、模型后、Tool 提交/结果和未知写 Tool 的固定崩溃测试；AR-4 增加请求前、外部成功未确认、账本成功未推进 Session 和重复恢复测试。隔离 PostgreSQL 17 已顺序执行 V1～V11。
 
-对照 Ark-Leto 后仍未完成的是 steer 排队、写 Tool 副作用账本与 reconciliation、上下文压缩、OutputGuard、实时 Push/SSE、HITL、Handoff、子 Agent、MCP/Skill/Graph 和完整 OTel。Checkpoint 精确恢复已经覆盖安全 Tool，未知写 Tool 则有意失败关闭，不能把它冒充 AR-4 的副作用安全。真实付费 Provider 基线也需要部署方端点和密钥；当前报告不伪造 Token/成本。完整取舍见 [ADR-006](adr/ADR-006-agent-reliability-fencing-outbox-shadow.md)。
+对照 Ark-Leto 后仍未完成的是 steer 排队、上下文压缩、OutputGuard、实时 Push/SSE、HITL、Handoff、子 Agent、MCP/Skill/Graph 和完整 OTel。写 Tool 已有持久账本与 reconciliation 协议，但每个真实写 Tool 仍必须依据其外部系统能力实现状态查询或补偿，框架不能把不支持查询/幂等的外部接口变安全。真实付费 Provider 基线也需要部署方端点和密钥；当前报告不伪造 Token/成本。完整取舍见 [ADR-006](adr/ADR-006-agent-reliability-fencing-outbox-shadow.md)。
