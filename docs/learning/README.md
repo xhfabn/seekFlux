@@ -11,7 +11,7 @@
 
 > **当前处于：Step 10 已完成，Step 11「多模态媒体理解与跨模态检索」已开始、仍为下一步。**
 
-截至 2026-09-15，已经跑通以下真实链路：
+截至 2026-09-16，已经跑通以下真实链路：
 
 - 内容登记 → PostgreSQL/Outbox → Kafka → Worker 生成画像并发布 → Elasticsearch 建索引；
 - 用户画像保存到 Redis → Search/Feed 使用真实后端数据；
@@ -37,7 +37,7 @@
   视频的端到端验收；文本、图片、视频查询均能返回真实媒体与视频时间范围，但固定五向查询集、
   Recall@K 和通道消融尚未完成，因此 Step 11 仍是“下一步”。
 
-Agent Phase 3 已经完成，Phase 4 的行为事实与实时特征两个深化切片也已完成。Agent Runtime 后续演进中的 AR-1“取消语义闭环”、AR-2“完整消息事件与多轮历史”、AR-3“Checkpoint、pending Tool 与恢复协议”、AR-4“Mutating Tool 副作用账本”和 AR-5“Steer Queue/Drain”已完成，AR-6“上下文治理、413 重试和 OutputGuard”为下一步，实施记录见[模块路线](../../platform/agent-runtime/ROADMAP.md)。OpenAI-compatible Adapter 现兼容标准 `message.content` 与 LongCat 的 `message.reasoning_content`；本地已用 LongCat-2.0 跑通一次模型 → Agent → Search Tool → Web 的真实功能验收，并观测到 Provider 返回的 Token usage。默认固定评测仍使用可复现的确定性 Provider，这次验收不冒充质量或成本基线。HITL、Handoff、子 Agent、MCP、上下文压缩、流式 Push 和完整 OpenTelemetry 仍未完成；等待态 `QUEUE` 的消费要等 HITL/Waitpoint resume，每个真实写 Tool 的外部状态查询或补偿也必须随具体集成单独验收。Ark-Leto 反向核对矩阵见 [ADR-006](../adr/ADR-006-agent-reliability-fencing-outbox-shadow.md)。
+Agent Phase 3 已经完成，Phase 4 的行为事实与实时特征两个深化切片也已完成。Agent Runtime 后续演进中的 AR-1“取消语义闭环”、AR-2“完整消息事件与多轮历史”、AR-3“Checkpoint、pending Tool 与恢复协议”、AR-4“Mutating Tool 副作用账本”、AR-5“Steer Queue/Drain”和 AR-6“上下文治理、413 重试和 OutputGuard”已完成，AR-7“流式模型与实时 Push”为下一步，实施记录见[模块路线](../../platform/agent-runtime/ROADMAP.md)。AR-6 已提供完整消息/Tool Schema 预算、版本化增量摘要、`NONE/ASYNC/SYNC` 压缩、400/413 强压缩有界重试、结构化输出 repair/degrade/fail 以及对应 ContextEvent/指标。OpenAI-compatible Adapter 现兼容标准 `message.content` 与 LongCat 的 `message.reasoning_content`；本地已用 LongCat-2.0 跑通一次模型 → Agent → Search Tool → Web 的真实功能验收，并观测到 Provider 返回的 Token usage。默认固定评测仍使用可复现的确定性 Provider，这次验收不冒充质量或成本基线。HITL、Handoff、子 Agent、MCP、流式 Push 和完整 OpenTelemetry 仍未完成；等待态 `QUEUE` 的消费要等 HITL/Waitpoint resume，每个真实写 Tool 的外部状态查询或补偿也必须随具体集成单独验收。Ark-Leto 反向核对矩阵见 [ADR-006](../adr/ADR-006-agent-reliability-fencing-outbox-shadow.md)。
 
 运行模型决策见 [ADR-002：命令式应用运行模型与局部有界并发](../adr/ADR-002-imperative-application-runtime.md)。普通 Search/Feed 保持同步 JSON；未来 Agent 的模型调用和 Tool fan-out 只能在 Agent 边界内使用明确、有界、可观测的并发，不把 `Mono`/`Flux` 重新扩散到业务接口。
 

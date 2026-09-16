@@ -9,7 +9,12 @@ import io.seekflux.platform.agentruntime.application.spi.capability.llm.model.As
 import io.seekflux.platform.agentruntime.application.spi.capability.llm.model.ContextMessage;
 import io.seekflux.platform.agentruntime.application.spi.capability.llm.LlmClient;
 import io.seekflux.platform.agentruntime.application.spi.capability.llm.model.LlmCallResult;
+import io.seekflux.platform.agentruntime.application.spi.capability.context.ContextEventRecorder;
+import io.seekflux.platform.agentruntime.application.spi.business.output.OutputGuardPolicy;
 import io.seekflux.platform.agentruntime.domain.exception.AgentCancellationException;
+import io.seekflux.platform.agentruntime.domain.exception.AgentModelOutputException;
+import io.seekflux.platform.agentruntime.domain.exception.ContextOverflowException;
+import io.seekflux.platform.agentruntime.domain.model.context.ContextEvent;
 import io.seekflux.platform.agentruntime.domain.model.execution.CancellationCause;
 import io.seekflux.platform.agentruntime.domain.model.execution.CancellationToken;
 import io.seekflux.platform.agentruntime.domain.model.message.AgentAssistantContent;
@@ -20,6 +25,7 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import java.time.Clock;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -37,6 +43,9 @@ public final class OpenAiCompatibleLlmClient implements LlmClient {
     private final String version;
     private final double inputUsdPerMillionTokens;
     private final double outputUsdPerMillionTokens;
+    private final OutputGuardPolicy outputGuardPolicy;
+    private final ContextEventRecorder contextEvents;
+    private final Clock clock;
 
     public OpenAiCompatibleLlmClient(
             HttpClient httpClient,
@@ -57,6 +66,24 @@ public final class OpenAiCompatibleLlmClient implements LlmClient {
             Duration timeout,
             double inputUsdPerMillionTokens,
             double outputUsdPerMillionTokens) {
+        this(httpClient, objectMapper, endpoint, apiKey, model, timeout,
+                inputUsdPerMillionTokens, outputUsdPerMillionTokens,
+                OutputGuardPolicy.REPAIR_THEN_DEGRADE, ContextEventRecorder.NOOP,
+                Clock.systemUTC());
+    }
+
+    public OpenAiCompatibleLlmClient(
+            HttpClient httpClient,
+            ObjectMapper objectMapper,
+            URI endpoint,
+            String apiKey,
+            String model,
+            Duration timeout,
+            double inputUsdPerMillionTokens,
+            double outputUsdPerMillionTokens,
+            OutputGuardPolicy outputGuardPolicy,
+            ContextEventRecorder contextEvents,
+            Clock clock) {
         this.httpClient = httpClient;
         this.objectMapper = objectMapper;
         this.endpoint = endpoint;
@@ -66,6 +93,10 @@ public final class OpenAiCompatibleLlmClient implements LlmClient {
         this.version = "openai-compatible:" + this.model + ":v1";
         this.inputUsdPerMillionTokens = Math.max(0, inputUsdPerMillionTokens);
         this.outputUsdPerMillionTokens = Math.max(0, outputUsdPerMillionTokens);
+        this.outputGuardPolicy = outputGuardPolicy == null
+                ? OutputGuardPolicy.REPAIR_THEN_DEGRADE : outputGuardPolicy;
+        this.contextEvents = contextEvents == null ? ContextEventRecorder.NOOP : contextEvents;
+        this.clock = clock == null ? Clock.systemUTC() : clock;
     }
 
     @Override
@@ -91,34 +122,53 @@ public final class OpenAiCompatibleLlmClient implements LlmClient {
         Duration requestTimeout = context.decisionContext().remaining().compareTo(timeout) < 0
                 ? context.decisionContext().remaining()
                 : timeout;
-        Map<String, Object> body = new LinkedHashMap<>();
-        body.put("model", model);
-        body.put("temperature", 0);
-        body.put("response_format", Map.of("type", "json_object"));
-        body.put("messages", context.messages().stream().map(OpenAiCompatibleLlmClient::message).toList());
-        HttpRequest.Builder request = HttpRequest.newBuilder(endpoint)
-                .timeout(requestTimeout)
-                .header("Content-Type", "application/json")
-                .POST(HttpRequest.BodyPublishers.ofString(writeJson(body)));
-        if (!apiKey.isBlank()) {
-            request.header("Authorization", "Bearer " + apiKey);
-        }
+        List<Map<String, Object>> messages = new java.util.ArrayList<>(
+                context.messages().stream().map(OpenAiCompatibleLlmClient::message).toList());
         try {
-            HttpResponse<String> response = httpClient.send(
-                    request.build(), HttpResponse.BodyHandlers.ofString());
-            if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                throw new IllegalStateException("LLM provider returned HTTP " + response.statusCode());
+            ProviderResult provider = send(messages, requestTimeout, cancellationToken);
+            LlmUsage totalUsage = provider.usage();
+            int repairs = 0;
+            while (true) {
+                cancellationToken.throwIfCancelled();
+                try {
+                    AgentDecision decision = parseDecision(
+                            provider.assistant().decisionContent(), context);
+                    record(ContextEvent.Type.OUTPUT_ACCEPTED, context,
+                            repairs == 0 ? "VALID_FIRST_OUTPUT" : "REPAIRED_OUTPUT");
+                    return new LlmCallResult(
+                            decision,
+                            totalUsage,
+                            new AgentAssistantContent(
+                                    provider.assistant().decisionContent(),
+                                    provider.assistant().reasoningContent(),
+                                    false));
+                } catch (AgentCancellationException cancelled) {
+                    throw cancelled;
+                } catch (RuntimeException invalidOutput) {
+                    if (repairs < outputGuardPolicy.maxRepairAttempts()) {
+                        repairs++;
+                        record(ContextEvent.Type.OUTPUT_REPAIR, context, "INVALID_STRUCTURED_OUTPUT");
+                        messages = repairMessages(
+                                context,
+                                provider.assistant().decisionContent(),
+                                invalidOutput);
+                        provider = send(messages, requestTimeout, cancellationToken);
+                        totalUsage = totalUsage.plus(provider.usage());
+                        continue;
+                    }
+                    if (outputGuardPolicy.exhaustedAction()
+                            == OutputGuardPolicy.ExhaustedAction.DEGRADE) {
+                        record(ContextEvent.Type.OUTPUT_DEGRADED, context, "REPAIR_EXHAUSTED");
+                        return new LlmCallResult(
+                                new AgentDecision.Fallback("LLM_OUTPUT_INVALID"),
+                                totalUsage,
+                                AgentAssistantContent.EMPTY);
+                    }
+                    record(ContextEvent.Type.OUTPUT_EXHAUSTED, context, "REPAIR_EXHAUSTED");
+                    throw new AgentModelOutputException(
+                            "LLM_OUTPUT_GUARD_EXHAUSTED", invalidOutput);
+                }
             }
-            cancellationToken.throwIfCancelled();
-            Map<String, Object> responseBody = readMap(response.body());
-            AssistantPayload assistant = extractAssistant(responseBody);
-            return new LlmCallResult(
-                    parseDecision(assistant.decisionContent(), context),
-                    usage(responseBody),
-                    new AgentAssistantContent(
-                            assistant.decisionContent(),
-                            assistant.reasoningContent(),
-                            false));
         } catch (InterruptedException interrupted) {
             Thread.currentThread().interrupt();
             CancellationCause cause = cancellationToken.cause();
@@ -129,6 +179,96 @@ public final class OpenAiCompatibleLlmClient implements LlmClient {
         } catch (IOException error) {
             throw new IllegalStateException("LLM provider call failed", error);
         }
+    }
+
+    private ProviderResult send(
+            List<Map<String, Object>> messages,
+            Duration requestTimeout,
+            CancellationToken cancellationToken) throws IOException, InterruptedException {
+        cancellationToken.throwIfCancelled();
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("model", model);
+        body.put("temperature", 0);
+        body.put("response_format", Map.of("type", "json_object"));
+        body.put("messages", messages);
+        HttpRequest.Builder request = HttpRequest.newBuilder(endpoint)
+                .timeout(requestTimeout)
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(writeJson(body)));
+        if (!apiKey.isBlank()) {
+            request.header("Authorization", "Bearer " + apiKey);
+        }
+        HttpResponse<String> response = httpClient.send(
+                request.build(), HttpResponse.BodyHandlers.ofString());
+        if (isContextOverflow(response.statusCode(), response.body())) {
+            throw new ContextOverflowException(response.statusCode());
+        }
+        if (response.statusCode() < 200 || response.statusCode() >= 300) {
+            throw new IllegalStateException("LLM provider returned HTTP " + response.statusCode());
+        }
+        cancellationToken.throwIfCancelled();
+        Map<String, Object> responseBody = readMap(response.body());
+        return new ProviderResult(extractAssistant(responseBody), usage(responseBody));
+    }
+
+    private List<Map<String, Object>> repairMessages(
+            AssembledContext context,
+            String invalidOutput,
+            RuntimeException error) {
+        List<Map<String, Object>> repaired = new java.util.ArrayList<>(
+                context.messages().stream().map(OpenAiCompatibleLlmClient::message).toList());
+        repaired.add(Map.of(
+                "role", "user",
+                "content", "[output_repair] 上一个输出不是合法的 Agent Decision。"
+                        + "只返回一个 JSON 对象，action 只能是 call_tool、call_tools、complete、clarify、fallback。"
+                        + "不要解释，不要使用 Markdown。error=" + stableOutputError(error)
+                        + " invalid_output=" + clip(invalidOutput, 4_000)));
+        return List.copyOf(repaired);
+    }
+
+    private void record(ContextEvent.Type type, AssembledContext context, String reason) {
+        var request = context.decisionContext().request();
+        contextEvents.record(new ContextEvent(
+                type,
+                request.sessionId(),
+                request.requestId(),
+                context.estimatedTokens(),
+                context.budgetTokens(),
+                reason,
+                clock.instant()));
+    }
+
+    private static boolean isContextOverflow(int status, String body) {
+        if (status == 413) {
+            return true;
+        }
+        if (status != 400 || body == null) {
+            return false;
+        }
+        String normalized = body.toLowerCase(java.util.Locale.ROOT);
+        return normalized.contains("context_length_exceeded")
+                || normalized.contains("context length")
+                || normalized.contains("maximum context")
+                || normalized.contains("context window")
+                || normalized.contains("prompt is too long")
+                || normalized.contains("input is too long")
+                || normalized.contains("too many tokens")
+                || normalized.contains("reduce the length");
+    }
+
+    private static String stableOutputError(RuntimeException error) {
+        if (error.getCause() instanceof JsonProcessingException) {
+            return "INVALID_JSON";
+        }
+        return error instanceof IllegalArgumentException
+                ? "INVALID_FIELD" : "INVALID_DECISION";
+    }
+
+    private static String clip(String value, int maxLength) {
+        if (value == null || value.length() <= maxLength) {
+            return value == null ? "" : value;
+        }
+        return value.substring(0, maxLength) + "…";
     }
 
     private LlmUsage usage(Map<String, Object> response) {
@@ -275,5 +415,8 @@ public final class OpenAiCompatibleLlmClient implements LlmClient {
     }
 
     private record AssistantPayload(String decisionContent, String reasoningContent) {
+    }
+
+    private record ProviderResult(AssistantPayload assistant, LlmUsage usage) {
     }
 }

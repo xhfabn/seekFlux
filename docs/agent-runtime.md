@@ -6,7 +6,7 @@
 
 SeekFlux 没有依赖 Ark-Leto 二进制或源码。当前实现参考《Ark-Leto 框架内核 与 Agentspark 主链路 原理详解》中的主链路、会话事件和执行权思想，自行实现内部 Runtime。类名相似只代表设计映射，不代表复制或集成了未提供的框架。
 
-Phase 1 已证明业务无关、有界、可追踪、能稳定回退的运行内核；Phase 2 完成 Query Mode、多轮约束、动态并行 Tool、OpenAI-compatible Provider Adapter 和复杂 Query Eval；Phase 3 已补齐 fencing、失主接管、跨实例取消、事务 Outbox、故障注入、Shadow 与成本计量边界。后续 AR-1～AR-5 已进一步完成原因化取消、完整消息历史、精确恢复、`MUTATING` Tool 副作用账本和持久 Steer Queue/Drain。
+Phase 1 已证明业务无关、有界、可追踪、能稳定回退的运行内核；Phase 2 完成 Query Mode、多轮约束、动态并行 Tool、OpenAI-compatible Provider Adapter 和复杂 Query Eval；Phase 3 已补齐 fencing、失主接管、跨实例取消、事务 Outbox、故障注入、Shadow 与成本计量边界。后续 AR-1～AR-6 已进一步完成原因化取消、完整消息历史、精确恢复、`MUTATING` Tool 副作用账本、持久 Steer Queue/Drain，以及上下文预算/压缩、400/413 重试和 OutputGuard。
 
 ## 2. 模块职责
 
@@ -212,6 +212,14 @@ Tool 决策与对应 Assistant 在 journal 中先落为 `DECIDED`；真正提交
 
 当前统一内部入口由版本化 `ResumeIngress` 表达，已接入 `USER_MESSAGE` 与 `CRASH_RECOVERY`；HITL、异步任务、Waitpoint 和 Child Agent 只保留枚举扩展位，不宣称状态机已经实现。恢复逻辑契约见 [`agent-recovery-v1.schema.json`](../contracts/events/agent-recovery-v1.schema.json)。
 
+### 6.3 上下文治理与输出保护
+
+`ContextLayer` 显式区分稳定前缀、Agent 运行指令、动态能力与完整 Tool Schema、Workspace、压缩摘要、历史消息和本轮 recall；无状态 `ContextRenderer` 展平这些层并按完整消息估算 Token。System、当前 User、最近完整 turn 和本轮 recall 不参与无摘要截断；历史只在完整 turn 边界推进 cutoff，因此 Assistant Tool Call 与对应 ToolResult 不会被拆开。
+
+`DefaultContextEngine` 每次 assemble 只读取一次最新 `CompactionSummary`，并依据 `ContextWindowPolicy` 选择 `NONE/ASYNC/SYNC`。ASYNC 使用有界单线程执行器和 Session single-flight；硬限额或 Provider overflow 使用确定性 Skeleton 强压缩。摘要先追加到 PostgreSQL `agent.context_compactions`，以 `fromExclusive → inclusiveCutoff` 连续推进，当前没有另设 Redis 热投影。压缩不能继续时保留受保护上下文并发出 `COMPACTION_NOOP/COMPACTION_EXHAUSTED`，禁止用删除原文但不产摘要的截断伪装成功。逻辑契约见 [`agent-context-compaction-v1.schema.json`](../contracts/events/agent-context-compaction-v1.schema.json)。
+
+同步 OpenAI-compatible Adapter 把无模型输出的 HTTP 413，以及带已知上下文超长 marker 的 HTTP 400 映射为 `ContextOverflowException`。`DefaultAgentLoop` 最多按配置以 `OVERFLOW_FALLBACK` 重组并重试，耗尽后稳定映射为 `LLM_CONTEXT_OVERFLOW_EXHAUSTED`；同步协议不存在已发 chunk 后重试。结构化 Decision 的 OutputGuard 支持 accept、有限 repair、degrade 和 fail；repair 使用原请求 Deadline 与 CancellationToken，降级不会把非法原始文本写进 Assistant 历史。格式保护与业务内容安全分层，内容安审应通过独立策略 Adapter 接入。生命周期契约见 [`agent-context-event-v1.schema.json`](../contracts/events/agent-context-event-v1.schema.json)。
+
 ## 7. Search Agent
 
 当前提供两个 AgentDef：
@@ -261,6 +269,6 @@ python3 evals/run_agent_reliability_eval.py
 
 固定 `direct-search-v1` 六 Query 基线上，强制 Agent 与 Direct 的 `Recall@5/MRR@5/nDCG@5` 均为 `1.0`，证明基础复用没有回归。`complex-search-v1` 的六条关键词陷阱 Query 中，Direct `MRR@1/Recall@1=0.0`，Agent `MRR@1/Recall@1=1.0`；Tool 选择、任务完成、简单 Direct 路由和多轮版本测试全部通过。
 
-`agent-reliability-v1` 固定评测证明单写者、fencing 单调、重复请求无额外 Tool 事件、事务 Outbox、幂等审计、Shadow 主结果隔离和快速关闭；12 次样本可用性 `1.0`，P95 `226.402 ms`，Fallback `0.0`。旧 owner、跨实例取消、停机取消、模型/Tool 在途取消、取消后禁止下一轮、OpenAI 调用中断、模型/Tool 故障和 Bulkhead 另有自动化测试。AR-3 增加 PRE/POST/终态 Checkpoint、模型后、Tool 提交/结果和未知写 Tool 的固定崩溃测试；AR-4 增加请求前、外部成功未确认、账本成功未推进 Session 和重复恢复测试；AR-5 增加 STEER/QUEUE、容量、FIFO 批量提升、最后意图、幂等、崩溃恢复和 drain 失权测试。隔离 PostgreSQL 17 已顺序执行 V1～V12，并验证排队消息的生命周期唯一约束。
+`agent-reliability-v1` 固定评测证明单写者、fencing 单调、重复请求无额外 Tool 事件、事务 Outbox、幂等审计、Shadow 主结果隔离和快速关闭；12 次样本可用性 `1.0`，P95 `226.402 ms`，Fallback `0.0`。旧 owner、跨实例取消、停机取消、模型/Tool 在途取消、取消后禁止下一轮、OpenAI 调用中断、模型/Tool 故障和 Bulkhead 另有自动化测试。AR-3 增加 PRE/POST/终态 Checkpoint、模型后、Tool 提交/结果和未知写 Tool 的固定崩溃测试；AR-4 增加请求前、外部成功未确认、账本成功未推进 Session 和重复恢复测试；AR-5 增加 STEER/QUEUE、容量、FIFO 批量提升、最后意图、幂等、崩溃恢复和 drain 失权测试；AR-6 增加长上下文完整轮次、摘要 no-gap、ASYNC single-flight、400/413 有界重试、OutputGuard 和 repair 取消测试。隔离 PostgreSQL 17 已顺序执行 V1～V13，并真实插入版本化摘要。
 
-对照 Ark-Leto 后仍未完成的是上下文压缩、413 重试、OutputGuard、实时 Push/SSE、HITL、Handoff、子 Agent、MCP/Skill/Graph 和完整 OTel。写 Tool 已有持久账本与 reconciliation 协议，但每个真实写 Tool 仍必须依据其外部系统能力实现状态查询或补偿，框架不能把不支持查询/幂等的外部接口变安全。真实付费 Provider 基线也需要部署方端点和密钥；当前报告不伪造 Token/成本。完整取舍见 [ADR-006](adr/ADR-006-agent-reliability-fencing-outbox-shadow.md)。
+对照 Ark-Leto 后仍未完成的是实时 Push/SSE、HITL、Handoff、子 Agent、MCP/Skill/Graph 和完整 OTel。当前压缩器是确定性 Skeleton，不包含模型摘要器或 Redis 热投影；流式协议中的首 chunk、已输出后失败和背压语义属于 AR-7。写 Tool 已有持久账本与 reconciliation 协议，但每个真实写 Tool 仍必须依据其外部系统能力实现状态查询或补偿，框架不能把不支持查询/幂等的外部接口变安全。真实付费 Provider 基线也需要部署方端点与密钥；当前报告不伪造 Token/成本。完整取舍见 [ADR-006](adr/ADR-006-agent-reliability-fencing-outbox-shadow.md)。

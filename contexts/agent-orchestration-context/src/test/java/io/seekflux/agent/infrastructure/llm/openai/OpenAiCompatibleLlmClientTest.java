@@ -1,6 +1,7 @@
 package io.seekflux.agent.infrastructure.llm.openai;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.sun.net.httpserver.HttpServer;
@@ -12,11 +13,19 @@ import io.seekflux.platform.agentruntime.domain.model.tool.AgentToolResult;
 import io.seekflux.platform.agentruntime.application.spi.capability.llm.model.AssembledContext;
 import io.seekflux.platform.agentruntime.application.spi.capability.llm.model.ContextMessage;
 import io.seekflux.platform.agentruntime.domain.exception.AgentCancellationException;
+import io.seekflux.platform.agentruntime.domain.exception.AgentModelOutputException;
+import io.seekflux.platform.agentruntime.domain.exception.ContextOverflowException;
+import io.seekflux.platform.agentruntime.application.spi.business.output.OutputGuardPolicy;
+import io.seekflux.platform.agentruntime.domain.model.context.ContextEvent;
 import io.seekflux.platform.agentruntime.domain.model.execution.CancellationCause;
 import io.seekflux.platform.agentruntime.domain.model.execution.CancellationToken;
 import java.net.InetSocketAddress;
 import java.net.http.HttpClient;
 import java.time.Duration;
+import java.time.Clock;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
@@ -24,6 +33,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
 class OpenAiCompatibleLlmClientTest {
@@ -244,5 +254,245 @@ class OpenAiCompatibleLlmClientTest {
             executor.shutdownNow();
             server.stop(0);
         }
+    }
+
+    @Test
+    void repairsOneInvalidStructuredOutputAndRecordsTheGuardLifecycle() throws Exception {
+        ObjectMapper objectMapper = new ObjectMapper();
+        AtomicInteger calls = new AtomicInteger();
+        AtomicReference<String> repairBody = new AtomicReference<>();
+        List<ContextEvent> events = new ArrayList<>();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/chat/completions", exchange -> {
+            String body = new String(exchange.getRequestBody().readAllBytes(),
+                    java.nio.charset.StandardCharsets.UTF_8);
+            int call = calls.incrementAndGet();
+            if (call == 2) {
+                repairBody.set(body);
+            }
+            String content = call == 1
+                    ? "not-json"
+                    : "{\"action\":\"clarify\",\"question\":\"请补充地点\"}";
+            byte[] response = objectMapper.writeValueAsBytes(Map.of(
+                    "choices", List.of(Map.of("message", Map.of("content", content))),
+                    "usage", Map.of("prompt_tokens", 10, "completion_tokens", 5, "total_tokens", 15)));
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        server.start();
+        try {
+            OpenAiCompatibleLlmClient client = guardedClient(
+                    server, objectMapper, OutputGuardPolicy.REPAIR_THEN_DEGRADE, events);
+
+            var result = client.chatWithUsage(context("request-repair"));
+
+            assertThat(result.decision()).isEqualTo(new AgentDecision.Clarify("请补充地点"));
+            assertThat(result.usage().totalTokens()).isEqualTo(30);
+            assertThat(calls.get()).isEqualTo(2);
+            assertThat(repairBody.get()).contains("output_repair", "not-json");
+            assertThat(events).extracting(ContextEvent::type).containsExactly(
+                    ContextEvent.Type.OUTPUT_REPAIR,
+                    ContextEvent.Type.OUTPUT_ACCEPTED);
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void degradesAfterTheConfiguredOutputRepairAttemptsAreExhausted() throws Exception {
+        ObjectMapper objectMapper = new ObjectMapper();
+        List<ContextEvent> events = new ArrayList<>();
+        HttpServer server = invalidOutputServer(objectMapper);
+        server.start();
+        try {
+            OpenAiCompatibleLlmClient client = guardedClient(
+                    server,
+                    objectMapper,
+                    new OutputGuardPolicy(1, OutputGuardPolicy.ExhaustedAction.DEGRADE),
+                    events);
+
+            var result = client.chatWithUsage(context("request-degrade"));
+
+            assertThat(result.decision()).isEqualTo(
+                    new AgentDecision.Fallback("LLM_OUTPUT_INVALID"));
+            assertThat(result.assistantContent()).isEqualTo(
+                    io.seekflux.platform.agentruntime.domain.model.message.AgentAssistantContent.EMPTY);
+            assertThat(events).extracting(ContextEvent::type).contains(
+                    ContextEvent.Type.OUTPUT_REPAIR,
+                    ContextEvent.Type.OUTPUT_DEGRADED);
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void interruptedRepairCallPreservesTheCancellationCause() throws Exception {
+        ObjectMapper objectMapper = new ObjectMapper();
+        AtomicInteger calls = new AtomicInteger();
+        CountDownLatch repairEntered = new CountDownLatch(1);
+        CountDownLatch releaseRepair = new CountDownLatch(1);
+        List<ContextEvent> events = new ArrayList<>();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/chat/completions", exchange -> {
+            if (calls.incrementAndGet() == 1) {
+                byte[] response = objectMapper.writeValueAsBytes(Map.of(
+                        "choices", List.of(Map.of("message", Map.of("content", "invalid")))));
+                exchange.sendResponseHeaders(200, response.length);
+                exchange.getResponseBody().write(response);
+                exchange.close();
+                return;
+            }
+            repairEntered.countDown();
+            try {
+                releaseRepair.await(5, TimeUnit.SECONDS);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+            } finally {
+                exchange.close();
+            }
+        });
+        server.start();
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        try {
+            OpenAiCompatibleLlmClient client = guardedClient(
+                    server, objectMapper, OutputGuardPolicy.REPAIR_THEN_DEGRADE, events);
+            CancellationToken token = new CancellationToken();
+            AtomicReference<Thread> caller = new AtomicReference<>();
+
+            var result = executor.submit(() -> {
+                caller.set(Thread.currentThread());
+                try {
+                    client.chatWithUsage(context("request-repair-cancel"), token);
+                    return null;
+                } catch (AgentCancellationException cancelled) {
+                    return cancelled.cancellationCause();
+                }
+            });
+            assertThat(repairEntered.await(1, TimeUnit.SECONDS)).isTrue();
+
+            token.cancel(CancellationCause.USER_CANCEL);
+            caller.get().interrupt();
+
+            assertThat(result.get(1, TimeUnit.SECONDS)).isEqualTo(CancellationCause.USER_CANCEL);
+            assertThat(events).extracting(ContextEvent::type)
+                    .containsExactly(ContextEvent.Type.OUTPUT_REPAIR);
+        } finally {
+            releaseRepair.countDown();
+            executor.shutdownNow();
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void returnsAStableFailureWhenOutputGuardIsConfiguredToFailClosed() throws Exception {
+        ObjectMapper objectMapper = new ObjectMapper();
+        List<ContextEvent> events = new ArrayList<>();
+        HttpServer server = invalidOutputServer(objectMapper);
+        server.start();
+        try {
+            OpenAiCompatibleLlmClient client = guardedClient(
+                    server,
+                    objectMapper,
+                    new OutputGuardPolicy(0, OutputGuardPolicy.ExhaustedAction.FAIL),
+                    events);
+
+            assertThatThrownBy(() -> client.chatWithUsage(context("request-fail")))
+                    .isInstanceOfSatisfying(AgentModelOutputException.class, error ->
+                            assertThat(error.code()).isEqualTo("LLM_OUTPUT_GUARD_EXHAUSTED"));
+            assertThat(events).extracting(ContextEvent::type)
+                    .containsExactly(ContextEvent.Type.OUTPUT_EXHAUSTED);
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void classifiesOnlyPreOutput400Or413ContextOverflowForTheLoopRetry() throws Exception {
+        ObjectMapper objectMapper = new ObjectMapper();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/chat/completions", exchange -> {
+            byte[] response = "{\"error\":{\"code\":\"context_length_exceeded\"}}"
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(400, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        server.start();
+        try {
+            OpenAiCompatibleLlmClient client = guardedClient(
+                    server, objectMapper, OutputGuardPolicy.REPAIR_THEN_DEGRADE, new ArrayList<>());
+
+            assertThatThrownBy(() -> client.chatWithUsage(context("request-overflow")))
+                    .isInstanceOfSatisfying(ContextOverflowException.class, error ->
+                            assertThat(error.statusCode()).isEqualTo(400));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void classifiesAnyProvider413AsContextOverflow() throws Exception {
+        ObjectMapper objectMapper = new ObjectMapper();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/chat/completions", exchange -> {
+            byte[] response = "payload too large".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            exchange.sendResponseHeaders(413, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        server.start();
+        try {
+            OpenAiCompatibleLlmClient client = guardedClient(
+                    server, objectMapper, OutputGuardPolicy.REPAIR_THEN_DEGRADE, new ArrayList<>());
+
+            assertThatThrownBy(() -> client.chatWithUsage(context("request-overflow-413")))
+                    .isInstanceOfSatisfying(ContextOverflowException.class, error ->
+                            assertThat(error.statusCode()).isEqualTo(413));
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    private static OpenAiCompatibleLlmClient guardedClient(
+            HttpServer server,
+            ObjectMapper objectMapper,
+            OutputGuardPolicy policy,
+            List<ContextEvent> events) {
+        return new OpenAiCompatibleLlmClient(
+                HttpClient.newHttpClient(),
+                objectMapper,
+                java.net.URI.create("http://127.0.0.1:" + server.getAddress().getPort()
+                        + "/v1/chat/completions"),
+                "",
+                "test-model",
+                Duration.ofSeconds(1),
+                0,
+                0,
+                policy,
+                events::add,
+                Clock.fixed(Instant.parse("2026-09-16T00:00:00Z"), ZoneOffset.UTC));
+    }
+
+    private static AssembledContext context(String requestId) {
+        AgentRunRequest run = new AgentRunRequest(
+                requestId, "session-guard", "turn-guard", "帮我找内容", Map.of());
+        return new AssembledContext(
+                new AgentDecisionContext(run, 1, Duration.ofSeconds(1), List.of()),
+                List.of(new ContextMessage("user", "帮我找内容")),
+                "guard-spec",
+                12);
+    }
+
+    private static HttpServer invalidOutputServer(ObjectMapper objectMapper) throws Exception {
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/chat/completions", exchange -> {
+            byte[] response = objectMapper.writeValueAsBytes(Map.of(
+                    "choices", List.of(Map.of("message", Map.of("content", "still-invalid")))));
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        return server;
     }
 }

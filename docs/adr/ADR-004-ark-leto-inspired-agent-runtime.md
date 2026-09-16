@@ -2,7 +2,7 @@
 
 - 状态：Accepted
 - 日期：2026-08-08
-- 最近更新：2026-09-14
+- 最近更新：2026-09-16
 
 ## 背景
 
@@ -23,12 +23,14 @@
 9. HTTP 接口继续使用 Spring MVC 同步 JSON。Agent 内部仅在命名、有界线程池中执行模型决策和 Tool；不向 Controller、Context Port 或领域对象暴露 `Mono`/`Flux`。
 10. 首期使用可复现的 `DeterministicSearchLlmClient` 验证编排、追问、工具和 Trace，不把它宣称为真实大模型能力。后续真实模型只新增 `LlmClient` Adapter，不改 Runtime Core。
 11. 技术和业务适配器不由进程宿主持有，但也不额外拆成同级 Infrastructure 模块：Runtime 执行权、取消和 Shadow 配置等通用默认实现归入 `platform/agent-runtime/infrastructure`；Search Agent 的 Runtime 映射、Tool、Direct Search、投影、确定性决策、OpenAI-compatible Provider 和指标归入 `contexts/agent-orchestration-context/infrastructure`。`apps/agent-server` 只保留 `interfaces/rest`、Spring Boot 启动与组合装配；Server 是部署宿主，不是第三个业务层。
+12. Context 采用显式 Layer 和无状态 Renderer；完整消息与 Tool Schema 一起计量。长历史只能按完整 turn 以版本化摘要和 inclusive cutoff 压缩，禁止没有覆盖摘要的硬截断。摘要先写 PostgreSQL 共享事实；当前不设置热投影，未来如增加只能在事实提交后更新。
+13. 同步 Provider 只有在任何模型输出产生前的 400/413 上下文溢出才允许强压缩有界重试；结构化输出格式错误由有限 OutputGuard repair/degrade/fail 处理并响应同一取消 token。内容安全是独立业务策略，不由格式 Guard 冒充。
 
 ## Phase 1 范围与后续演进
 
 Phase 1 已实现单进程同步请求中的有限步 Loop、Redis 执行权、PostgreSQL Session/Run 事件、Redis 热投影、取消入口、两个 AgentDef、Search Tool、Direct Fallback 与对照 Eval。
 
-Phase 2 后续完成了 Provider Adapter、Query Mode Router、多轮 `ConstraintPatch`、动态工具集和并行 Tool fan-out，具体决策见 [ADR-005](ADR-005-complex-search-agent-routing-and-state.md)。Phase 3 又完成 fencing、失主接管、跨实例取消、事务 Outbox、故障注入、Shadow 和成本计量，具体决策与 Ark-Leto 反向核对见 [ADR-006](ADR-006-agent-reliability-fencing-outbox-shadow.md)。2026-09-13 补齐了 Assistant/ToolResult Workspace 事实、多视图契约和完整多轮历史，2026-09-14 又完成 PRE/POST/终态 Checkpoint、pending Tool journal 与有限恢复动作。仍未完成的是 steer 先入队后取消、写 Tool 副作用账本、上下文压缩、SSE/流式 Push、HITL、子 Agent、Handoff、MCP 和完整 OpenTelemetry 串联。
+Phase 2 后续完成了 Provider Adapter、Query Mode Router、多轮 `ConstraintPatch`、动态工具集和并行 Tool fan-out，具体决策见 [ADR-005](ADR-005-complex-search-agent-routing-and-state.md)。Phase 3 又完成 fencing、失主接管、跨实例取消、事务 Outbox、故障注入、Shadow 和成本计量，具体决策与 Ark-Leto 反向核对见 [ADR-006](ADR-006-agent-reliability-fencing-outbox-shadow.md)。2026-09-13～16 继续补齐 Assistant/ToolResult 完整历史、Checkpoint/pending Tool、写副作用账本、Steer Queue/Drain，以及上下文预算/压缩、400/413 重试和 OutputGuard。仍未完成的是 SSE/流式 Push、HITL、子 Agent、Handoff、MCP 和完整 OpenTelemetry 串联。
 
 ## 后果
 
@@ -40,3 +42,4 @@ Phase 2 后续完成了 Provider Adapter、Query Mode Router、多轮 `Constrain
 - 一轮 Assistant/ToolResult 与终态仍在同一 fencing 事务提交，读取方不会观察到孤立 ToolResult 或半轮消息；提交前的模型/Tool 进度由独立 Checkpoint 和 journal 恢复，已完成 Tool 不再要求整轮重跑。两类恢复事实只有在 Outcome/Outbox 同事务成功后才清理。
 - Redis 承担执行权、取消信号、Shadow 开关与热投影；PostgreSQL 保留事实源。多副本恢复正确性由 fencing、强一致重放、事务 Outbox 和故障测试共同保证，而不是只依赖租约。
 - 默认决策结果是确定性的，适合学习和回归；OpenAI-compatible Adapter 的存在仍不等于已经证明真实大模型理解效果。
+- 确定性 Skeleton 摘要保证 cutoff 与 Tool 语义完整，代价是摘要质量不等同于模型摘要；当前直接强读 PostgreSQL 避免热投影一致性问题，但长会话极高吞吐下的读扩展需另行评估。

@@ -1261,6 +1261,12 @@ public final class AgentRuntime {
         if (error instanceof AgentCallGuard.CallRejectedException rejected) {
             return rejected.code();
         }
+        if (error instanceof io.seekflux.platform.agentruntime.domain.exception.AgentModelOutputException output) {
+            return output.code();
+        }
+        if (error instanceof io.seekflux.platform.agentruntime.domain.exception.ContextOverflowException) {
+            return "LLM_CONTEXT_OVERFLOW_EXHAUSTED";
+        }
         return fallback;
     }
 

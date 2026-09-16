@@ -15,6 +15,7 @@ import io.seekflux.agent.infrastructure.llm.openai.OpenAiCompatibleLlmClient;
 import io.seekflux.agent.infrastructure.observability.AgentExecutionMetrics;
 import io.seekflux.agent.infrastructure.observability.MicrometerAgentExecutionMetrics;
 import io.seekflux.agent.infrastructure.observability.MicrometerToolExecutionObserver;
+import io.seekflux.agent.infrastructure.observability.MicrometerContextEventRecorder;
 import io.seekflux.agent.infrastructure.projection.RedisAgentSessionProjection;
 import io.seekflux.agent.infrastructure.runtime.AgentRuntimeExecutionAdapter;
 import io.seekflux.agent.infrastructure.search.DirectSearchExecutionAdapter;
@@ -58,6 +59,11 @@ import io.seekflux.platform.agentruntime.domain.service.router.DefaultRouter;
 import io.seekflux.platform.agentruntime.application.api.Router;
 import io.seekflux.platform.agentruntime.application.spi.capability.session.AgentSessionStore;
 import io.seekflux.platform.agentruntime.application.spi.capability.session.AgentRecoveryStore;
+import io.seekflux.platform.agentruntime.application.spi.capability.context.ContextCompactionStore;
+import io.seekflux.platform.agentruntime.application.spi.capability.context.ContextEventRecorder;
+import io.seekflux.platform.agentruntime.application.spi.business.output.OutputGuardPolicy;
+import io.seekflux.platform.agentruntime.domain.model.context.ContextCompactionMode;
+import io.seekflux.platform.agentruntime.domain.model.context.ContextWindowPolicy;
 import io.seekflux.search.port.in.SearchUseCase;
 import java.time.Clock;
 import java.time.Duration;
@@ -89,6 +95,11 @@ class AgentRuntimeConfiguration {
         return new MicrometerAgentExecutionMetrics(meterRegistry);
     }
 
+    @Bean
+    ContextEventRecorder contextEventRecorder(MeterRegistry meterRegistry) {
+        return new MicrometerContextEventRecorder(meterRegistry);
+    }
+
     @Bean(name = "agentExecutionExecutor", destroyMethod = "shutdown")
     ExecutorService agentExecutionExecutor(
             @Value("${seekflux.agent.execution-pool.core-size:2}") int coreSize,
@@ -112,6 +123,13 @@ class AgentRuntimeConfiguration {
             @Value("${seekflux.agent.shadow.queue-capacity:20}") int queueCapacity) {
         return AgentSearchConfiguration.boundedExecutor(
                 "seekflux-agent-shadow-", 1, 1, queueCapacity);
+    }
+
+    @Bean(name = "agentContextCompactionExecutor", destroyMethod = "shutdown")
+    ExecutorService agentContextCompactionExecutor(
+            @Value("${seekflux.agent.context.async-queue-capacity:20}") int queueCapacity) {
+        return AgentSearchConfiguration.boundedExecutor(
+                "seekflux-agent-context-", 1, 1, queueCapacity);
     }
 
     @Bean
@@ -214,8 +232,34 @@ class AgentRuntimeConfiguration {
     @Bean
     ContextEngine agentContextEngine(
             PromptResolver agentPromptResolver,
-            AgentToolRegistry agentToolRegistry) {
-        return new DefaultContextEngine(agentPromptResolver, agentToolRegistry);
+            AgentToolRegistry agentToolRegistry,
+            ContextCompactionStore contextCompactionStore,
+            ContextEventRecorder contextEventRecorder,
+            @Qualifier("agentContextCompactionExecutor") ExecutorService contextExecutor,
+            Clock agentClock,
+            @Value("${seekflux.agent.context.max-input-tokens:8192}") int maxTokens,
+            @Value("${seekflux.agent.context.target-input-tokens:6144}") int targetTokens,
+            @Value("${seekflux.agent.context.overflow-input-tokens:4096}") int overflowTokens,
+            @Value("${seekflux.agent.context.recent-turns:2}") int recentTurns,
+            @Value("${seekflux.agent.context.compaction-mode:SYNC}") String compactionMode,
+            @Value("${seekflux.agent.context.compaction-timeout-ms:500}") long compactionTimeoutMillis,
+            @Value("${seekflux.agent.context.overflow-retry-limit:1}") int overflowRetryLimit) {
+        ContextWindowPolicy policy = new ContextWindowPolicy(
+                maxTokens,
+                targetTokens,
+                overflowTokens,
+                recentTurns,
+                ContextCompactionMode.valueOf(compactionMode.trim().toUpperCase(java.util.Locale.ROOT)),
+                Duration.ofMillis(compactionTimeoutMillis),
+                overflowRetryLimit);
+        return new DefaultContextEngine(
+                agentPromptResolver,
+                agentToolRegistry,
+                contextCompactionStore,
+                contextEventRecorder,
+                policy,
+                contextExecutor,
+                agentClock);
     }
 
     @Bean
@@ -244,8 +288,10 @@ class AgentRuntimeConfiguration {
     AgentLoop defaultAgentLoop(
             AgentRuntime finiteStepAgentRuntime,
             ContextEngine agentContextEngine,
-            Clock agentClock) {
-        return new DefaultAgentLoop(finiteStepAgentRuntime, agentContextEngine, agentClock);
+            Clock agentClock,
+            ContextEventRecorder contextEventRecorder) {
+        return new DefaultAgentLoop(
+                finiteStepAgentRuntime, agentContextEngine, agentClock, contextEventRecorder);
     }
 
     @Bean
@@ -356,6 +402,9 @@ class AgentRuntimeConfiguration {
             @Value("${seekflux.agent.llm.timeout-ms:1800}") long timeoutMillis,
             @Value("${seekflux.agent.llm.input-usd-per-million-tokens:0}") double inputPrice,
             @Value("${seekflux.agent.llm.output-usd-per-million-tokens:0}") double outputPrice,
+            @Value("${seekflux.agent.llm.output-guard.max-repair-attempts:1}") int outputRepairAttempts,
+            @Value("${seekflux.agent.llm.output-guard.exhausted-action:DEGRADE}") String outputExhaustedAction,
+            ContextEventRecorder contextEventRecorder,
             ShadowControl agentShadowControl,
             @Qualifier("agentShadowExecutor") ExecutorService shadowExecutor,
             AgentShadowRecorder shadowRecorder,
@@ -376,7 +425,13 @@ class AgentRuntimeConfiguration {
                     model,
                     Duration.ofMillis(timeoutMillis),
                     inputPrice,
-                    outputPrice);
+                    outputPrice,
+                    new OutputGuardPolicy(
+                            outputRepairAttempts,
+                            OutputGuardPolicy.ExhaustedAction.valueOf(
+                                    outputExhaustedAction.trim().toUpperCase(java.util.Locale.ROOT))),
+                    contextEventRecorder,
+                    agentClock);
         } else if ("deterministic".equalsIgnoreCase(provider.trim())) {
             primary = new DeterministicSearchLlmClient(clarificationPolicy);
         } else {

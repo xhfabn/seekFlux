@@ -42,6 +42,18 @@ seekflux:
       timeout-ms: ${AGENT_LLM_TIMEOUT_MS:1800}
       input-usd-per-million-tokens: ${AGENT_LLM_INPUT_USD_PER_MILLION_TOKENS:0}
       output-usd-per-million-tokens: ${AGENT_LLM_OUTPUT_USD_PER_MILLION_TOKENS:0}
+      output-guard:
+        max-repair-attempts: ${AGENT_LLM_OUTPUT_REPAIR_ATTEMPTS:1}
+        exhausted-action: ${AGENT_LLM_OUTPUT_EXHAUSTED_ACTION:DEGRADE}
+    context:
+      max-input-tokens: ${AGENT_CONTEXT_MAX_INPUT_TOKENS:8192}
+      target-input-tokens: ${AGENT_CONTEXT_TARGET_INPUT_TOKENS:6144}
+      overflow-input-tokens: ${AGENT_CONTEXT_OVERFLOW_INPUT_TOKENS:4096}
+      recent-turns: ${AGENT_CONTEXT_RECENT_TURNS:2}
+      compaction-mode: ${AGENT_CONTEXT_COMPACTION_MODE:SYNC}
+      compaction-timeout-ms: ${AGENT_CONTEXT_COMPACTION_TIMEOUT_MS:500}
+      overflow-retry-limit: ${AGENT_CONTEXT_OVERFLOW_RETRY_LIMIT:1}
+      async-queue-capacity: ${AGENT_CONTEXT_ASYNC_QUEUE_CAPACITY:20}
     bulkhead:
       max-concurrent-model-calls: ${AGENT_MODEL_MAX_CONCURRENCY:4}
       max-concurrent-tool-calls: ${AGENT_TOOL_MAX_CONCURRENCY:8}

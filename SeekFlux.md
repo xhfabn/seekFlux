@@ -2039,7 +2039,7 @@ token_cost_per_second ≈ Q_agent × (Token_in + Token_out)
 
 退出条件：固定可靠性评测证明同一 Session 单写、fencing 单调、重复请求无额外 Search Tool 事件、失主可恢复、Outbox/审计幂等、Shadow 不改变主结果，并形成版本化可用性/P95/Fallback 报告。
 
-阶段边界：完整 steer 排队、pending Tool Checkpoint、写 Tool 副作用账本、上下文压缩、熔断/多级缓存/硬成本配额和完整 OpenTelemetry 不属于已完成能力。当前 Tool 全部只读；引入任何写 Tool 前必须补副作用账本。真实付费 Provider 基线需要部署方端点和密钥，不能由确定性 Provider 伪造。
+Phase 3 退出时的阶段边界曾包括完整 steer 排队、pending Tool Checkpoint、写 Tool 副作用账本和上下文压缩；这些能力已在后续 AR-3～AR-6 补齐，包括持久 Steer Queue/Drain、写 Tool 账本与 reconciliation、完整消息预算、版本化增量摘要、400/413 有界重试和 OutputGuard。当前产品注册的 Tool 仍全部只读；未来接入真实写 Tool 还必须为目标外部系统实现可靠幂等、状态查询或补偿。熔断、多级缓存、硬成本配额、流式 Push 和完整 OpenTelemetry 仍未完成。真实付费 Provider 基线需要部署方端点和密钥，不能由确定性 Provider 伪造。
 
 ### Phase 4：可选的搜索推荐深化
 

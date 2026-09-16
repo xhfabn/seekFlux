@@ -1,6 +1,6 @@
 # Agent Runtime 演进路线与交付记录
 
-> 文档状态：**AR-1～AR-5 已完成**；当前实施目标为 **AR-6 上下文治理、413 重试和 OutputGuard**。
+> 文档状态：**AR-1～AR-6 已完成**；下一步为 **AR-7 流式模型与实时 Push**。
 >
 > 本文只记录 `platform/agent-runtime` 后续演进的实施顺序、完成门槛和交付证据。写进计划不代表已经实现；只有代码、自动化测试以及必要的真实验收或固定评测共同证明后，阶段状态才能改为“已完成”。
 
@@ -42,7 +42,8 @@
 - Checkpoint、pending Tool journal 与有限 ResumeAction 已支持从安全边界继续；`MUTATING` Tool 通过持久副作用账本、稳定幂等键和 Tool 专属 reconciliation 恢复；
 - `MUTATING` Tool 已有注册/执行双层策略、外部回执、请求/结果摘要及 `PREPARED → EXECUTING → SUCCEEDED/FAILED/UNKNOWN/RECONCILED` 状态机；
 - Steer 已支持有界持久队列、先入队后取消、fencing drain、批量升格、旧信号精确清理和崩溃恢复；
-- 没有上下文压缩、413 溢出修复、OutputGuard、实时流式 Push；
+- 上下文已按显式 Layer 组装并计量完整消息/Tool Schema，支持 `NONE/ASYNC/SYNC` 压缩、持久增量摘要、400/413 强压缩重试与有界 OutputGuard repair；
+- 尚无实时流式 Push；
 - HITL、异步等待点、Handoff、子 Agent、MCP 和 Graph 尚未实现。
 
 ## 3. 实施顺序与依赖
@@ -71,8 +72,8 @@ flowchart TD
 | AR-3 | Checkpoint、pending Tool 与恢复协议 | 已完成 | 大 | AR-2 |
 | AR-4 | Mutating Tool 副作用账本 | 已完成 | 大 | AR-3 |
 | AR-5 | Steer Queue/Drain | 已完成 | 中到大 | AR-1、AR-2 |
-| AR-6 | 上下文压缩、413 重试和 OutputGuard | 下一步 | 大 | AR-2 |
-| AR-7 | 流式调用、实时 Push 与跨实例订阅 | 未开始 | 大 | AR-6 |
+| AR-6 | 上下文压缩、413 重试和 OutputGuard | 已完成 | 大 | AR-2 |
+| AR-7 | 流式调用、实时 Push 与跨实例订阅 | 下一步 | 大 | AR-6 |
 | AR-8 | HITL、异步等待点、Handoff 与子 Agent | 未开始 | 多个独立大阶段 | AR-3、AR-4、AR-7 |
 | AR-9 | Skill/ToolGroup、MCP、Chained/Graph | 后置可选 | 多个独立大阶段 | AR-2/3/4/7，按子阶段区分 |
 
@@ -223,6 +224,8 @@ Checkpoint、journal、Workspace/Run 事件的事务边界和写入顺序必须�
 
 ### AR-6：上下文治理、413 重试和 OutputGuard
 
+状态：**已完成（2026-09-16）**。
+
 目标：在长会话和不稳定模型输出下仍保持输入有界、消息语义完整、失败可解释。
 
 分三个可独立验收的子阶段：
@@ -232,6 +235,8 @@ Checkpoint、journal、Workspace/Run 事件的事务边界和写入顺序必须�
 3. **AR-6C 溢出与输出保护**：仅在首个 chunk/输出产生前识别 Provider 400/413 上下文溢出，进入 `OVERFLOW_FALLBACK` 强压缩后有界重试；OutputGuard 支持 accept/repair/degrade/稳定失败并限制 repair 次数，repair 全程响应取消。业务安审/合规过滤与 OutputGuard 分层，前者通过 Hook/Adapter 接入，不能混成模型格式修复。
 
 完成门槛：固定长会话证明压缩前后 Tool 语义和关键约束不丢失，摘要没有断层且 token 估算包含 Tool Schema；413 最多按配置重试且不会重复输出或副作用；非法最终输出经过有限修复后得到合规结果或稳定错误。每种触发、noop、fallback、exhausted 都有独立 ContextEvent/指标可排查。
+
+实现说明：`ContextLayer/ContextRenderer` 显式区分稳定前缀、运行指令、动态 Tool Schema、Workspace、增量摘要、完整历史和本轮 recall；Renderer 无状态，以完整消息估算预算。`DefaultContextEngine` 在 assemble 入口只读一次摘要元数据，按完整 turn 移动 inclusive cutoff，保留最近完整轮次和 Tool Call/Result 配对，并用有界执行器执行 ASYNC single-flight。V13 的 `agent.context_compactions` 是追加式共享摘要事实，`JdbcContextCompactionStore` 在 Session 行锁下拒绝断层；当前读取直接查询 PostgreSQL，没有另设可能先于事实写入的热投影。硬限额和 `OVERFLOW_FALLBACK` 使用确定性 Skeleton 摘要，不做无摘要截断。同步 OpenAI-compatible 调用只有在收到任何模型输出前的 HTTP 400 marker 或 413 才进入强压缩，默认最多重试一次；非法结构化 Decision 最多 repair 一次，再按配置返回稳定 fallback 或 `LLM_OUTPUT_GUARD_EXHAUSTED`，repair 调用复用同一 CancellationToken。业务内容安审未混入 OutputGuard，仍应由外层策略 Adapter 单独实现。
 
 ### AR-7：流式模型与实时 Push
 
@@ -373,6 +378,17 @@ WorkspaceEvent 仍是恢复事实，PushEvent 只是过程投影；外部 SSE/We
 - 剩余边界：`QUEUE` 等待态消息要等未来 AR-8 的 HITL/Waitpoint resume 才会消费；当前只有进程内 Push 事件，没有 SSE/WebSocket 或跨 Pod 中继；批量策略固定为“当前批次全部升格、最后意图胜出”，尚未提供按业务配置的合并器。
 - 下一步：AR-6A 先完成上下文分层、Token 预算和 Tool Schema 计量，再进入摘要压缩、413 有界重试与 OutputGuard。
 - 关联文档/ADR/契约：[`docs/agent-runtime.md`](../../docs/agent-runtime.md)、[ADR-006](../../docs/adr/ADR-006-agent-reliability-fencing-outbox-shadow.md)、[`agent-steer-queue-v1.schema.json`](../../contracts/events/agent-steer-queue-v1.schema.json)、[`contracts/openapi/seekflux-v1.yaml`](../../contracts/openapi/seekflux-v1.yaml)、`V12__agent_steer_queue.sql`。
+
+### 2026-09-16：完成 AR-6 上下文治理、413 重试和 OutputGuard
+
+- 阶段：AR-6（已完成）；AR-7 调整为下一步。
+- 本轮范围：完成显式上下文 Layer、完整消息与 Tool Schema 预算、增量压缩事实、同步/异步/强制压缩、Provider 溢出重试、结构化输出 repair 与低基数观测。
+- 实现事实与关键入口：新增 `ContextLayer/ContextRenderer/ContextWindowPolicy/CompactionSummary`；`DefaultContextEngine` 按完整 turn 压缩且不拆 Tool Call/Result，ASYNC 使用有界 executor 和 session single-flight；`JdbcContextCompactionStore` 与 V13 保存连续 inclusive cutoff；`DefaultAgentLoop` 只在模型调用抛出 `ContextOverflowException` 后以 `OVERFLOW_FALLBACK` 重组；OpenAI-compatible Adapter 识别 400 marker/413，并按 `OutputGuardPolicy` accept/repair/degrade/fail。
+- 失败/取消/恢复语义：压缩元数据在单次 assemble 内保持同一快照；不能再压缩的受保护上下文不硬截断，而记录 `COMPACTION_NOOP/COMPACTION_EXHAUSTED`；400/413 重试有硬上限，耗尽落 `LLM_CONTEXT_OVERFLOW_EXHAUSTED`；repair 调用期间取消保留原取消原因；降级不把非法模型文本写入 Assistant 历史；内容安全与格式修复保持分层。
+- 验证命令与结果：JDK 21 下 `mvn test` 全仓 26 个 Reactor 模块通过；Agent Runtime 71 个、Agent Orchestration Context 21 个测试无失败。新增测试覆盖长会话完整 turn、Tool 配对与 no-gap cutoff、Tool Schema 计量、ASYNC single-flight、受保护当前轮的 noop/exhausted、400/413 有界重试、重试耗尽、OutputGuard accept/repair/degrade/fail、repair 在途取消、稳定 Runtime 错误码和指标低基数。隔离 PostgreSQL 17 顺序执行 V1～V13 并真实插入压缩摘要成功。
+- 剩余边界：当前摘要器是确定性 Skeleton，不是模型摘要器；摘要直接读取 PostgreSQL，未增加 Redis 热投影；同步 Chat Completions 没有 chunk，因此“仅首输出前重试”由非 2xx 无输出响应保证。真实流式首 chunk、断线、背压和跨实例 Push 属于 AR-7；业务内容安审由独立 Adapter 承担。
+- 下一步：AR-7A 先定义 provider-neutral `ChatChunk` 和已输出/未输出重试边界，再实现有界 Push 订阅及跨实例中继。
+- 关联文档/ADR/契约：[`docs/agent-runtime.md`](../../docs/agent-runtime.md)、[ADR-004](../../docs/adr/ADR-004-ark-leto-inspired-agent-runtime.md)、[ADR-006](../../docs/adr/ADR-006-agent-reliability-fencing-outbox-shadow.md)、[`agent-context-compaction-v1.schema.json`](../../contracts/events/agent-context-compaction-v1.schema.json)、[`agent-context-event-v1.schema.json`](../../contracts/events/agent-context-event-v1.schema.json)、`V13__agent_context_compactions.sql`。
 
 ---
 

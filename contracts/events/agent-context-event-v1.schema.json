@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://seekflux.io/contracts/events/agent-context-event-v1.schema.json",
+  "title": "SeekFlux Agent context lifecycle event v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "type",
+    "sessionId",
+    "requestId",
+    "estimatedTokens",
+    "budgetTokens",
+    "reason",
+    "occurredAt"
+  ],
+  "properties": {
+    "type": {
+      "enum": [
+        "ASSEMBLED_NOOP",
+        "COMPACTION_TRIGGERED",
+        "COMPACTION_NOOP",
+        "COMPACTION_COMMITTED",
+        "COMPACTION_EXHAUSTED",
+        "COMPACTION_ASYNC_SCHEDULED",
+        "COMPACTION_ASYNC_SKIPPED",
+        "SKELETON_FALLBACK",
+        "OVERFLOW_RETRY",
+        "OVERFLOW_EXHAUSTED",
+        "OUTPUT_ACCEPTED",
+        "OUTPUT_REPAIR",
+        "OUTPUT_DEGRADED",
+        "OUTPUT_EXHAUSTED"
+      ]
+    },
+    "sessionId": {"type": "string"},
+    "requestId": {"type": "string"},
+    "estimatedTokens": {"type": "integer", "minimum": 0},
+    "budgetTokens": {"type": "integer", "minimum": 0},
+    "reason": {"type": "string", "minLength": 1},
+    "occurredAt": {"type": "string", "format": "date-time"}
+  }
+}
