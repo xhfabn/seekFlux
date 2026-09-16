@@ -42,4 +42,20 @@ public sealed interface PushEvent {
             Instant eventTime,
             String errorCode) implements PushEvent {
     }
+
+    record MessageQueued(
+            String agentRunId,
+            Instant eventTime,
+            String messageId,
+            String requestId,
+            String turnId,
+            int queueDepth) implements PushEvent {
+    }
+
+    record Steered(
+            String agentRunId,
+            Instant eventTime,
+            String nextRequestId,
+            int drainedMessageCount) implements PushEvent {
+    }
 }

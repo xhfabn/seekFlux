@@ -98,7 +98,8 @@ public final class AgentRuntimeExecutionAdapter implements AgentExecutionPort {
                 attributes,
                 new SessionStatePatch(
                         request.goalChange().baseVersion(),
-                        request.goalChange().state()));
+                        request.goalChange().state()),
+                request.ingressMode());
         RouterResult routed = router.execute(
                 new FeatureRequest(definition, runRequest, llmClient),
                 new DefaultPushEventPublisher());
@@ -108,8 +109,14 @@ public final class AgentRuntimeExecutionAdapter implements AgentExecutionPort {
         if (routed.status() == RouterResult.Status.DUPLICATE) {
             throw new DuplicateAgentRequestException();
         }
+        if (routed.status() == RouterResult.Status.QUEUED) {
+            return queuedResult(request, routed.queueDepth());
+        }
         if (routed.status() != RouterResult.Status.COMPLETED || routed.outcome() == null) {
-            throw new IllegalStateException("agent request was rejected before execution");
+            throw new IllegalStateException(
+                    routed.reason() == null
+                            ? "agent request was rejected before execution"
+                            : routed.reason());
         }
 
         AgentRunResult runtime = routed.outcome();
@@ -150,6 +157,31 @@ public final class AgentRuntimeExecutionAdapter implements AgentExecutionPort {
         projection.project(result);
         metrics.succeeded(runtime, System.nanoTime() - startedNanos);
         return result;
+    }
+
+    private static AgentSearchResult queuedResult(
+            AgentExecutionRequest request, int queueDepth) {
+        return new AgentSearchResult(
+                request.requestId(),
+                null,
+                request.sessionId(),
+                request.turnId(),
+                AgentSearchState.QUEUED,
+                AgentExecutionMode.AGENT,
+                request.goal().version(),
+                request.routeReason(),
+                request.plan(),
+                request.goal().constraints(),
+                null,
+                null,
+                null,
+                0,
+                false,
+                false,
+                null,
+                null,
+                null,
+                queueDepth);
     }
 
     private static SearchResultPage searchResult(Map<String, Object> output) {

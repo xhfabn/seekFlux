@@ -39,6 +39,7 @@ import io.seekflux.platform.agentruntime.application.spi.capability.prompt.Promp
 import io.seekflux.platform.agentruntime.application.spi.capability.execution.ExecutionAuthorityStore;
 import io.seekflux.platform.agentruntime.application.spi.capability.execution.CancellationSignalStore;
 import io.seekflux.platform.agentruntime.domain.service.execution.SessionExecutor;
+import io.seekflux.platform.agentruntime.domain.service.execution.SteerQueuePolicy;
 import io.seekflux.platform.agentruntime.domain.service.feature.BuiltInFeatureNodes;
 import io.seekflux.platform.agentruntime.domain.service.feature.DefaultFeaturePipeline;
 import io.seekflux.platform.agentruntime.application.spi.business.feature.FeatureNode;
@@ -269,6 +270,7 @@ class AgentRuntimeConfiguration {
             AgentRecoveryStore agentRecoveryStore,
             @Value("${seekflux.agent.cancel.poll-interval-ms:100}") long cancelPollMillis,
             @Value("${seekflux.agent.shutdown-grace-ms:5000}") long shutdownGraceMillis,
+            @Value("${seekflux.agent.steer.queue-max-depth:32}") int steerQueueMaxDepth,
             Clock agentClock) {
         return new SessionExecutor(
                 authorityStore,
@@ -280,7 +282,8 @@ class AgentRuntimeConfiguration {
                 Duration.ofMillis(cancelPollMillis),
                 Duration.ofMillis(shutdownGraceMillis),
                 agentRecoveryStore,
-                io.seekflux.platform.agentruntime.domain.service.recovery.RecoveryFaultInjector.NONE);
+                io.seekflux.platform.agentruntime.domain.service.recovery.RecoveryFaultInjector.NONE,
+                new SteerQueuePolicy(steerQueueMaxDepth));
     }
 
     @Bean(name = "agentSessionLoadFeatureNode")

@@ -21,6 +21,10 @@ public interface CancellationSignalStore {
 
     boolean write(String sessionId, boolean steer, Instant signalTime);
 
+    default boolean clearSteerThrough(String sessionId, Instant signalTime) {
+        return false;
+    }
+
     default boolean write(String sessionId, CancellationCause cause, Instant signalTime) {
         return write(sessionId, cause.isSteer(), signalTime);
     }

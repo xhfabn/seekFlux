@@ -80,8 +80,11 @@ public final class AgentSearchApplicationService implements AgentSearchUseCase {
                 route.reason(),
                 exposedTools,
                 new SearchGoalChange(baseVersion, goal.toState()),
-                command.allowClarification());
+                command.allowClarification(),
+                command.ingressMode());
         return route.route() == QueryModeRouter.Route.DIRECT
+                && command.ingressMode()
+                == io.seekflux.platform.agentruntime.application.command.AgentIngressMode.NEW_EXECUTION
                 ? directSearch.execute(request)
                 : executor.execute(request);
     }

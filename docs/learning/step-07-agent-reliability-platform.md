@@ -7,7 +7,7 @@
 - 对应开发 Step：Step 7
 - 对应 Agent Phase：Phase 3
 - 对应决策：[ADR-006：Agent 多实例可靠性、事务事实与 Shadow 治理](../adr/ADR-006-agent-reliability-fencing-outbox-shadow.md)
-- 对应契约：[`contracts/openapi/seekflux-v1.yaml`](../../contracts/openapi/seekflux-v1.yaml)、[`agent-workspace-message-v1.schema.json`](../../contracts/events/agent-workspace-message-v1.schema.json)、[`agent-recovery-v1.schema.json`](../../contracts/events/agent-recovery-v1.schema.json)、[`agent-tool-side-effect-ledger-v1.schema.json`](../../contracts/events/agent-tool-side-effect-ledger-v1.schema.json)
+- 对应契约：[`contracts/openapi/seekflux-v1.yaml`](../../contracts/openapi/seekflux-v1.yaml)、[`agent-workspace-message-v1.schema.json`](../../contracts/events/agent-workspace-message-v1.schema.json)、[`agent-recovery-v1.schema.json`](../../contracts/events/agent-recovery-v1.schema.json)、[`agent-tool-side-effect-ledger-v1.schema.json`](../../contracts/events/agent-tool-side-effect-ledger-v1.schema.json)、[`agent-steer-queue-v1.schema.json`](../../contracts/events/agent-steer-queue-v1.schema.json)
 - 固定评测：[`evals/results/agent-reliability-v1-baseline.json`](../../evals/results/agent-reliability-v1-baseline.json)
 
 ## 要解决的问题
@@ -25,6 +25,8 @@ Phase 2 证明了 Agent 的编排增量，但租约过期、实例退出、重�
 - Assistant 正文/reasoning/tool calls 分离，ToolResult 保存 raw/model/display/structured/resources 多视图并用稳定 call ID 强制一一配对；Clarification 投影为 `SUSPENDED`；
 - 版本化 Runtime Checkpoint 在 PRE_TURN、POST_TURN、COMPLETED/SUSPENDED 保存可恢复运行态；pending Tool journal 区分 DECIDED、EXECUTING、UNKNOWN 与结果终态；
 - 接管统一执行 renew → restoreFresh → cutoff 校验 → commitResume → dispatch：安全 Tool 复用结果或按稳定 call ID 重试；写 Tool 使用 fencing 持久账本、稳定幂等键和外部回执，`UNKNOWN` 只做状态查询/补偿并写 `RECONCILED`，不重复原写请求；
+- Ingress 显式区分 `NEW_EXECUTION / STEER / QUEUE`：忙碌时普通新请求仍返回 BUSY；STEER 先把消息持久化到有界 FIFO，再以同一时间戳广播取消；QUEUE 只接受已挂起 Session，不中断当前任务；
+- owner 在当前 segment 收敛后继续持权 drain，批量提升当时全部排队消息；每条 UserMessage 都进入完整历史，最后一条请求提供当前身份、瞬态上下文和状态补丁。提升后崩溃可从已提升 Workspace 事实恢复，失权时由新 owner 在下一次受理中继续；
 - Tool 默认注册策略拒绝 `MUTATING`，显式授权后仍须通过运行时 `ALLOW/MODIFY/DENY/NEED_APPROVAL` 策略和账本能力检查；每个并行调用使用独立 ToolContext，并产生 before/after/failure 观察；
 - 四类 Agent 终态 Topic 与按 `eventId` 幂等的审计消费者；
 - 模型/Tool 独立 Bulkhead、稳定错误、确定性 Tool Call ID 和效果类型；
@@ -48,6 +50,7 @@ Phase 2 证明了 Agent 的编排增量，但租约过期、实例退出、重�
 6. 正常、回退、取消或失败终态在一个事务中写 WorkspaceEvent 和 Outbox，Kafka 消费者可重复处理但数据库审计只保留一条；
 7. 模型/Tool 故障或 Bulkhead 饱和进入稳定回退/部分成功语义；Shadow 永远异步旁路，关闭通过 Redis 对所有实例生效。
 8. `MUTATING` Tool 在外部请求前写 `PREPARED/EXECUTING`；外部返回后先写账本结果/回执，再推进 journal、Checkpoint 和 Session。接管或取消把遗留执行态变为 `UNKNOWN`，只能对账，不能自动重放。
+9. STEER 先在 PostgreSQL 追加 `QUEUED_USER_MESSAGE`，成功后才写 Redis `STEER`；执行中的 segment 取消收敛后，owner 用当前 fencing token 原子提升 FIFO 批次为正式 UserMessage，再清除不晚于批次 cutoff 的旧 STEER 并执行下一 segment。用户取消和更晚的 STEER 不会被误删。
 
 ## 关键代码入口
 
@@ -58,6 +61,8 @@ Phase 2 证明了 Agent 的编排增量，但租约过期、实例退出、重�
 | `platform/agent-runtime/.../application/spi/business/` | Planner、Tool、Feature、Context 等业务定制 SPI |
 | `platform/agent-runtime/.../application/spi/capability/` | Session、LLM、执行权、记录和事件等能力 SPI |
 | `platform/agent-runtime/.../domain/service/execution/SessionExecutor.java` | fencing、续租、恢复、跨实例取消、优雅停机 |
+| `platform/agent-runtime/.../application/command/AgentIngressMode.java` | NEW_EXECUTION、STEER、QUEUE 显式入口语义 |
+| `platform/agent-runtime/.../domain/service/execution/SteerQueuePolicy.java` | 持久队列容量策略 |
 | `platform/agent-runtime/.../infrastructure/redis/RedisExecutionAuthorityStore.java` | 原子 fencing 计数与 owner-CAS Lua |
 | `platform/persistence/.../JdbcAgentSessionStore.java` | 受 fencing 保护的消息/Outcome/Outbox 事务与 Workspace 重放 |
 | `platform/persistence/.../WorkspaceMessageCodec.java` | 版本化 Assistant/ToolResult payload 的 JSON 边界映射 |
@@ -67,6 +72,7 @@ Phase 2 证明了 Agent 的编排增量，但租约过期、实例退出、重�
 | `platform/agent-runtime/.../domain/model/sideeffect/` | 写 Tool 账本状态、回执结果与 reconciliation 结论 |
 | `platform/agent-runtime/.../application/spi/business/tool/` | Tool 注册策略、执行策略和外部状态对账 SPI |
 | `platform/persistence/.../V11__agent_tool_side_effect_ledger.sql` | 写副作用长期账本、幂等键与状态检查约束 |
+| `platform/persistence/.../V12__agent_steer_queue.sql` | 排队事件幂等、生命周期唯一性与 FIFO 查询索引 |
 | `platform/agent-runtime/.../domain/service/execution/AgentCallGuard.java` | 模型/Tool Bulkhead 与故障注入边界 |
 | `platform/agent-runtime/.../infrastructure/llm/ShadowingLlmClient.java` | 不影响主链的 Shadow 执行 |
 | `platform/agent-runtime/.../infrastructure/redis/RedisShadowSettingsStore.java` | 跨实例 Shadow 开关 |
@@ -83,6 +89,7 @@ Phase 2 证明了 Agent 的编排增量，但租约过期、实例退出、重�
 - 2026-09-13 AR-2 消息历史闭环后，JDK 21 下 Agent Runtime 36 个、Persistence 3 个、Agent Orchestration Context 12 个测试无失败，Agent Server 编译通过；隔离 PostgreSQL 17 顺序执行 V1～V9 成功。固定测试覆盖跨 JSON 进程边界的第二轮历史恢复、稳定消息/Tool Call ID、并行顺序、取消 ToolResult、旧 UserMessage、未知字段兼容以及孤立/缺失结果拒绝；
 - 2026-09-14 AR-3 精确恢复后，JDK 21 下 Agent Runtime 48 个、Persistence 5 个、Agent Orchestration Context 12 个测试无失败，Agent Server 编译通过；固定故障测试覆盖 PRE_TURN 写前/写后、模型决策后、Tool 执行标记后、Tool 结果后、POST_TURN 后、终态写前/写后、取消恢复和未知写 Tool；Checkpoint/journal 通过 JSON 边界往返，隔离 PostgreSQL 17 顺序执行 V1～V10 并确认恢复表及唯一约束；
 - 2026-09-15 AR-4 副作用账本完成后，JDK 21 下 Agent Runtime 56 个、Persistence 6 个、Agent Orchestration Context 13 个测试无失败，`mvn test` 全仓 26 个 Reactor 模块回归通过；固定故障测试覆盖外部请求前、外部成功未确认、账本成功未推进 Session、reconciliation 后再次崩溃与重复恢复及外部写后异常，外部实际写入均保持 1 次且不确定异常保留 UNKNOWN；注册/运行时双策略、无账本拒绝、外部回执 JSON、并行独立 Context 和 Micrometer 低基数标签均有测试。隔离 PostgreSQL 17 顺序执行 V1～V11，并确认 Call ID/幂等键唯一及状态/结果检查约束；
+- 2026-09-15 AR-5 Steer Queue/Drain 完成后，JDK 21 下 Agent Runtime 65 个、Persistence 7 个、Agent Orchestration Context 14 个测试无失败，`mvn test` 全仓 26 个 Reactor 模块回归通过；固定测试覆盖 busy 下显式 STEER、普通请求仍 BUSY、等待态 QUEUE、非等待态拒绝、有界容量、FIFO 批量提升、最后意图生效、请求级 override 清理、重复请求幂等、提升后崩溃恢复、drain 边界失主接管以及旧 STEER/真实取消隔离。隔离 PostgreSQL 17 顺序执行 V1～V12，并验证同一逻辑消息可从 QUEUED 生命周期转换为 USER 生命周期且各自唯一；
 - `agent-reliability-v1` 使用真实 Content → Outbox/Kafka → Worker → Elasticsearch → Agent 链路，12 次请求可用性 `1.0`，P95 `226.402 ms`，Fallback Rate `0.0`；
 - 单写者、fencing 单调、重复请求无额外 Run/Tool 事件、终态 Outbox、幂等审计消费、Shadow 主结果不变和快速关闭全部为 `true`；
 - 固定单测证明旧 owner 不能提交、另一个实例写取消能停止 Loop、模型/Tool 故障稳定回退、Bulkhead 饱和快速拒绝；
@@ -95,7 +102,7 @@ Phase 2 证明了 Agent 的编排增量，但租约过期、实例退出、重�
 
 核心执行红线已完成：固定主链、先获权后提交、强恢复、fencing 全区间、owner-CAS、清理顺序、事件分层、分布式取消、有限并发和确定性回退。完整矩阵见 [ADR-006](../adr/ADR-006-agent-reliability-fencing-outbox-shadow.md)。
 
-仍未实现的能力包括：steer 排队语义、上下文压缩、OutputGuard 修复、HITL、Handoff、子 Agent、MCP、Chained/Graph Agent 和实时 Push。它们不是 Step 7 完成条件。AR-4 已提供通用副作用账本和对账协议，但框架不提供跨外部系统分布式事务；每个真实写 Tool 仍必须依据目标系统实现可靠幂等、状态查询或补偿，无 reconciler 或外部仍无法判定时会保留 `UNKNOWN` 并持续失败关闭。线程中断仍不能撤销已经发生的外部副作用。
+仍未实现的能力包括：上下文压缩、413 重试、OutputGuard 修复、HITL、Handoff、子 Agent、MCP、Chained/Graph Agent 和实时 Push。它们不是 Step 7 完成条件。AR-5 的 `QUEUE` 已能在等待态可靠积压，但队列何时因人工输入恢复要由 AR-8 的 Waitpoint/HITL 状态机定义。AR-4 已提供通用副作用账本和对账协议，但框架不提供跨外部系统分布式事务；每个真实写 Tool 仍必须依据目标系统实现可靠幂等、状态查询或补偿，无 reconciler 或外部仍无法判定时会保留 `UNKNOWN` 并持续失败关闭。线程中断仍不能撤销已经发生的外部副作用。
 
 真实 Provider 已做单次本地功能联调，但 Token/成本/质量基线仍未建立。仓库已经具备计量、定价、Trace、Metrics 与报告字段；后续必须用固定数据集、固定 Provider/模型/Prompt 版本另生成可复现的运行环境基线，不能用一次成功请求替代评测。
 

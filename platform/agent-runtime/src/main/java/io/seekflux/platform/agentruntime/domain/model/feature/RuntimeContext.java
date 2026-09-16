@@ -48,4 +48,10 @@ public final class RuntimeContext {
     public RuntimeContext withPersistentFeatures(Map<String, Object> restoredFeatures) {
         return new RuntimeContext(definition, request, llmClient, restoredFeatures);
     }
+
+    public RuntimeContext forQueuedRequest(
+            AgentRunRequest queuedRequest,
+            Map<String, Object> persistentFeatures) {
+        return new RuntimeContext(definition, queuedRequest, llmClient, persistentFeatures);
+    }
 }

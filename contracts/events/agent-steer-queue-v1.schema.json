@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://seekflux.io/contracts/events/agent-steer-queue-v1.schema.json",
+  "title": "SeekFlux queued Agent user message v1",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "schemaVersion",
+    "messageType",
+    "messageId",
+    "sessionId",
+    "requestId",
+    "turnId",
+    "input",
+    "attributes",
+    "persistentFeatures",
+    "ingressMode",
+    "queuedAt"
+  ],
+  "properties": {
+    "schemaVersion": {"const": 1},
+    "messageType": {"const": "QUEUED_USER_MESSAGE"},
+    "messageId": {"type": "string", "minLength": 1},
+    "sessionId": {"type": "string", "minLength": 1},
+    "requestId": {"type": "string", "minLength": 1},
+    "turnId": {"type": "string", "minLength": 1},
+    "input": {"type": "string", "minLength": 1, "maxLength": 500},
+    "attributes": {"type": "object"},
+    "persistentFeatures": {"type": "object"},
+    "ingressMode": {"enum": ["STEER", "QUEUE"]},
+    "statePatch": {
+      "type": ["object", "null"],
+      "required": ["baseVersion", "state"],
+      "properties": {
+        "baseVersion": {"type": "integer", "minimum": 0},
+        "state": {"type": "object", "minProperties": 1}
+      }
+    },
+    "queuedAt": {"type": "string", "format": "date-time"}
+  }
+}

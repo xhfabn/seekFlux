@@ -3,6 +3,7 @@ package io.seekflux.platform.agentruntime.domain.model.session;
 import io.seekflux.platform.agentruntime.domain.model.run.AgentTerminalState;
 import java.util.Comparator;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -40,6 +41,7 @@ public record AgentSession(
         Set<String> messageIds = new HashSet<>();
         Set<String> toolCalls = new HashSet<>();
         Set<String> toolResults = new HashSet<>();
+        Map<String, WorkspaceEvent.QueuedUserMessage> queuedMessages = new LinkedHashMap<>();
         for (WorkspaceEvent event : ordered) {
             if (event.position() <= position) {
                 throw new IllegalArgumentException("workspace event positions must be strictly increasing");
@@ -49,7 +51,14 @@ public record AgentSession(
                 case WorkspaceEvent.SessionCreated ignored -> AgentSessionStatus.IDLE;
                 case WorkspaceEvent.UserMessage message -> {
                     requireUnique(messageIds, message.messageId(), "message");
+                    queuedMessages.remove(message.messageId());
                     yield AgentSessionStatus.EXECUTING;
+                }
+                case WorkspaceEvent.QueuedUserMessage message -> {
+                    if (queuedMessages.putIfAbsent(message.messageId(), message) != null) {
+                        throw new IllegalArgumentException("queued message ids must be unique within a session");
+                    }
+                    yield status;
                 }
                 case WorkspaceEvent.AssistantMessage eventMessage -> {
                     var message = eventMessage.message();
@@ -97,6 +106,45 @@ public record AgentSession(
                 workspaceState,
                 status,
                 ordered);
+    }
+
+    public List<WorkspaceEvent.QueuedUserMessage> queuedMessages() {
+        Map<String, WorkspaceEvent.QueuedUserMessage> pending = new LinkedHashMap<>();
+        for (WorkspaceEvent event : events) {
+            if (event instanceof WorkspaceEvent.QueuedUserMessage queued) {
+                pending.put(queued.messageId(), queued);
+            } else if (event instanceof WorkspaceEvent.UserMessage promoted) {
+                pending.remove(promoted.messageId());
+            }
+        }
+        return List.copyOf(pending.values());
+    }
+
+    public java.util.Optional<WorkspaceEvent.QueuedUserMessage> promotedQueuedExecution() {
+        if (status != AgentSessionStatus.EXECUTING) {
+            return java.util.Optional.empty();
+        }
+        WorkspaceEvent.UserMessage latestUser = null;
+        for (WorkspaceEvent event : events) {
+            if (event instanceof WorkspaceEvent.UserMessage user) {
+                latestUser = user;
+            }
+        }
+        if (latestUser == null) {
+            return java.util.Optional.empty();
+        }
+        String messageId = latestUser.messageId();
+        return events.stream()
+                .filter(WorkspaceEvent.QueuedUserMessage.class::isInstance)
+                .map(WorkspaceEvent.QueuedUserMessage.class::cast)
+                .filter(queued -> queued.messageId().equals(messageId))
+                .findFirst();
+    }
+
+    public boolean hasOnlyQueuedEventsAfter(long cutoff) {
+        return events.stream()
+                .filter(event -> event.position() > cutoff)
+                .allMatch(WorkspaceEvent.QueuedUserMessage.class::isInstance);
     }
 
     private static void requireUnique(Set<String> values, String value, String label) {

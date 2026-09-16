@@ -14,6 +14,8 @@ import io.seekflux.platform.agentruntime.domain.model.session.AgentSession;
 import io.seekflux.platform.agentruntime.domain.exception.AgentSessionStateConflictException;
 import io.seekflux.platform.agentruntime.application.spi.capability.session.AgentSessionStore;
 import io.seekflux.platform.agentruntime.domain.model.session.IngressCommitResult;
+import io.seekflux.platform.agentruntime.domain.model.session.QueueCommitResult;
+import io.seekflux.platform.agentruntime.domain.model.session.QueuedMessageBatch;
 import io.seekflux.platform.agentruntime.domain.model.session.WorkspaceEvent;
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -164,6 +166,219 @@ public class JdbcAgentSessionStore implements AgentSessionStore {
                 eventTime,
                 Map.of("text", request.input()));
         return IngressCommitResult.COMMITTED;
+    }
+
+    @Override
+    @Transactional
+    public QueueCommitResult enqueue(
+            AgentRunRequest request, int maxQueueDepth, Instant eventTime) {
+        return enqueue(request, Map.of(), maxQueueDepth, eventTime);
+    }
+
+    @Override
+    @Transactional
+    public QueueCommitResult enqueue(
+            AgentRunRequest request,
+            Map<String, Object> persistentFeatures,
+            int maxQueueDepth,
+            Instant eventTime) {
+        Long currentPosition = jdbcClient.sql("""
+                        SELECT event_position
+                        FROM agent.sessions
+                        WHERE session_id = :sessionId
+                        FOR UPDATE
+                        """)
+                .param("sessionId", request.sessionId())
+                .query(Long.class)
+                .optional()
+                .orElseThrow(() -> new IllegalStateException("agent session does not exist"));
+        int queueDepth = pendingQueueDepth(request.sessionId());
+        boolean consumed = jdbcClient.sql("""
+                        SELECT EXISTS (
+                            SELECT 1
+                            FROM agent.workspace_events
+                            WHERE session_id = :sessionId
+                              AND request_id = :requestId
+                              AND event_type = 'USER_MESSAGE'
+                        )
+                        """)
+                .param("sessionId", request.sessionId())
+                .param("requestId", request.requestId())
+                .query(Boolean.class)
+                .single();
+        if (consumed) {
+            return QueueCommitResult.duplicateConsumed(queueDepth);
+        }
+        boolean pendingDuplicate = jdbcClient.sql("""
+                        SELECT EXISTS (
+                            SELECT 1
+                            FROM agent.workspace_events
+                            WHERE session_id = :sessionId
+                              AND request_id = :requestId
+                              AND event_type = 'QUEUED_USER_MESSAGE'
+                        )
+                        """)
+                .param("sessionId", request.sessionId())
+                .param("requestId", request.requestId())
+                .query(Boolean.class)
+                .single();
+        if (pendingDuplicate) {
+            return QueueCommitResult.duplicatePending(queueDepth);
+        }
+        if (queueDepth >= maxQueueDepth) {
+            return QueueCommitResult.full(queueDepth);
+        }
+
+        long position = currentPosition + 1;
+        int updated = jdbcClient.sql("""
+                        UPDATE agent.sessions
+                        SET event_position = :position,
+                            version = version + 1,
+                            updated_at = :eventTime
+                        WHERE session_id = :sessionId
+                        """)
+                .param("position", position)
+                .param("eventTime", databaseTime(eventTime))
+                .param("sessionId", request.sessionId())
+                .update();
+        if (updated != 1) {
+            throw new IllegalStateException("queued message did not advance the session");
+        }
+        String messageId = deterministicMessageId(
+                request.sessionId(), request.requestId(), request.turnId(), "user");
+        Map<String, Object> payload = queuedPayload(request, persistentFeatures);
+        insertWorkspaceEvent(
+                eventId("queued:" + messageId),
+                request.sessionId(),
+                position,
+                "QUEUED_USER_MESSAGE",
+                1,
+                messageId,
+                null,
+                request.requestId(),
+                request.turnId(),
+                eventTime,
+                payload);
+        return QueueCommitResult.committed(queueDepth + 1);
+    }
+
+    @Override
+    @Transactional
+    public Optional<QueuedMessageBatch> promoteQueued(
+            String sessionId, long fencingToken, Instant eventTime) {
+        SessionHead head = jdbcClient.sql("""
+                        SELECT event_position, state_version, active_fencing_token
+                        FROM agent.sessions
+                        WHERE session_id = :sessionId
+                        FOR UPDATE
+                        """)
+                .param("sessionId", sessionId)
+                .query((row, rowNumber) -> new SessionHead(
+                        row.getLong("event_position"),
+                        row.getLong("state_version"),
+                        row.getLong("active_fencing_token")))
+                .optional()
+                .orElseThrow(() -> new IllegalStateException("agent session does not exist"));
+        if (head.fencingToken() != fencingToken) {
+            throw new AgentExecutionFencedException(sessionId, fencingToken);
+        }
+        List<WorkspaceEvent.QueuedUserMessage> queued = jdbcClient.sql("""
+                        SELECT q.event_position, q.event_type, q.schema_version, q.message_id,
+                               q.tool_call_id, q.request_id, q.turn_id, q.event_time, q.payload::text
+                        FROM agent.workspace_events q
+                        WHERE q.session_id = :sessionId
+                          AND q.event_type = 'QUEUED_USER_MESSAGE'
+                          AND NOT EXISTS (
+                              SELECT 1
+                              FROM agent.workspace_events promoted
+                              WHERE promoted.session_id = q.session_id
+                                AND promoted.event_type = 'USER_MESSAGE'
+                                AND promoted.message_id = q.message_id
+                          )
+                        ORDER BY q.event_position
+                        """)
+                .param("sessionId", sessionId)
+                .query((row, rowNumber) ->
+                        (WorkspaceEvent.QueuedUserMessage) mapEvent(row, rowNumber))
+                .list();
+        if (queued.isEmpty()) {
+            return Optional.empty();
+        }
+
+        SessionStatePatch finalPatch = queued.getLast().request().statePatch();
+        int eventCount = queued.size() + (finalPatch == null ? 0 : 1);
+        long finalPosition = head.eventPosition() + eventCount;
+        long finalStateVersion = head.stateVersion() + (finalPatch == null ? 0 : 1);
+        String snapshot = finalPatch == null ? null : toJson(finalPatch.state());
+        int advanced = finalPatch == null
+                ? jdbcClient.sql("""
+                                UPDATE agent.sessions
+                                SET event_position = :eventPosition,
+                                    version = version + :eventCount,
+                                    status = 'EXECUTING',
+                                    updated_at = :eventTime
+                                WHERE session_id = :sessionId
+                                  AND active_fencing_token = :fencingToken
+                                """)
+                        .param("eventPosition", finalPosition)
+                        .param("eventCount", eventCount)
+                        .param("eventTime", databaseTime(eventTime))
+                        .param("sessionId", sessionId)
+                        .param("fencingToken", fencingToken)
+                        .update()
+                : jdbcClient.sql("""
+                                UPDATE agent.sessions
+                                SET event_position = :eventPosition,
+                                    version = version + :eventCount,
+                                    state_version = :stateVersion,
+                                    snapshot = CAST(:snapshot AS jsonb),
+                                    status = 'EXECUTING',
+                                    updated_at = :eventTime
+                                WHERE session_id = :sessionId
+                                  AND active_fencing_token = :fencingToken
+                                """)
+                        .param("eventPosition", finalPosition)
+                        .param("eventCount", eventCount)
+                        .param("stateVersion", finalStateVersion)
+                        .param("snapshot", snapshot)
+                        .param("eventTime", databaseTime(eventTime))
+                        .param("sessionId", sessionId)
+                        .param("fencingToken", fencingToken)
+                        .update();
+        if (advanced != 1) {
+            throw new AgentExecutionFencedException(sessionId, fencingToken);
+        }
+
+        long position = head.eventPosition() + 1;
+        if (finalPatch != null) {
+            insertWorkspaceEvent(
+                    sessionId,
+                    position++,
+                    "STATE_PATCHED",
+                    null,
+                    null,
+                    eventTime,
+                    Map.of(
+                            "baseVersion", head.stateVersion(),
+                            "stateVersion", finalStateVersion,
+                            "state", finalPatch.state()));
+        }
+        for (WorkspaceEvent.QueuedUserMessage message : queued) {
+            AgentRunRequest request = message.request();
+            insertWorkspaceEvent(
+                    eventId(message.messageId()),
+                    sessionId,
+                    position++,
+                    "USER_MESSAGE",
+                    message.schemaVersion(),
+                    message.messageId(),
+                    null,
+                    request.requestId(),
+                    request.turnId(),
+                    eventTime,
+                    Map.of("text", request.input()));
+        }
+        return Optional.of(new QueuedMessageBatch(queued));
     }
 
     @Override
@@ -493,6 +708,17 @@ public class JdbcAgentSessionStore implements AgentSessionStore {
                     row.getString("request_id"),
                     row.getString("turn_id"),
                     string(payload, "text"));
+            case "QUEUED_USER_MESSAGE" -> new WorkspaceEvent.QueuedUserMessage(
+                    position,
+                    eventTime,
+                    schemaVersion,
+                    row.getString("message_id"),
+                    queuedRequest(
+                            row.getString("request_id"),
+                            row.getString("turn_id"),
+                            string(payload, "text"),
+                            payload),
+                    queuedFeatures(payload));
             case "ASSISTANT_MESSAGE" -> new WorkspaceEvent.AssistantMessage(
                     position,
                     eventTime,
@@ -574,10 +800,94 @@ public class JdbcAgentSessionStore implements AgentSessionStore {
         return Map.copyOf(result);
     }
 
+    private int pendingQueueDepth(String sessionId) {
+        return jdbcClient.sql("""
+                        SELECT count(*)
+                        FROM agent.workspace_events q
+                        WHERE q.session_id = :sessionId
+                          AND q.event_type = 'QUEUED_USER_MESSAGE'
+                          AND NOT EXISTS (
+                              SELECT 1
+                              FROM agent.workspace_events promoted
+                              WHERE promoted.session_id = q.session_id
+                                AND promoted.event_type = 'USER_MESSAGE'
+                                AND promoted.message_id = q.message_id
+                          )
+                        """)
+                .param("sessionId", sessionId)
+                .query(Integer.class)
+                .single();
+    }
+
+    static Map<String, Object> queuedPayload(AgentRunRequest request) {
+        return queuedPayload(request, Map.of());
+    }
+
+    static Map<String, Object> queuedPayload(
+            AgentRunRequest request,
+            Map<String, Object> persistentFeatures) {
+        Map<String, Object> payload = new java.util.LinkedHashMap<>();
+        payload.put("sessionId", request.sessionId());
+        payload.put("text", request.input());
+        payload.put("attributes", request.attributes());
+        payload.put("persistentFeatures",
+                persistentFeatures == null ? Map.of() : Map.copyOf(persistentFeatures));
+        payload.put("ingressMode", request.ingressMode().name());
+        if (request.statePatch() != null) {
+            payload.put("statePatch", Map.of(
+                    "baseVersion", request.statePatch().baseVersion(),
+                    "state", request.statePatch().state()));
+        }
+        return Map.copyOf(payload);
+    }
+
+    static Map<String, Object> queuedFeatures(Map<String, Object> payload) {
+        Map<String, Object> features = nullableMap(payload, "persistentFeatures");
+        return features == null ? Map.of() : features;
+    }
+
+    static AgentRunRequest queuedRequest(
+            String requestId,
+            String turnId,
+            String text,
+            Map<String, Object> payload) {
+        Map<String, Object> patch = nullableMap(payload, "statePatch");
+        SessionStatePatch statePatch = patch == null
+                ? null
+                : new SessionStatePatch(number(patch, "baseVersion"), map(patch, "state"));
+        String ingress = string(payload, "ingressMode");
+        return new AgentRunRequest(
+                requestId,
+                string(payload, "sessionId") == null ? "" : string(payload, "sessionId"),
+                turnId,
+                text,
+                nullableMap(payload, "attributes"),
+                statePatch,
+                ingress == null
+                        ? io.seekflux.platform.agentruntime.application.command.AgentIngressMode.STEER
+                        : io.seekflux.platform.agentruntime.application.command.AgentIngressMode.valueOf(ingress));
+    }
+
+    private static Map<String, Object> nullableMap(Map<String, Object> payload, String key) {
+        Object value = payload.get(key);
+        if (value == null) {
+            return null;
+        }
+        if (!(value instanceof Map<?, ?> values)) {
+            throw new IllegalStateException("workspace event field is not an object: " + key);
+        }
+        Map<String, Object> result = new java.util.LinkedHashMap<>();
+        values.forEach((itemKey, itemValue) -> result.put(String.valueOf(itemKey), itemValue));
+        return Map.copyOf(result);
+    }
+
     private static OffsetDateTime databaseTime(Instant value) {
         return value.atOffset(ZoneOffset.UTC);
     }
 
     private record PositionAdvance(long eventPosition, long stateVersion) {
+    }
+
+    private record SessionHead(long eventPosition, long stateVersion, long fencingToken) {
     }
 }

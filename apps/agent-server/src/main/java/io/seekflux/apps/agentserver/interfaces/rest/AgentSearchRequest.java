@@ -7,6 +7,7 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import io.seekflux.agent.port.in.AgentRequestedMode;
+import io.seekflux.platform.agentruntime.application.command.AgentIngressMode;
 import java.util.List;
 
 public record AgentSearchRequest(
@@ -19,6 +20,7 @@ public record AgentSearchRequest(
         @Min(1) @Max(50) Integer size,
         @Size(max = 10) List<@Size(max = 64) String> requiredTags,
         AgentRequestedMode mode,
+        AgentIngressMode ingressMode,
         @Valid ConstraintPatchRequest constraintPatch,
         @Valid Options options) {
 

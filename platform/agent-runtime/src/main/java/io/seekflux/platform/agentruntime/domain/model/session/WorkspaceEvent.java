@@ -1,5 +1,6 @@
 package io.seekflux.platform.agentruntime.domain.model.session;
 
+import io.seekflux.platform.agentruntime.application.command.AgentRunRequest;
 import io.seekflux.platform.agentruntime.domain.model.message.AgentMessage;
 import io.seekflux.platform.agentruntime.domain.model.run.AgentTerminalState;
 import java.nio.charset.StandardCharsets;
@@ -45,6 +46,38 @@ public sealed interface WorkspaceEvent {
             if (messageId == null || messageId.isBlank()) {
                 messageId = legacyMessageId(requestId, turnId);
             }
+        }
+    }
+
+    record QueuedUserMessage(
+            long position,
+            Instant eventTime,
+            int schemaVersion,
+            String messageId,
+            AgentRunRequest request,
+            Map<String, Object> persistentFeatures) implements WorkspaceEvent {
+
+        public QueuedUserMessage(
+                long position,
+                Instant eventTime,
+                int schemaVersion,
+                String messageId,
+                AgentRunRequest request) {
+            this(position, eventTime, schemaVersion, messageId, request, Map.of());
+        }
+
+        public QueuedUserMessage {
+            if (schemaVersion < 1) {
+                throw new IllegalArgumentException("message schema version must be positive");
+            }
+            if (messageId == null || messageId.isBlank()) {
+                throw new IllegalArgumentException("queued message id must not be blank");
+            }
+            if (request == null) {
+                throw new IllegalArgumentException("queued request must not be null");
+            }
+            persistentFeatures = persistentFeatures == null
+                    ? Map.of() : Map.copyOf(persistentFeatures);
         }
     }
 

@@ -52,7 +52,8 @@ public class AgentSearchController {
                 request.requiredTags() == null ? List.of() : request.requiredTags(),
                 allowClarification,
                 request.mode() == null ? AgentRequestedMode.AUTO : request.mode(),
-                constraintPatch(request.constraintPatch()))));
+                constraintPatch(request.constraintPatch()),
+                request.ingressMode())));
     }
 
     private static ConstraintPatch constraintPatch(AgentSearchRequest.ConstraintPatchRequest patch) {

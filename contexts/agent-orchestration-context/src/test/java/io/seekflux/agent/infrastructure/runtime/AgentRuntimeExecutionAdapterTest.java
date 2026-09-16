@@ -22,6 +22,7 @@ import io.seekflux.platform.agentruntime.domain.model.run.AgentTerminalState;
 import io.seekflux.platform.agentruntime.application.spi.capability.llm.LlmClient;
 import io.seekflux.platform.agentruntime.application.api.Router;
 import io.seekflux.platform.agentruntime.application.api.model.RouterResult;
+import io.seekflux.platform.agentruntime.application.command.AgentIngressMode;
 import io.seekflux.search.port.in.SearchQuery;
 import io.seekflux.search.port.in.SearchResultPage;
 import io.seekflux.search.port.in.SearchTrace;
@@ -34,6 +35,60 @@ import java.util.Set;
 import org.junit.jupiter.api.Test;
 
 class AgentRuntimeExecutionAdapterTest {
+
+    @Test
+    void mapsAnAcceptedSteerToAQueuedResponseWithoutProjectingATerminalResult() {
+        Router router = mock(Router.class);
+        SearchUseCase directSearch = mock(SearchUseCase.class);
+        RedisAgentSessionProjection projection = mock(RedisAgentSessionProjection.class);
+        LlmClient llm = mock(LlmClient.class);
+        AgentDefinition definition = new AgentDefinition(
+                "search-assistant",
+                "search-assistant-v1",
+                "default-react-loop-v1",
+                "search-agent-prompt-v1",
+                "decision-v1",
+                Set.of("search_direct"),
+                3,
+                1,
+                Duration.ofSeconds(2),
+                true);
+        when(router.execute(any(), any())).thenReturn(RouterResult.queued(2, false));
+        AgentRuntimeExecutionAdapter adapter = new AgentRuntimeExecutionAdapter(
+                router,
+                Map.of(definition.id(), definition),
+                Map.of(definition.id(), llm),
+                directSearch,
+                projection);
+        SearchGoal goal = new SearchGoal(
+                "换成适合亲子的", QueryConstraintSet.firstPage(5, List.of()));
+
+        var result = adapter.execute(new AgentExecutionRequest(
+                "request-2",
+                "session-1",
+                "turn-2",
+                definition.id(),
+                "换成适合亲子的",
+                goal,
+                new SearchPlan(
+                        "换成适合亲子的",
+                        "适合亲子",
+                        List.of("亲子"),
+                        true,
+                        List.of("MULTI_SLOT_QUERY")),
+                "COMPLEX_QUERY",
+                List.of("search_direct"),
+                new SearchGoalChange(1, goal.toState()),
+                true,
+                AgentIngressMode.STEER));
+
+        assertThat(result.state()).isEqualTo(AgentSearchState.QUEUED);
+        assertThat(result.queueDepth()).isEqualTo(2);
+        assertThat(result.agentRunId()).isNull();
+        assertThat(result.trace()).isNull();
+        verify(directSearch, never()).search(any(SearchQuery.class));
+        verify(projection, never()).project(any());
+    }
 
     @Test
     void preservesCancellationWithoutInvokingDirectFallback() {

@@ -8,6 +8,7 @@ import io.seekflux.platform.agentruntime.application.api.model.RouterResult;
 import io.seekflux.platform.agentruntime.domain.model.decision.AgentDecision;
 import io.seekflux.platform.agentruntime.domain.model.agent.definition.AgentDefinition;
 import io.seekflux.platform.agentruntime.application.command.AgentRunRequest;
+import io.seekflux.platform.agentruntime.application.command.AgentIngressMode;
 import io.seekflux.platform.agentruntime.domain.model.run.AgentRunResult;
 import io.seekflux.platform.agentruntime.domain.model.run.AgentRunTrace;
 import io.seekflux.platform.agentruntime.domain.model.run.AgentTerminalState;
@@ -25,6 +26,7 @@ import io.seekflux.platform.agentruntime.domain.service.loop.AgentLoop;
 import io.seekflux.platform.agentruntime.domain.model.session.AgentSession;
 import io.seekflux.platform.agentruntime.application.spi.capability.session.AgentSessionStore;
 import io.seekflux.platform.agentruntime.domain.model.session.IngressCommitResult;
+import io.seekflux.platform.agentruntime.domain.model.session.QueueCommitResult;
 import io.seekflux.platform.agentruntime.domain.model.session.WorkspaceEvent;
 import java.time.Clock;
 import java.time.Duration;
@@ -82,6 +84,72 @@ class DefaultRouterTest {
 
             assertEquals(RouterResult.Status.BUSY, result.status());
             assertFalse(calls.contains("commit"));
+        } finally {
+            executor.close();
+        }
+    }
+
+    @Test
+    void explicitSteerQueuesInsteadOfReturningBusy() {
+        List<String> calls = new ArrayList<>();
+        FakeSessionStore sessions = new FakeSessionStore(calls, IngressCommitResult.COMMITTED);
+        SessionExecutor executor = executor(authorityStore(calls, false), sessions, calls);
+        try {
+            RouterResult result = router(sessions, executor).execute(
+                    request(AgentIngressMode.STEER), PushEventPublisher.NOOP);
+
+            assertEquals(RouterResult.Status.QUEUED, result.status());
+            assertEquals(1, result.queueDepth());
+            assertTrue(calls.contains("enqueue"));
+            assertFalse(calls.contains("commit"));
+            assertFalse(calls.contains("loop"));
+        } finally {
+            executor.close();
+        }
+    }
+
+    @Test
+    void explicitQueueIsAcceptedOnlyForAWaitingSessionAndDoesNotRunTheLoop() {
+        List<String> calls = new ArrayList<>();
+        Instant now = Instant.parse("2026-09-15T00:00:00Z");
+        AgentSession suspended = AgentSession.replay("session", List.of(
+                new WorkspaceEvent.SessionCreated(1, now, "agent", "v1"),
+                new WorkspaceEvent.UserMessage(
+                        2, now, "previous-request", "previous-turn", "previous"),
+                new WorkspaceEvent.RunCompleted(
+                        3,
+                        now,
+                        "00000000-0000-0000-0000-000000000010",
+                        AgentTerminalState.NEED_CLARIFICATION,
+                        null)));
+        FakeSessionStore sessions = new FakeSessionStore(
+                calls, IngressCommitResult.COMMITTED, suspended);
+        SessionExecutor executor = executor(authorityStore(calls, true), sessions, calls);
+        try {
+            RouterResult result = router(sessions, executor).execute(
+                    request(AgentIngressMode.QUEUE), PushEventPublisher.NOOP);
+
+            assertEquals(RouterResult.Status.QUEUED, result.status());
+            assertTrue(calls.contains("enqueue"));
+            assertFalse(calls.contains("loop"));
+        } finally {
+            executor.close();
+        }
+    }
+
+    @Test
+    void explicitQueueIsRejectedWhenTheSessionIsNotWaiting() {
+        List<String> calls = new ArrayList<>();
+        FakeSessionStore sessions = new FakeSessionStore(calls, IngressCommitResult.COMMITTED);
+        SessionExecutor executor = executor(authorityStore(calls, true), sessions, calls);
+        try {
+            RouterResult result = router(sessions, executor).execute(
+                    request(AgentIngressMode.QUEUE), PushEventPublisher.NOOP);
+
+            assertEquals(RouterResult.Status.REJECTED, result.status());
+            assertEquals("SESSION_NOT_WAITING", result.reason());
+            assertFalse(calls.contains("acquire"));
+            assertFalse(calls.contains("enqueue"));
         } finally {
             executor.close();
         }
@@ -169,10 +237,15 @@ class DefaultRouterTest {
     }
 
     private static FeatureRequest request() {
+        return request(AgentIngressMode.NEW_EXECUTION);
+    }
+
+    private static FeatureRequest request(AgentIngressMode ingressMode) {
         AgentDefinition definition = new AgentDefinition(
                 "agent", "v1", "loop", "prompt", "decision",
                 Set.of("tool"), 2, 1, Duration.ofSeconds(1), true);
-        AgentRunRequest run = new AgentRunRequest("request", "session", "turn", "input", Map.of());
+        AgentRunRequest run = new AgentRunRequest(
+                "request", "session", "turn", "input", Map.of(), null, ingressMode);
         LlmClient client = new LlmClient() {
             @Override public String version() { return "test"; }
             @Override public AgentDecision chat(io.seekflux.platform.agentruntime.application.spi.capability.llm.model.AssembledContext context) {
@@ -204,17 +277,30 @@ class DefaultRouterTest {
     private static final class FakeSessionStore implements AgentSessionStore {
         private final List<String> calls;
         private final IngressCommitResult commitResult;
-        private final AgentSession session = AgentSession.replay("session", List.of(
-                new WorkspaceEvent.SessionCreated(1, Instant.now(), "agent", "v1")));
+        private final AgentSession session;
 
         private FakeSessionStore(List<String> calls, IngressCommitResult commitResult) {
+            this(calls, commitResult, AgentSession.replay("session", List.of(
+                    new WorkspaceEvent.SessionCreated(1, Instant.now(), "agent", "v1"))));
+        }
+
+        private FakeSessionStore(
+                List<String> calls,
+                IngressCommitResult commitResult,
+                AgentSession session) {
             this.calls = calls;
             this.commitResult = commitResult;
+            this.session = session;
         }
 
         @Override public Optional<AgentSession> restoreFresh(String sessionId) { calls.add("restore"); return Optional.of(session); }
         @Override public AgentSession createIfAbsent(String sessionId, AgentDefinition definition, Instant time) { return session; }
         @Override public IngressCommitResult commitIngress(AgentRunRequest request, long token, Instant time) { calls.add("commit"); return commitResult; }
+        @Override public QueueCommitResult enqueue(
+                AgentRunRequest request, int maxQueueDepth, Instant time) {
+            calls.add("enqueue");
+            return QueueCommitResult.committed(1);
+        }
         @Override public void appendOutcome(String sessionId, AgentRunResult result, long token, Instant time) { calls.add("outcome"); }
     }
 }

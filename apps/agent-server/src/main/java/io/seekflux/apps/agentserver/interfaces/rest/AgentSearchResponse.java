@@ -33,7 +33,8 @@ public record AgentSearchResponse(
         boolean candidateSetReused,
         boolean degraded,
         String fallbackReason,
-        String cancellationReason) {
+        String cancellationReason,
+        int queueDepth) {
 
     public static AgentSearchResponse from(AgentSearchResult result) {
         var search = result.searchResult();
@@ -60,6 +61,7 @@ public record AgentSearchResponse(
                 result.candidateSetReused(),
                 result.degraded(),
                 result.fallbackReason(),
-                result.cancellationReason());
+                result.cancellationReason(),
+                result.queueDepth());
     }
 }

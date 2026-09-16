@@ -2,6 +2,7 @@ package io.seekflux.agent.port.in;
 
 import io.seekflux.agent.domain.ConstraintPatch;
 import java.util.List;
+import io.seekflux.platform.agentruntime.application.command.AgentIngressMode;
 
 public record AgentSearchCommand(
         String requestId,
@@ -14,7 +15,8 @@ public record AgentSearchCommand(
         List<String> requiredTags,
         boolean allowClarification,
         AgentRequestedMode requestedMode,
-        ConstraintPatch constraintPatch) {
+        ConstraintPatch constraintPatch,
+        AgentIngressMode ingressMode) {
 
     public AgentSearchCommand {
         requestId = requireText(requestId, "request id");
@@ -23,6 +25,24 @@ public record AgentSearchCommand(
         agentId = requireText(agentId, "agent id");
         requiredTags = requiredTags == null ? List.of() : List.copyOf(requiredTags);
         requestedMode = requestedMode == null ? AgentRequestedMode.AUTO : requestedMode;
+        ingressMode = ingressMode == null ? AgentIngressMode.NEW_EXECUTION : ingressMode;
+    }
+
+    public AgentSearchCommand(
+            String requestId,
+            String sessionId,
+            String turnId,
+            String agentId,
+            String query,
+            int page,
+            int size,
+            List<String> requiredTags,
+            boolean allowClarification,
+            AgentRequestedMode requestedMode,
+            ConstraintPatch constraintPatch) {
+        this(requestId, sessionId, turnId, agentId, query, page, size, requiredTags,
+                allowClarification, requestedMode, constraintPatch,
+                AgentIngressMode.NEW_EXECUTION);
     }
 
     public AgentSearchCommand(
@@ -36,7 +56,8 @@ public record AgentSearchCommand(
             List<String> requiredTags,
             boolean allowClarification) {
         this(requestId, sessionId, turnId, agentId, query, page, size, requiredTags,
-                allowClarification, AgentRequestedMode.AUTO, null);
+                allowClarification, AgentRequestedMode.AUTO, null,
+                AgentIngressMode.NEW_EXECUTION);
     }
 
     private static String requireText(String value, String name) {

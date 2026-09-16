@@ -6,7 +6,7 @@
 
 SeekFlux 没有依赖 Ark-Leto 二进制或源码。当前实现参考《Ark-Leto 框架内核 与 Agentspark 主链路 原理详解》中的主链路、会话事件和执行权思想，自行实现内部 Runtime。类名相似只代表设计映射，不代表复制或集成了未提供的框架。
 
-Phase 1 已证明业务无关、有界、可追踪、能稳定回退的运行内核；Phase 2 完成 Query Mode、多轮约束、动态并行 Tool、OpenAI-compatible Provider Adapter 和复杂 Query Eval；Phase 3 已补齐 fencing、失主接管、跨实例取消、事务 Outbox、故障注入、Shadow 与成本计量边界。后续 AR-1～AR-4 已进一步完成原因化取消、完整消息历史、精确恢复和 `MUTATING` Tool 副作用账本。
+Phase 1 已证明业务无关、有界、可追踪、能稳定回退的运行内核；Phase 2 完成 Query Mode、多轮约束、动态并行 Tool、OpenAI-compatible Provider Adapter 和复杂 Query Eval；Phase 3 已补齐 fencing、失主接管、跨实例取消、事务 Outbox、故障注入、Shadow 与成本计量边界。后续 AR-1～AR-5 已进一步完成原因化取消、完整消息历史、精确恢复、`MUTATING` Tool 副作用账本和持久 Steer Queue/Drain。
 
 ## 2. 模块职责
 
@@ -172,6 +172,8 @@ FeatureNode 不依赖 Spring 扫描顺序，装配层明确传入列表，Pipeli
 
 PostgreSQL 的 `agent.sessions` 保存最新版本、状态版本、事件位置、快照和当前 fencing token，`agent.workspace_events` 以 `(session_id, event_position)` 排序。UserMessage 的 `(session_id, request_id)` 部分唯一索引保证 Ingress 幂等，同一 request 下允许追加多个 Assistant/ToolResult；每条消息还有全局唯一 `message_id`、Schema 版本和可选 `tool_call_id`。状态补丁和 UserMessage 在同一事务中提交，旧 `baseVersion` 不能覆盖新目标。本轮 Assistant/ToolResult、终态 WorkspaceEvent 与 `outbox.events` 在同一 fencing 事务中按连续 position 提交，外部不会看到半轮历史。Worker 按确定性 `eventId` 幂等写入 `agent.audit_events`。`agent.runs` 与 `agent.run_events` 记录每个失主/接管 attempt，但不参与 Workspace 重放。Redis 只保存热投影、执行权、取消信号和 Shadow 开关，不是 Session 真相源。
 
+STEER/QUEUE 的接收事实同样写入 `workspace_events`，事件类型为 `QUEUED_USER_MESSAGE`。V12 以 `(message_id, event_type)` 保证排队与正式 UserMessage 各自唯一，并以 `(session_id, event_type, event_position)` 支持 FIFO 读取；相同 request 在 pending 和 consumed 两个生命周期都保持幂等。队列默认每个 Session 最多 32 条，可用 `seekflux.agent.steer.queue-max-depth` 调整。逻辑契约见 [`agent-steer-queue-v1.schema.json`](../contracts/events/agent-steer-queue-v1.schema.json)。
+
 `agent.runtime_checkpoints` 和 `agent.tool_call_journal` 是执行恢复事实，不替代 Workspace。Checkpoint 使用 Workspace `messageCutoff` 防止旧运行态覆盖新历史；journal 使用稳定 Tool Call ID、参数 SHA-256 摘要、effect、attempt 和状态判断一次调用是否从未提交、正在进行、结果已知或状态不明。Outcome/Outbox 成功提交后，这两类临时恢复事实在同一数据库事务删除。
 
 `agent.tool_side_effect_ledger` 是长期保留的写副作用事实，不随 Session Outcome 清理。它只服务 `MUTATING` Tool：以稳定 Tool Call ID 派生全局唯一幂等键，在外部请求前依次持久化 `PREPARED` 和 `EXECUTING`，外部返回后先保存 `SUCCEEDED/FAILED`、结果摘要和外部回执，再推进 Tool journal、Checkpoint 与 Session。接管或取消把遗留 `EXECUTING` 收敛为 `UNKNOWN`；Runtime 不会重放该写操作，而是调用 Tool 的 `AgentToolReconciler` 查询外部状态或执行 Tool 自己定义的补偿，成功判定后写 `RECONCILED`。无 reconciler 或外部仍无法判定时抛出 `MUTATING_TOOL_STATE_UNKNOWN` 并保留账本，交由人工处理。逻辑契约见 [`agent-tool-side-effect-ledger-v1.schema.json`](../contracts/events/agent-tool-side-effect-ledger-v1.schema.json)。
@@ -190,13 +192,19 @@ Assistant 正文、reasoning 和 tool calls 分字段持久化；当前 Provider
 
 Tool 参数校验失败后只做一次不改变业务意图的确定性修复；相同规范化 Tool 指纹再次出现时返回 `NO_PROGRESS_DETECTED`。执行器是命名、有界线程池；超时会取消 Future，队列饱和产生稳定失败原因。Runtime 不使用公共线程池，也不把异步类型暴露到 Port 或 HTTP。
 
-每个模型 Decision 都形成 AssistantMessage；Tool Decision 先记录按 index 排序的稳定 Tool Call，随后为每个调用形成唯一 ToolResultMessage，最后的 Complete/Clarify/Fallback 再形成 AssistantMessage。消息同时关联 request、turn、segment、agentRun/attempt 和 call；当前尚无 Steer 分段，因此 `segmentId=turnId`，AR-5 再把一个 turn 内的多 segment 显式化。消息 ID 和 Tool Call ID 由 session/request/turn/step/index 等稳定输入确定，接管重跑不会随机改变关联键。`DefaultContextEngine` 下一轮只读取 Workspace 事件，按 position 还原 User → Assistant → Tool 历史；本轮内存 observation 只用于尚未提交的当前 Loop。
+每个模型 Decision 都形成 AssistantMessage；Tool Decision 先记录按 index 排序的稳定 Tool Call，随后为每个调用形成唯一 ToolResultMessage，最后的 Complete/Clarify/Fallback 再形成 AssistantMessage。消息同时关联 request、turn、segment、agentRun/attempt 和 call；STEER drain 后使用新请求的稳定身份形成下一 segment，所有被批量提升的 UserMessage 都按 FIFO 保留在历史中。消息 ID 和 Tool Call ID 由 session/request/turn/step/index 等稳定输入确定，接管重跑不会随机改变关联键。`DefaultContextEngine` 下一轮只读取 Workspace 事件，按 position 还原 User → Assistant → Tool 历史；本轮内存 observation 只用于尚未提交的当前 Loop。
 
 取消使用同一棵 Session → batch → individual Tool token 传播。`USER_CANCEL`、`STEER`、`AUTHORITY_LOST` 和 `SHUTDOWN` 采用 first-cause-wins，Redis 信号一次读出时间与原因并过滤旧任务残留；Runtime 在步骤边界以及模型/Tool 调用前后检查 token，等待 Future 时每 10ms 检查一次并在取消后发出线程中断。模型或 Tool 即使晚到返回也不能继续推进 Loop。取消结果固定为 `CANCELLED`，不会转成 `FAILED` 或 `FALLBACK_REQUIRED`，并在 Run、Trace、Push、HTTP 响应和 PostgreSQL `agent.runs.cancellation_reason` 中使用同一个 `cancellationReason`。Runtime 产出 Outcome 是取消与正常完成的线性化点，Session 提交前的 fencing 校验仍是防止旧 owner 晚到写入的最终屏障。
 
+### 6.1 Steer Queue/Drain
+
+请求用 `ingressMode` 显式选择 `NEW_EXECUTION`、`STEER` 或 `QUEUE`。普通请求在已有 owner 时返回 BUSY；STEER 先原子提交排队事件，成功后才以相同时间戳写 Redis `STEER`，因此取消写失败或实例退出都不会丢消息；QUEUE 只接受 `SUSPENDED` Session，不中断任务，其他状态返回 `SESSION_NOT_WAITING`。队列达到上限返回 `STEER_QUEUE_FULL`，重复的 pending 请求幂等返回 QUEUED，已经消费的重复请求返回 DUPLICATE。
+
+当前 owner 在一个 segment 提交 Outcome 后继续持权 drain：强读 Session，以 fencing token 原子提升当前所有排队事件，逐条形成正式 UserMessage，并由最后一条请求的身份、请求上下文和状态补丁驱动下一 segment；agent/model/prompt/eval/manifest/chained/LLM 等请求级 override 会在 segment 边界清理。提升后先清除不晚于批次 cutoff 的旧 STEER，再建立从该 cutoff 开始的新取消 token，所以更晚 STEER 和真实 `USER_CANCEL` 不会被误删。提升后崩溃通过已提升 Workspace 事实恢复；drain 边界失权则由后续 owner 接管。当前等待态 QUEUE 只负责可靠积压，主动恢复规则由后续 HITL/Waitpoint 状态机定义。
+
 模型和 Tool 还受两个独立 Bulkhead 保护，分别返回 `MODEL_BULKHEAD_FULL` 和 `TOOL_BULKHEAD_FULL`；故障注入只存在于 Runtime 调用边界，不要求业务 Tool 编写测试分支。Tool Call ID 由 request/step/tool/规范化参数确定性生成，Tool 同时声明副作用类型。`READ_ONLY/IDEMPOTENT` 使用稳定 Call ID 安全重试；`MUTATING` 还要求注册权限、运行时 `ALLOW/MODIFY/DENY/NEED_APPROVAL` 策略、持久账本和稳定幂等键。每次调用建立独立不可变 `AgentToolContext`，before/after/failure 观察携带 source、effect、attempt 和耗时。
 
-### 6.1 Checkpoint 与恢复协议
+### 6.2 Checkpoint 与恢复协议
 
 Runtime 在每次模型调用前保存 `PRE_TURN`，完成一批 Tool 后保存 `POST_TURN`，返回 Outcome 前保存 `COMPLETED` 或 `SUSPENDED`。Checkpoint 只包含可序列化状态：request/turn/attempt、fencing token、Workspace cutoff、冻结定义和 Tool Schema 版本、下一 Step、Tool 次数、剩余预算、持久 features、observations、当前消息、调用指纹、usage 与 Step Trace；LLM client、Publisher、线程对象、临时参数和请求级瞬态 override 不进入 Checkpoint。序列化失败会阻止安全点提交，不会静默保存半份状态。
 
@@ -240,7 +248,7 @@ GET  /v1/agent/runtime/shadow
 PUT  /v1/agent/runtime/shadow
 ```
 
-搜索响应同时返回稳定业务状态、`AgentTrace` 和可选的 `SearchTrace`；取消响应的顶层和 Trace 都返回枚举化 `cancellationReason`，且不会执行 Direct Search fallback。完整请求/响应 Schema 见 [`contracts/openapi/seekflux-v1.yaml`](../contracts/openapi/seekflux-v1.yaml)。
+搜索请求可传 `ingressMode`；排队成功返回 `state=QUEUED` 和当前 `queueDepth`，不执行 Agent 投影或 Direct Search fallback。普通搜索响应同时返回稳定业务状态、`AgentTrace` 和可选的 `SearchTrace`；取消响应的顶层和 Trace 都返回枚举化 `cancellationReason`，且不会执行 Direct Search fallback。完整请求/响应 Schema 见 [`contracts/openapi/seekflux-v1.yaml`](../contracts/openapi/seekflux-v1.yaml)。
 
 ## 9. 验证和当前边界
 
@@ -253,6 +261,6 @@ python3 evals/run_agent_reliability_eval.py
 
 固定 `direct-search-v1` 六 Query 基线上，强制 Agent 与 Direct 的 `Recall@5/MRR@5/nDCG@5` 均为 `1.0`，证明基础复用没有回归。`complex-search-v1` 的六条关键词陷阱 Query 中，Direct `MRR@1/Recall@1=0.0`，Agent `MRR@1/Recall@1=1.0`；Tool 选择、任务完成、简单 Direct 路由和多轮版本测试全部通过。
 
-`agent-reliability-v1` 固定评测证明单写者、fencing 单调、重复请求无额外 Tool 事件、事务 Outbox、幂等审计、Shadow 主结果隔离和快速关闭；12 次样本可用性 `1.0`，P95 `226.402 ms`，Fallback `0.0`。旧 owner、跨实例取消、停机取消、模型/Tool 在途取消、取消后禁止下一轮、OpenAI 调用中断、模型/Tool 故障和 Bulkhead 另有自动化测试。AR-3 增加 PRE/POST/终态 Checkpoint、模型后、Tool 提交/结果和未知写 Tool 的固定崩溃测试；AR-4 增加请求前、外部成功未确认、账本成功未推进 Session 和重复恢复测试。隔离 PostgreSQL 17 已顺序执行 V1～V11。
+`agent-reliability-v1` 固定评测证明单写者、fencing 单调、重复请求无额外 Tool 事件、事务 Outbox、幂等审计、Shadow 主结果隔离和快速关闭；12 次样本可用性 `1.0`，P95 `226.402 ms`，Fallback `0.0`。旧 owner、跨实例取消、停机取消、模型/Tool 在途取消、取消后禁止下一轮、OpenAI 调用中断、模型/Tool 故障和 Bulkhead 另有自动化测试。AR-3 增加 PRE/POST/终态 Checkpoint、模型后、Tool 提交/结果和未知写 Tool 的固定崩溃测试；AR-4 增加请求前、外部成功未确认、账本成功未推进 Session 和重复恢复测试；AR-5 增加 STEER/QUEUE、容量、FIFO 批量提升、最后意图、幂等、崩溃恢复和 drain 失权测试。隔离 PostgreSQL 17 已顺序执行 V1～V12，并验证排队消息的生命周期唯一约束。
 
-对照 Ark-Leto 后仍未完成的是 steer 排队、上下文压缩、OutputGuard、实时 Push/SSE、HITL、Handoff、子 Agent、MCP/Skill/Graph 和完整 OTel。写 Tool 已有持久账本与 reconciliation 协议，但每个真实写 Tool 仍必须依据其外部系统能力实现状态查询或补偿，框架不能把不支持查询/幂等的外部接口变安全。真实付费 Provider 基线也需要部署方端点和密钥；当前报告不伪造 Token/成本。完整取舍见 [ADR-006](adr/ADR-006-agent-reliability-fencing-outbox-shadow.md)。
+对照 Ark-Leto 后仍未完成的是上下文压缩、413 重试、OutputGuard、实时 Push/SSE、HITL、Handoff、子 Agent、MCP/Skill/Graph 和完整 OTel。写 Tool 已有持久账本与 reconciliation 协议，但每个真实写 Tool 仍必须依据其外部系统能力实现状态查询或补偿，框架不能把不支持查询/幂等的外部接口变安全。真实付费 Provider 基线也需要部署方端点和密钥；当前报告不伪造 Token/成本。完整取舍见 [ADR-006](adr/ADR-006-agent-reliability-fencing-outbox-shadow.md)。

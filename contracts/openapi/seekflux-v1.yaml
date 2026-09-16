@@ -519,6 +519,11 @@ components:
           default: AUTO
           enum: [AUTO, DIRECT, AGENT]
           description: AUTO sends simple queries directly to Search and complex or multi-turn queries to the Agent.
+        ingressMode:
+          type: string
+          default: NEW_EXECUTION
+          enum: [NEW_EXECUTION, STEER, QUEUE]
+          description: STEER reliably queues before interrupting an active segment; QUEUE is accepted only while the Session is waiting.
         query: {type: string, minLength: 1, maxLength: 500}
         page: {type: integer, minimum: 0, default: 0}
         size: {type: integer, minimum: 1, maximum: 50, default: 12}
@@ -668,6 +673,7 @@ components:
         - successfulToolCount
         - candidateSetReused
         - degraded
+        - queueDepth
       properties:
         requestId: {type: string}
         agentRunId: {type: [string, "null"], format: uuid}
@@ -675,7 +681,7 @@ components:
         turnId: {type: string}
         state:
           type: string
-          enum: [RESULTS_READY, NEED_CLARIFICATION, FALLBACK_RESULTS, CANCELLED, FAILED]
+          enum: [RESULTS_READY, QUEUED, NEED_CLARIFICATION, FALLBACK_RESULTS, CANCELLED, FAILED]
         executionMode:
           type: string
           enum: [DIRECT, AGENT, AGENT_TO_DIRECT_FALLBACK]
@@ -717,6 +723,10 @@ components:
         cancellationReason:
           type: [string, "null"]
           enum: [USER_CANCEL, STEER, AUTHORITY_LOST, SHUTDOWN, null]
+        queueDepth:
+          type: integer
+          minimum: 0
+          description: Pending queue depth observed when a STEER or waiting message was accepted.
     UpdateUserInterestProfileRequest:
       type: object
       required: [topics]

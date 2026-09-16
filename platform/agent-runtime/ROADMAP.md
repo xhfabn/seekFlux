@@ -1,6 +1,6 @@
 # Agent Runtime 演进路线与交付记录
 
-> 文档状态：**AR-1、AR-2、AR-3、AR-4 已完成**；当前实施目标为 **AR-5 Steer Queue / Drain**。
+> 文档状态：**AR-1～AR-5 已完成**；当前实施目标为 **AR-6 上下文治理、413 重试和 OutputGuard**。
 >
 > 本文只记录 `platform/agent-runtime` 后续演进的实施顺序、完成门槛和交付证据。写进计划不代表已经实现；只有代码、自动化测试以及必要的真实验收或固定评测共同证明后，阶段状态才能改为“已完成”。
 
@@ -41,7 +41,8 @@
 
 - Checkpoint、pending Tool journal 与有限 ResumeAction 已支持从安全边界继续；`MUTATING` Tool 通过持久副作用账本、稳定幂等键和 Tool 专属 reconciliation 恢复；
 - `MUTATING` Tool 已有注册/执行双层策略、外部回执、请求/结果摘要及 `PREPARED → EXECUTING → SUCCEEDED/FAILED/UNKNOWN/RECONCILED` 状态机；
-- 没有 Steer Queue/Drain、上下文压缩、413 溢出修复、OutputGuard、实时流式 Push；
+- Steer 已支持有界持久队列、先入队后取消、fencing drain、批量升格、旧信号精确清理和崩溃恢复；
+- 没有上下文压缩、413 溢出修复、OutputGuard、实时流式 Push；
 - HITL、异步等待点、Handoff、子 Agent、MCP 和 Graph 尚未实现。
 
 ## 3. 实施顺序与依赖
@@ -69,8 +70,8 @@ flowchart TD
 | AR-2 | 消息事件、Session 投影与 Tool 结果契约 | 已完成 | 大 | AR-1 |
 | AR-3 | Checkpoint、pending Tool 与恢复协议 | 已完成 | 大 | AR-2 |
 | AR-4 | Mutating Tool 副作用账本 | 已完成 | 大 | AR-3 |
-| AR-5 | Steer Queue/Drain | 下一步 | 中到大 | AR-1、AR-2 |
-| AR-6 | 上下文压缩、413 重试和 OutputGuard | 未开始 | 大 | AR-2 |
+| AR-5 | Steer Queue/Drain | 已完成 | 中到大 | AR-1、AR-2 |
+| AR-6 | 上下文压缩、413 重试和 OutputGuard | 下一步 | 大 | AR-2 |
 | AR-7 | 流式调用、实时 Push 与跨实例订阅 | 未开始 | 大 | AR-6 |
 | AR-8 | HITL、异步等待点、Handoff 与子 Agent | 未开始 | 多个独立大阶段 | AR-3、AR-4、AR-7 |
 | AR-9 | Skill/ToolGroup、MCP、Chained/Graph | 后置可选 | 多个独立大阶段 | AR-2/3/4/7，按子阶段区分 |
@@ -201,6 +202,8 @@ Checkpoint、journal、Workspace/Run 事件的事务边界和写入顺序必须�
 
 ### AR-5：Steer Queue/Drain
 
+状态：**已完成（2026-09-15）**。
+
 目标：运行中的新用户消息先可靠入队，再打断当前段，并由持有执行权的实例按顺序 drain，形成同一 Session 内的连续交互。
 
 实施范围：
@@ -212,9 +215,11 @@ Checkpoint、journal、Workspace/Run 事件的事务边界和写入顺序必须�
 - 只清理触发本轮 drain 的旧 Steer 信号，保留其后到达的真实取消或新插话；
 - drain 重建身份和持久 features，但必须清除 agent/模型/评测等 per-request override，防止一次请求配置泄漏到后续消息；
 - 覆盖“终态写入到 drain 启动之间”的窗口，无活 Loop 时由受控兜底主动 drain；
-- 实施前由产品明确：busy 与 steer 的入口规则、队列上限、批量/合并策略、最后意图者身份规则、同卡续段展示和等待态是否只排队不打断。
+- 产品语义固定为：普通请求忙时返回 busy；显式 `STEER` 进入持久队列并打断当前 segment；显式 `QUEUE` 只允许等待态且不打断；默认上限 32、当前 drain 批量提升所有已提交消息、最后一条消息决定本段身份/运行上下文，所有消息仍按 FIFO 进入历史；`Steered` Push 供同卡续段展示。
 
 完成门槛：并发插话、插话后立即取消、多条连续插话、owner 丢失和 drain 中崩溃的测试均证明消息不丢失、不乱序、不重复执行。
+
+实现说明：`AgentIngressMode` 在 API/Router 显式区分 `NEW_EXECUTION/STEER/QUEUE`。`JdbcAgentSessionStore.enqueue` 在 Session 行锁事务中写 `QUEUED_USER_MESSAGE`，提交后 `SessionExecutor` 才以同一时间点写 STEER；V12 把消息唯一约束调整为 `(message_id,event_type)`，因此升格时可用同一逻辑 message ID 追加 `USER_MESSAGE`。持权 owner 每次强读后批量升格当前 FIFO 队列，最终状态补丁按“最后意图胜出”重建，排队 request/features 会剔除 agent/model/prompt/eval 等瞬态 override。drain token 从队列时间点开始，Redis 只 compare-delete 不晚于该点的 STEER，随后到达的 `USER_CANCEL` 或新 STEER 保留。promotion 后崩溃由 `promotedQueuedExecution` 和既有 Checkpoint/Resume 协议接管；owner 失权时停止整个 drain，队列留给新 owner。
 
 ### AR-6：上下文治理、413 重试和 OutputGuard
 
@@ -357,6 +362,17 @@ WorkspaceEvent 仍是恢复事实，PushEvent 只是过程投影；外部 SSE/We
 - 剩余边界：Runtime 提供的是副作用恢复协议，不是跨外部系统分布式事务；每个真实写 Tool 仍必须根据目标系统实现可靠幂等、状态查询或补偿。当前产品只注册两个 `READ_ONLY` Search Tool，尚无生产写 Tool。真实审批挂起、人工处理工作台和后台 reconciliation 扫描器分别属于 AR-8 或具体产品运维能力。
 - 下一步：AR-5 先明确 busy/steer 产品入口、队列上限和合并规则，再实现 `QueuedUserMessage → STEER cancel → owner drain`。
 - 关联文档/ADR/契约：[`docs/agent-runtime.md`](../../docs/agent-runtime.md)、[ADR-006](../../docs/adr/ADR-006-agent-reliability-fencing-outbox-shadow.md)、[`agent-tool-side-effect-ledger-v1.schema.json`](../../contracts/events/agent-tool-side-effect-ledger-v1.schema.json)、`V11__agent_tool_side_effect_ledger.sql`。
+
+### 2026-09-15：完成 AR-5 Steer Queue/Drain
+
+- 阶段：AR-5（已完成）；AR-6 调整为下一步。
+- 本轮范围：实现显式 Ingress Mode、有界持久队列、先入队后 STEER、持权 drain、旧信号精确清理、等待态只排队、终态窗口兜底和 promotion 崩溃恢复。
+- 实现事实与关键入口：`AgentIngressMode` 与 OpenAPI 暴露 `NEW_EXECUTION/STEER/QUEUE`；`DefaultRouter` 保留普通 busy，并只在显式 STEER 时排队打断；`JdbcAgentSessionStore` 以 `QUEUED_USER_MESSAGE` 事实和同 message ID 的 `USER_MESSAGE` 表达排队/升格；`SessionExecutor` 在同一 authority 生命周期循环 `restoreFresh → promoteQueued → loop → outcome`；`SteerQueuePolicy` 默认上限 32，并清除瞬态 override；Push 增加 `MessageQueued/Steered`，同步响应增加 `QUEUED/queueDepth`。V12 调整消息索引并增加队列 request 幂等索引。
+- 失败/取消/恢复语义：队列事务先于 STEER 信号；旧 STEER 只按“原因 + 时间 + compare-delete”清理，插话后的真实取消和下一次插话不会被吞；连续消息按 FIFO 全部升格，最后一条决定 drain 上下文和最终状态补丁；普通 busy 不隐式转 Steer，`QUEUE` 非等待态返回 `SESSION_NOT_WAITING`，队满返回 `STEER_QUEUE_FULL`。owner 失权停止整个 drain；promotion 后崩溃用同一逻辑消息和恢复入口继续，不重复追加 UserMessage。
+- 验证命令与结果：JDK 21 下 Agent Runtime 65 个、Persistence 7 个、Agent Orchestration Context 14 个测试无失败，`mvn test` 全仓 26 个 Reactor 模块回归通过；AR-5 测试覆盖提交顺序、并发连续插话、批量 FIFO、最后意图、override 清理、插话后立即取消、队列上限/重复请求、等待态入口、owner 失权接管和 promotion 固定故障点。隔离 PostgreSQL 17 顺序执行 V1～V12，并真实插入同 message ID 的 `QUEUED_USER_MESSAGE → USER_MESSAGE` 验证索引。
+- 剩余边界：`QUEUE` 等待态消息要等未来 AR-8 的 HITL/Waitpoint resume 才会消费；当前只有进程内 Push 事件，没有 SSE/WebSocket 或跨 Pod 中继；批量策略固定为“当前批次全部升格、最后意图胜出”，尚未提供按业务配置的合并器。
+- 下一步：AR-6A 先完成上下文分层、Token 预算和 Tool Schema 计量，再进入摘要压缩、413 有界重试与 OutputGuard。
+- 关联文档/ADR/契约：[`docs/agent-runtime.md`](../../docs/agent-runtime.md)、[ADR-006](../../docs/adr/ADR-006-agent-reliability-fencing-outbox-shadow.md)、[`agent-steer-queue-v1.schema.json`](../../contracts/events/agent-steer-queue-v1.schema.json)、[`contracts/openapi/seekflux-v1.yaml`](../../contracts/openapi/seekflux-v1.yaml)、`V12__agent_steer_queue.sql`。
 
 ---
 
