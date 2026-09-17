@@ -28,6 +28,9 @@ import io.seekflux.platform.agentruntime.application.spi.capability.event.model.
 import io.seekflux.platform.agentruntime.domain.service.recovery.AgentRecoveryExecution;
 import io.seekflux.platform.agentruntime.domain.service.recovery.RecoveryFaultInjector;
 import io.seekflux.platform.agentruntime.domain.service.recovery.RecoveryPoint;
+import io.seekflux.platform.agentruntime.domain.model.wait.WaitResolution;
+import io.seekflux.platform.agentruntime.domain.model.wait.WaitResolutionResult;
+import io.seekflux.platform.agentruntime.domain.model.wait.WaitResumeResult;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -184,8 +187,13 @@ public final class SessionExecutor implements AutoCloseable {
             }
             AgentRunResult result = executeSegment(
                     sessionId, context, publisher, authority, ingressResult, token);
-            drainQueuedMessages(
-                    sessionId, context, publisher, authority, activeToken, result);
+            if (result.state()
+                    != io.seekflux.platform.agentruntime.domain.model.run.AgentTerminalState.WAITING
+                    && result.state()
+                    != io.seekflux.platform.agentruntime.domain.model.run.AgentTerminalState.NEED_CLARIFICATION) {
+                drainQueuedMessages(
+                        sessionId, context, publisher, authority, activeToken, result);
+            }
             return result;
         } finally {
             renewal.cancel(true);
@@ -261,6 +269,50 @@ public final class SessionExecutor implements AutoCloseable {
         }
     }
 
+    public WaitResumeResult resumeWait(
+            WaitResolution resolution,
+            RuntimeContext context,
+            PushEventPublisher publisher) {
+        java.util.Optional<ExecutionAuthority> acquired = tryAcquireExecution(resolution.sessionId());
+        if (acquired.isEmpty()) {
+            return WaitResumeResult.of(WaitResumeResult.Status.BUSY);
+        }
+        ExecutionAuthority authority = acquired.get();
+        try {
+            WaitResolutionResult committed = recoveryStore.resolveWait(
+                    resolution, authority.fencingToken(), clock.instant());
+            if (committed.status() == WaitResolutionResult.Status.MISSING) {
+                authority.close();
+                return WaitResumeResult.of(WaitResumeResult.Status.MISSING);
+            }
+            if (committed.status() == WaitResolutionResult.Status.CONFLICT) {
+                authority.close();
+                return WaitResumeResult.of(WaitResumeResult.Status.CONFLICT);
+            }
+            if (committed.status() == WaitResolutionResult.Status.DUPLICATE) {
+                AgentSession session = sessions.restoreFresh(resolution.sessionId())
+                        .orElseThrow(() -> new IllegalStateException(
+                                "wait session disappeared during duplicate resolution"));
+                if (session.status() == io.seekflux.platform.agentruntime.domain.model.session.AgentSessionStatus.COMPLETED) {
+                    authority.close();
+                    return WaitResumeResult.of(WaitResumeResult.Status.DUPLICATE);
+                }
+            }
+            publisher.publish(new PushEvent.WaitResolved(
+                    "wait:" + resolution.waitId(), clock.instant(), resolution));
+            AgentRunResult outcome = run(
+                    resolution.sessionId(),
+                    context,
+                    publisher,
+                    authority,
+                    IngressCommitResult.RECOVERED);
+            return WaitResumeResult.completed(outcome);
+        } catch (RuntimeException error) {
+            authority.close();
+            throw error;
+        }
+    }
+
     private AgentRunResult executeSegment(
             String sessionId,
             RuntimeContext context,
@@ -284,6 +336,8 @@ public final class SessionExecutor implements AutoCloseable {
                     clock.instant());
             if (recoveryPlan.checkpoint() != null
                     && recoveryPlan.checkpoint().messageCutoff() != fresh.position()
+                    && recoveryPlan.checkpoint().boundary()
+                            != io.seekflux.platform.agentruntime.domain.model.recovery.CheckpointBoundary.SUSPENDED
                     && !fresh.hasOnlyQueuedEventsAfter(recoveryPlan.checkpoint().messageCutoff())) {
                 throw new IllegalStateException(
                         "checkpoint message cutoff no longer matches the Workspace high-water mark");

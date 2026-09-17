@@ -16,6 +16,8 @@ import io.seekflux.platform.agentruntime.domain.model.run.AgentTerminalState;
 import io.seekflux.platform.agentruntime.domain.model.run.LlmUsage;
 import io.seekflux.platform.agentruntime.domain.model.tool.AgentToolObservation;
 import io.seekflux.platform.agentruntime.domain.model.tool.AgentToolResult;
+import io.seekflux.platform.agentruntime.domain.model.wait.WaitResolution;
+import io.seekflux.platform.agentruntime.domain.model.wait.WaitState;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -103,6 +105,42 @@ class AgentRecoveryCodecTest {
 
         assertEquals(source, restored);
         assertEquals(true, restored.safeToRetry());
+    }
+
+    @Test
+    void roundTripsTypedWaitStateAndResolutionAcrossJsonBoundary() throws Exception {
+        WaitState source = new WaitState.ChildAgent(
+                1,
+                "00000000-0000-0000-0000-000000000020",
+                "session",
+                "request",
+                "turn",
+                "00000000-0000-0000-0000-000000000010",
+                "call",
+                NOW,
+                NOW.plusSeconds(30),
+                "child-agent",
+                "child-session",
+                2,
+                1500);
+        WaitResolution resolution = new WaitResolution(
+                1,
+                "resolution-1",
+                source.waitId(),
+                source.sessionId(),
+                source.requestId(),
+                source.turnId(),
+                WaitResolution.Outcome.COMPLETED,
+                Map.of("answer", "child-result"),
+                null,
+                NOW.plusSeconds(1));
+
+        WaitState restoredState = codec.decodeWaitState(json(codec.encodeWaitState(source)));
+        WaitResolution restoredResolution = codec.decodeWaitResolution(
+                json(codec.encodeWaitResolution(resolution)));
+
+        assertEquals(source, restoredState);
+        assertEquals(resolution, restoredResolution);
     }
 
     private static AgentMessage.Assistant assistant() {

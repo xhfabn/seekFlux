@@ -116,7 +116,7 @@ type AgentSearchResponse = {
   agentRunId: string | null;
   sessionId: string;
   turnId: string;
-  state: "RESULTS_READY" | "NEED_CLARIFICATION" | "FALLBACK_RESULTS" | "CANCELLED" | "FAILED";
+  state: "RESULTS_READY" | "NEED_CLARIFICATION" | "WAITING" | "FALLBACK_RESULTS" | "CANCELLED" | "FAILED";
   executionMode: "DIRECT" | "AGENT" | "AGENT_TO_DIRECT_FALLBACK";
   goalVersion: number;
   routeReason: "SIMPLE_QUERY" | "COMPLEX_QUERY" | "MULTI_TURN_PATCH" | "EXPLICIT_DIRECT" | "EXPLICIT_AGENT";
@@ -144,6 +144,10 @@ type AgentSearchResponse = {
   candidateSetReused: boolean;
   degraded: boolean;
   fallbackReason: string | null;
+  cancellationReason: string | null;
+  queueDepth: number;
+  waitId: string | null;
+  waitType: "HITL" | "ASYNC_TASK" | "WAITPOINT" | "HANDOFF" | "CHILD_AGENT" | null;
 };
 
 type AgentTurn = {
@@ -266,6 +270,9 @@ function formatEventTime(value: string): string {
 
 function agentReply(response: AgentSearchResponse): string {
   if (response.state === "NEED_CLARIFICATION") return response.clarification || "还需要一个条件才能继续筛选。";
+  if (response.state === "WAITING") {
+    return response.waitType === "HITL" ? "这一步正在等待确认。" : "任务已挂起，正在等待外部结果。";
+  }
   if (response.state === "CANCELLED") return "这次搜索已停止。";
   if (response.state === "FAILED") return "这次搜索没有完成，请换一种说法再试。";
   if (!response.items.length) return "没有找到同时满足这些条件的内容。你可以放宽一个条件继续找。";

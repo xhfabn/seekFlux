@@ -1,6 +1,8 @@
 package io.seekflux.platform.agentruntime.application.spi.capability.event.model;
 
 import io.seekflux.platform.agentruntime.domain.model.run.AgentTerminalState;
+import io.seekflux.platform.agentruntime.domain.model.wait.WaitResolution;
+import io.seekflux.platform.agentruntime.domain.model.wait.WaitState;
 import java.time.Instant;
 
 public sealed interface PushEvent {
@@ -133,5 +135,17 @@ public sealed interface PushEvent {
             Instant eventTime,
             String nextRequestId,
             int drainedMessageCount) implements PushEvent {
+    }
+
+    record WaitSuspended(
+            String agentRunId,
+            Instant eventTime,
+            WaitState waitState) implements PushEvent {
+    }
+
+    record WaitResolved(
+            String agentRunId,
+            Instant eventTime,
+            WaitResolution resolution) implements PushEvent {
     }
 }

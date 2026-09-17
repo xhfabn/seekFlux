@@ -3,6 +3,8 @@ package io.seekflux.platform.agentruntime.domain.model.session;
 import io.seekflux.platform.agentruntime.application.command.AgentRunRequest;
 import io.seekflux.platform.agentruntime.domain.model.message.AgentMessage;
 import io.seekflux.platform.agentruntime.domain.model.run.AgentTerminalState;
+import io.seekflux.platform.agentruntime.domain.model.wait.WaitResolution;
+import io.seekflux.platform.agentruntime.domain.model.wait.WaitState;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Map;
@@ -102,6 +104,30 @@ public sealed interface WorkspaceEvent {
 
         public StatePatched {
             state = state == null ? Map.of() : Map.copyOf(state);
+        }
+    }
+
+    record WaitSuspended(
+            long position,
+            Instant eventTime,
+            WaitState waitState) implements WorkspaceEvent {
+
+        public WaitSuspended {
+            if (waitState == null) {
+                throw new IllegalArgumentException("suspended wait state is required");
+            }
+        }
+    }
+
+    record WaitResolved(
+            long position,
+            Instant eventTime,
+            WaitResolution resolution) implements WorkspaceEvent {
+
+        public WaitResolved {
+            if (resolution == null) {
+                throw new IllegalArgumentException("wait resolution is required");
+            }
         }
     }
 

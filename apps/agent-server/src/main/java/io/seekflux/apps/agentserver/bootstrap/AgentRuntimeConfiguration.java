@@ -58,6 +58,10 @@ import io.seekflux.platform.agentruntime.domain.service.loop.AgentLoop;
 import io.seekflux.platform.agentruntime.domain.service.loop.DefaultAgentLoop;
 import io.seekflux.platform.agentruntime.domain.service.router.DefaultRouter;
 import io.seekflux.platform.agentruntime.application.api.Router;
+import io.seekflux.platform.agentruntime.application.api.WaitResumeDispatcher;
+import io.seekflux.platform.agentruntime.application.command.AgentRunRequest;
+import io.seekflux.platform.agentruntime.application.command.FeatureRequest;
+import io.seekflux.platform.agentruntime.domain.service.wait.WaitTimeoutProcessor;
 import io.seekflux.platform.agentruntime.application.spi.capability.session.AgentSessionStore;
 import io.seekflux.platform.agentruntime.application.spi.capability.session.AgentRecoveryStore;
 import io.seekflux.platform.agentruntime.application.spi.capability.context.ContextCompactionStore;
@@ -83,11 +87,13 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
 import io.micrometer.core.instrument.MeterRegistry;
 
 @Configuration
+@EnableScheduling
 class AgentRuntimeConfiguration {
 
     @Bean
@@ -142,6 +148,12 @@ class AgentRuntimeConfiguration {
             @Value("${seekflux.agent.push.relay-queue-capacity:100}") int queueCapacity) {
         return AgentSearchConfiguration.boundedExecutor(
                 "seekflux-agent-push-relay-", 1, 1, queueCapacity);
+    }
+
+    @Bean(name = "agentWaitTimeoutExecutor", destroyMethod = "shutdown")
+    ExecutorService agentWaitTimeoutExecutor() {
+        return AgentSearchConfiguration.boundedExecutor(
+                "seekflux-agent-wait-timeout-", 1, 1, 1);
     }
 
     @Bean(name = "agentSseExecutor", destroyMethod = "shutdown")
@@ -418,6 +430,49 @@ class AgentRuntimeConfiguration {
             SessionExecutor agentSessionExecutor,
             Clock agentClock) {
         return new DefaultRouter(agentFeaturePipeline, sessions, agentSessionExecutor, agentClock);
+    }
+
+    @Bean
+    WaitResumeDispatcher agentWaitResumeDispatcher(
+            Router agentRouter,
+            AgentSessionStore sessions,
+            @Qualifier("seekFluxAgentDefinitions") Map<String, AgentDefinition> definitions,
+            @Qualifier("seekFluxAgentLlmClients") Map<String, LlmClient> llmClients) {
+        return (resolution, publisher) -> {
+            var session = sessions.restoreFresh(resolution.sessionId())
+                    .orElseThrow(() -> new IllegalStateException("wait session does not exist"));
+            AgentDefinition definition = definitions.get(session.agentId());
+            LlmClient llmClient = llmClients.get(session.agentId());
+            if (definition == null || llmClient == null) {
+                throw new IllegalStateException("wait Agent definition is unavailable");
+            }
+            AgentRunRequest runRequest = new AgentRunRequest(
+                    resolution.requestId(),
+                    resolution.sessionId(),
+                    resolution.turnId(),
+                    "internal wait resume",
+                    Map.of("internalIngress", true));
+            return agentRouter.resume(
+                    resolution,
+                    new FeatureRequest(definition, runRequest, llmClient),
+                    publisher);
+        };
+    }
+
+    @Bean
+    WaitTimeoutProcessor agentWaitTimeoutProcessor(
+            AgentRecoveryStore waits,
+            WaitResumeDispatcher dispatcher,
+            Clock agentClock) {
+        return new WaitTimeoutProcessor(waits, dispatcher, agentClock);
+    }
+
+    @Bean
+    AgentWaitTimeoutWorker agentWaitTimeoutWorker(
+            WaitTimeoutProcessor processor,
+            @Qualifier("agentWaitTimeoutExecutor") ExecutorService executor,
+            @Value("${seekflux.agent.wait.timeout-batch-size:32}") int batchSize) {
+        return new AgentWaitTimeoutWorker(processor, batchSize, executor);
     }
 
     @Bean(name = "seekFluxAgentDefinitions")

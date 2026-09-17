@@ -226,11 +226,10 @@ class AgentRuntimeSideEffectLedgerTest {
                         new AgentDecision.CallTool("publish", Map.of("query", "raw")));
         assertEquals("TOOL_POLICY_DENIED", denied.fallbackReason());
 
-        AgentRunResult approval = runtime(registry, context ->
+        assertThrows(IllegalStateException.class, () -> runtime(registry, context ->
                 ToolExecutionPolicy.Decision.needApproval("human approval"))
                 .run(definition(), request(), ignored ->
-                        new AgentDecision.CallTool("publish", Map.of("query", "raw")));
-        assertEquals("TOOL_APPROVAL_REQUIRED", approval.fallbackReason());
+                        new AgentDecision.CallTool("publish", Map.of("query", "raw"))));
         assertEquals(1, calls.get());
     }
 

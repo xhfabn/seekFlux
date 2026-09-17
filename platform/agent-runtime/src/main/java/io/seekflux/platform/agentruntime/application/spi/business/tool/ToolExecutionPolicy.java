@@ -1,6 +1,7 @@
 package io.seekflux.platform.agentruntime.application.spi.business.tool;
 
 import io.seekflux.platform.agentruntime.application.command.AgentRunRequest;
+import java.time.Duration;
 import java.util.Map;
 
 @FunctionalInterface
@@ -23,12 +24,28 @@ public interface ToolExecutionPolicy {
         }
     }
 
-    record Decision(Action action, Map<String, Object> arguments, String reason) {
+    record Decision(
+            Action action,
+            Map<String, Object> arguments,
+            String reason,
+            Duration approvalTimeout) {
+
+        public Decision(Action action, Map<String, Object> arguments, String reason) {
+            this(action, arguments, reason, null);
+        }
+
         public Decision {
             if (action == null) {
                 throw new IllegalArgumentException("Tool policy action is required");
             }
             arguments = arguments == null ? Map.of() : Map.copyOf(arguments);
+            if (action == Action.NEED_APPROVAL
+                    && (approvalTimeout == null
+                            || approvalTimeout.isZero()
+                            || approvalTimeout.isNegative())) {
+                throw new IllegalArgumentException(
+                        "Tool approval timeout must be positive");
+            }
         }
 
         public static Decision allow(Map<String, Object> arguments) {
@@ -44,7 +61,11 @@ public interface ToolExecutionPolicy {
         }
 
         public static Decision needApproval(String reason) {
-            return new Decision(Action.NEED_APPROVAL, Map.of(), reason);
+            return needApproval(reason, Duration.ofMinutes(15));
+        }
+
+        public static Decision needApproval(String reason, Duration timeout) {
+            return new Decision(Action.NEED_APPROVAL, Map.of(), reason, timeout);
         }
     }
 

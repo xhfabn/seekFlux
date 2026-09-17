@@ -90,6 +90,43 @@ paths:
                 properties:
                   sessionId: {type: string}
                   cancelled: {type: boolean}
+  /v1/agent/sessions/{sessionId}/waits/{waitId}:resolve:
+    post:
+      operationId: resolveAgentWait
+      summary: Idempotently approve, deny, complete, time out, or cancel a suspended Agent wait
+      description: >-
+        The first valid resolution wins under the Session fencing token. Repeating the same
+        resolutionId is idempotent; a different late callback conflicts. APPROVED resumes the
+        original Tool call, while COMPLETED supplies an asynchronous/child Tool result. The
+        authenticated X-User-Id is persisted as the resolution actor.
+      tags: [Agent]
+      parameters:
+        - $ref: "#/components/parameters/UserIdHeader"
+        - name: sessionId
+          in: path
+          required: true
+          schema: {type: string, minLength: 1, maxLength: 128}
+        - name: waitId
+          in: path
+          required: true
+          schema: {type: string, minLength: 1, maxLength: 128}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentWaitResolutionRequest"
+      responses:
+        "200":
+          description: Resolution accepted, or an identical resolution was already applied
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentWaitResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          $ref: "#/components/responses/AgentConflict"
   /v1/agent/runtime/shadow:
     get:
       operationId: getAgentShadowSettings
@@ -684,7 +721,7 @@ components:
         tookMillis: {type: integer, format: int64, minimum: 0}
         terminalState:
           type: string
-          enum: [RESULTS_READY, NEED_CLARIFICATION, FALLBACK_REQUIRED, CANCELLED, FAILED]
+          enum: [RESULTS_READY, NEED_CLARIFICATION, WAITING, FALLBACK_REQUIRED, CANCELLED, FAILED]
         executionMode:
           type: string
           enum: [AGENT, AGENT_TO_DIRECT_FALLBACK]
@@ -746,7 +783,7 @@ components:
         turnId: {type: string}
         state:
           type: string
-          enum: [RESULTS_READY, QUEUED, NEED_CLARIFICATION, FALLBACK_RESULTS, CANCELLED, FAILED]
+          enum: [RESULTS_READY, QUEUED, NEED_CLARIFICATION, WAITING, FALLBACK_RESULTS, CANCELLED, FAILED]
         executionMode:
           type: string
           enum: [DIRECT, AGENT, AGENT_TO_DIRECT_FALLBACK]
@@ -792,6 +829,42 @@ components:
           type: integer
           minimum: 0
           description: Pending queue depth observed when a STEER or waiting message was accepted.
+        waitId:
+          type: [string, "null"]
+          description: Durable wait identity when the Runtime suspended before returning.
+        waitType:
+          type: [string, "null"]
+          enum: [HITL, ASYNC_TASK, WAITPOINT, HANDOFF, CHILD_AGENT, null]
+    AgentWaitResolutionRequest:
+      type: object
+      additionalProperties: false
+      required: [resolutionId, requestId, turnId, outcome]
+      properties:
+        resolutionId: {type: string, minLength: 1, maxLength: 128}
+        requestId: {type: string, minLength: 1, maxLength: 128}
+        turnId: {type: string, minLength: 1, maxLength: 128}
+        outcome:
+          type: string
+          enum: [APPROVED, DENIED, COMPLETED, TIMED_OUT, CANCELLED, FAILED]
+        output:
+          type: object
+          additionalProperties: true
+        errorCode: {type: [string, "null"], maxLength: 128}
+    AgentWaitResponse:
+      type: object
+      additionalProperties: false
+      required: [status, waitId, output]
+      properties:
+        status: {type: string, enum: [COMPLETED, DUPLICATE]}
+        waitId: {type: string}
+        terminalState:
+          type: [string, "null"]
+          enum: [RESULTS_READY, NEED_CLARIFICATION, WAITING, FALLBACK_REQUIRED, CANCELLED, FAILED, null]
+        agentRunId: {type: [string, "null"], format: uuid}
+        output:
+          type: object
+          additionalProperties: true
+        errorCode: {type: [string, "null"]}
     UpdateUserInterestProfileRequest:
       type: object
       required: [topics]

@@ -4,6 +4,7 @@ public enum ToolJournalStatus {
     DECIDED,
     EXECUTING,
     UNKNOWN,
+    WAITING,
     SUCCEEDED,
     FAILED,
     CANCELLED,

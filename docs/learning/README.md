@@ -11,7 +11,7 @@
 
 > **当前处于：Step 10 已完成，Step 11「多模态媒体理解与跨模态检索」已开始、仍为下一步。**
 
-截至 2026-09-16，已经跑通以下真实链路：
+截至 2026-09-17，已经跑通以下真实链路：
 
 - 内容登记 → PostgreSQL/Outbox → Kafka → Worker 生成画像并发布 → Elasticsearch 建索引；
 - 用户画像保存到 Redis → Search/Feed 使用真实后端数据；
@@ -27,6 +27,7 @@
 - OpenAI-compatible `LlmClient` Adapter 与版本化 Prompt；默认确定性 Provider 保留为无 Key 回归基线；
 - Redis fencing/owner-CAS、失主接管、原因化跨实例取消、模型/Tool 在途取消、优雅停机和旧 owner 提交隔离；取消以 `USER_CANCEL/STEER/AUTHORITY_LOST/SHUTDOWN` 独立落为 `CANCELLED`，不会误触发 fallback；
 - Agent 终态事务 Outbox、Kafka 幂等审计消费、模型/Tool Bulkhead 与固定故障注入；
+- Agent 持久等待已支持类型化 `WAITING/SUSPENDED`、HITL 审批、Async/Waitpoint 回调、独立等待期限、超时/取消 first-writer-wins、恢复后 ToolResult 补偿和等待期间 Queue 的后续 drain；
 - 隔离 Shadow、Redis 跨实例快速开关，以及 Token/成本 Trace 与版本化 Metrics；
 - 发现、Search、Feed 与 Agent 候选的真实曝光/主动行为采集，Interaction API 批次幂等、完整归因、事务 Outbox、Kafka 重放与幂等行为事实；
 - 版本化 `realtime-window-v1`、Flink 事件时间/Watermark/迟到 Side Output、本地 JDBC 参考投影、Redis 在线快照，以及 Search/Feed 的短期兴趣与内容热度消费、过期/故障回退；
@@ -37,7 +38,7 @@
   视频的端到端验收；文本、图片、视频查询均能返回真实媒体与视频时间范围，但固定五向查询集、
   Recall@K 和通道消融尚未完成，因此 Step 11 仍是“下一步”。
 
-Agent Phase 3 已经完成，Phase 4 的行为事实与实时特征两个深化切片也已完成。Agent Runtime 后续演进中的 AR-1“取消语义闭环”、AR-2“完整消息事件与多轮历史”、AR-3“Checkpoint、pending Tool 与恢复协议”、AR-4“Mutating Tool 副作用账本”、AR-5“Steer Queue/Drain”、AR-6“上下文治理、413 重试和 OutputGuard”及 AR-7“流式模型与实时 Push”已完成，AR-8“等待状态、HITL 与父子执行”为下一步，实施记录见[模块路线](../../platform/agent-runtime/ROADMAP.md)。AR-7 已提供 provider-neutral `ChatChunk`、真实 OpenAI-compatible SSE、首输出前有界重试、完整参数后的安全 Tool eager、Session 单调 Push sequence、有界 replay/背压、Redis 跨实例 relay 和 `Last-Event-ID` 不重复执行语义；流式输出、Workspace 事实与最终响应继续分层。OpenAI-compatible Adapter 同时记录 cached input/reasoning token 并传播 request/run/trace 元数据。默认固定评测仍使用可复现的确定性 Provider，已有 LongCat-2.0 单次联调不冒充质量或成本基线。HITL、异步 Waitpoint、Handoff、子 Agent、MCP、Graph 和完整 OpenTelemetry 仍未完成；等待态 `QUEUE` 的消费要等 AR-8 的 resume 状态机，每个真实写 Tool 的外部状态查询或补偿也必须随具体集成单独验收。Ark-Leto 反向核对矩阵见 [ADR-006](../adr/ADR-006-agent-reliability-fencing-outbox-shadow.md)，流式安全边界见 [ADR-011](../adr/ADR-011-agent-streaming-push-and-eager-tool-safety.md)。
+Agent Phase 3 已经完成，Phase 4 的行为事实与实时特征两个深化切片也已完成。Agent Runtime 后续演进中的 AR-1“取消语义闭环”、AR-2“完整消息事件与多轮历史”、AR-3“Checkpoint、pending Tool 与恢复协议”、AR-4“Mutating Tool 副作用账本”、AR-5“Steer Queue/Drain”、AR-6“上下文治理、413 重试和 OutputGuard”、AR-7“流式模型与实时 Push”以及 AR-8A/AR-8B“持久等待、HITL 与异步恢复”已完成，AR-8C“Handoff/子 Agent/Fork”因当前没有真实产品 launcher 保持后置可选，AR-9“Skill/MCP/Chained/Graph”是下一步，实施记录见[模块路线](../../platform/agent-runtime/ROADMAP.md)。当前 wait resolution 复用 authority/fencing/Checkpoint 主链，重复回调、timeout 和取消由 PostgreSQL first-writer-wins 仲裁，执行预算在外部等待期间冻结；Search API 返回独立 `WAITING`、`waitId` 和 `waitType`。通用父子协调 SPI 不等于真实父子产品能力：持久关系、自动取消级联和 Fork promotion 仍未完成。默认固定评测仍使用可复现的确定性 Provider，已有 LongCat-2.0 单次联调不冒充质量或成本基线。每个真实写 Tool 的外部状态查询或补偿仍必须随具体集成单独验收。Ark-Leto 反向核对矩阵见 [ADR-006](../adr/ADR-006-agent-reliability-fencing-outbox-shadow.md)，流式安全边界见 [ADR-011](../adr/ADR-011-agent-streaming-push-and-eager-tool-safety.md)，持久等待决策见 [ADR-012](../adr/ADR-012-agent-durable-wait-and-resume.md)。
 
 运行模型决策见 [ADR-002：命令式应用运行模型与局部有界并发](../adr/ADR-002-imperative-application-runtime.md)。普通 Search/Feed 保持同步 JSON；未来 Agent 的模型调用和 Tool fan-out 只能在 Agent 边界内使用明确、有界、可观测的并发，不把 `Mono`/`Flux` 重新扩散到业务接口。
 

@@ -13,6 +13,8 @@ import io.seekflux.platform.agentruntime.domain.model.run.AgentRunTrace;
 import io.seekflux.platform.agentruntime.domain.model.run.AgentTerminalState;
 import io.seekflux.platform.agentruntime.domain.model.run.LlmUsage;
 import io.seekflux.platform.agentruntime.domain.model.tool.AgentToolObservation;
+import io.seekflux.platform.agentruntime.domain.model.wait.WaitResolution;
+import io.seekflux.platform.agentruntime.domain.model.wait.WaitState;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -152,6 +154,9 @@ final class AgentRecoveryCodec {
         encoded.put("cancellationReason", result.cancellationReason());
         encoded.put("degraded", result.degraded());
         encoded.put("messages", result.messages().stream().map(this::encodeMessage).toList());
+        if (result.waitState() != null) {
+            encoded.put("waitState", encodeWaitState(result.waitState()));
+        }
         encoded.put("trace", objectMapper.convertValue(result.trace(), MAP));
         return encoded;
     }
@@ -165,7 +170,39 @@ final class AgentRecoveryCodec {
                 string(encoded, "cancellationReason"),
                 bool(encoded, "degraded"),
                 list(encoded, "messages").stream().map(this::decodeMessage).toList(),
+                encoded.get("waitState") == null
+                        ? null : decodeWaitState(object(encoded, "waitState")),
                 objectMapper.convertValue(required(encoded, "trace"), AgentRunTrace.class));
+    }
+
+    Map<String, Object> encodeWaitState(WaitState state) {
+        Map<String, Object> encoded = new LinkedHashMap<>(objectMapper.convertValue(state, MAP));
+        encoded.remove("type");
+        encoded.remove("missingPendingPolicy");
+        encoded.put("waitType", state.type().name());
+        return java.util.Collections.unmodifiableMap(encoded);
+    }
+
+    WaitState decodeWaitState(Map<String, Object> encoded) {
+        WaitState.WaitType type = WaitState.WaitType.valueOf(string(encoded, "waitType"));
+        Map<String, Object> value = new LinkedHashMap<>(encoded);
+        value.remove("waitType");
+        return switch (type) {
+            case HITL -> objectMapper.convertValue(value, WaitState.Hitl.class);
+            case ASYNC_TASK -> objectMapper.convertValue(value, WaitState.AsyncTask.class);
+            case WAITPOINT -> objectMapper.convertValue(value, WaitState.Waitpoint.class);
+            case HANDOFF -> objectMapper.convertValue(value, WaitState.Handoff.class);
+            case CHILD_AGENT -> objectMapper.convertValue(value, WaitState.ChildAgent.class);
+        };
+    }
+
+    Map<String, Object> encodeWaitResolution(WaitResolution resolution) {
+        return java.util.Collections.unmodifiableMap(
+                new LinkedHashMap<>(objectMapper.convertValue(resolution, MAP)));
+    }
+
+    WaitResolution decodeWaitResolution(Map<String, Object> encoded) {
+        return objectMapper.convertValue(encoded, WaitResolution.class);
     }
 
     private Map<String, Object> encodeMessage(AgentMessage message) {

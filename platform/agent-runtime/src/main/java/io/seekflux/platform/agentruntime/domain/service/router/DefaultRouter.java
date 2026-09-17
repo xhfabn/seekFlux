@@ -15,6 +15,8 @@ import io.seekflux.platform.agentruntime.application.command.AgentIngressMode;
 import io.seekflux.platform.agentruntime.domain.model.session.AgentSessionStatus;
 import java.time.Clock;
 import java.util.Optional;
+import io.seekflux.platform.agentruntime.domain.model.wait.WaitResolution;
+import io.seekflux.platform.agentruntime.domain.model.wait.WaitResumeResult;
 
 public final class DefaultRouter implements Router {
 
@@ -38,6 +40,10 @@ public final class DefaultRouter implements Router {
     public RouterResult execute(FeatureRequest request, PushEventPublisher publisher) {
         FeatureContext context = featurePipeline.process(request);
         String sessionId = request.runRequest().sessionId();
+        if (context.session().pendingWait().isPresent()
+                && request.runRequest().ingressMode() != AgentIngressMode.QUEUE) {
+            return RouterResult.rejected("SESSION_WAITING_REQUIRES_INTERNAL_RESUME", 0);
+        }
         if (request.runRequest().ingressMode() == AgentIngressMode.QUEUE
                 && context.session().status() != AgentSessionStatus.SUSPENDED) {
             return RouterResult.rejected("SESSION_NOT_WAITING", 0);
@@ -108,5 +114,27 @@ public final class DefaultRouter implements Router {
     @Override
     public boolean cancel(String sessionId, boolean steer) {
         return sessionExecutor.cancel(sessionId, steer);
+    }
+
+    @Override
+    public RouterResult resume(
+            WaitResolution resolution,
+            FeatureRequest request,
+            PushEventPublisher publisher) {
+        if (!resolution.sessionId().equals(request.runRequest().sessionId())
+                || !resolution.requestId().equals(request.runRequest().requestId())
+                || !resolution.turnId().equals(request.runRequest().turnId())) {
+            return RouterResult.rejected("WAIT_RESUME_IDENTITY_MISMATCH", 0);
+        }
+        FeatureContext context = featurePipeline.process(request);
+        WaitResumeResult resumed = sessionExecutor.resumeWait(
+                resolution, context.runtimeContext(), publisher);
+        return switch (resumed.status()) {
+            case COMPLETED -> RouterResult.completed(resumed.outcome());
+            case BUSY -> RouterResult.busy();
+            case DUPLICATE -> RouterResult.duplicate();
+            case CONFLICT -> RouterResult.rejected("WAIT_RESOLUTION_CONFLICT", 0);
+            case MISSING -> RouterResult.rejected("WAIT_NOT_FOUND", 0);
+        };
     }
 }

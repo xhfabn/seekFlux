@@ -56,10 +56,12 @@ public record RuntimeCheckpoint(
                 ? Set.of() : Set.copyOf(completedInvocations);
         llmUsage = llmUsage == null ? LlmUsage.UNMEASURED : llmUsage;
         steps = steps == null ? List.of() : List.copyOf(steps);
-        boolean terminal = boundary == CheckpointBoundary.COMPLETED
-                || boundary == CheckpointBoundary.SUSPENDED;
-        if (terminal != (terminalResult != null)) {
-            throw new IllegalArgumentException("only terminal checkpoints contain a terminal result");
+        if (boundary == CheckpointBoundary.COMPLETED && terminalResult == null) {
+            throw new IllegalArgumentException("a completed checkpoint requires a terminal result");
+        }
+        if ((boundary == CheckpointBoundary.PRE_TURN || boundary == CheckpointBoundary.POST_TURN)
+                && terminalResult != null) {
+            throw new IllegalArgumentException("only completed or suspended checkpoints contain a result");
         }
     }
 

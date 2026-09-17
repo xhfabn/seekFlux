@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://seekflux.io/contracts/events/agent-wait-lifecycle-v1.schema.json",
+  "title": "Agent Wait Lifecycle v1",
+  "oneOf": [
+    {"$ref": "#/$defs/suspended"},
+    {"$ref": "#/$defs/resolved"}
+  ],
+  "$defs": {
+    "envelope": {
+      "type": "object",
+      "required": ["schemaVersion", "waitId", "sessionId", "requestId", "turnId"],
+      "properties": {
+        "schemaVersion": {"const": 1},
+        "waitId": {"type": "string", "minLength": 1, "maxLength": 128},
+        "sessionId": {"type": "string", "minLength": 1, "maxLength": 128},
+        "requestId": {"type": "string", "minLength": 1, "maxLength": 128},
+        "turnId": {"type": "string", "minLength": 1, "maxLength": 128}
+      }
+    },
+    "suspended": {
+      "allOf": [
+        {"$ref": "#/$defs/envelope"},
+        {
+          "type": "object",
+          "additionalProperties": true,
+          "required": [
+            "eventType", "waitType", "checkpointId", "toolCallId",
+            "createdAt", "deadlineAt"
+          ],
+          "properties": {
+            "eventType": {"const": "WAIT_SUSPENDED"},
+            "waitType": {
+              "enum": ["HITL", "ASYNC_TASK", "WAITPOINT", "HANDOFF", "CHILD_AGENT"]
+            },
+            "checkpointId": {"type": "string", "minLength": 1},
+            "toolCallId": {"type": "string", "minLength": 1},
+            "createdAt": {"type": "string", "format": "date-time"},
+            "deadlineAt": {"type": "string", "format": "date-time"}
+          }
+        }
+      ]
+    },
+    "resolved": {
+      "allOf": [
+        {"$ref": "#/$defs/envelope"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "eventType", "resolutionId", "outcome", "output", "resolvedBy", "resolvedAt"
+          ],
+          "properties": {
+            "eventType": {"const": "WAIT_RESOLVED"},
+            "schemaVersion": {"const": 1},
+            "resolutionId": {"type": "string", "minLength": 1, "maxLength": 128},
+            "waitId": {"type": "string", "minLength": 1, "maxLength": 128},
+            "sessionId": {"type": "string", "minLength": 1, "maxLength": 128},
+            "requestId": {"type": "string", "minLength": 1, "maxLength": 128},
+            "turnId": {"type": "string", "minLength": 1, "maxLength": 128},
+            "outcome": {
+              "enum": ["APPROVED", "DENIED", "COMPLETED", "TIMED_OUT", "CANCELLED", "FAILED"]
+            },
+            "output": {"type": "object"},
+            "errorCode": {"type": ["string", "null"]},
+            "resolvedBy": {"type": "string", "minLength": 1, "maxLength": 256},
+            "resolvedAt": {"type": "string", "format": "date-time"}
+          }
+        }
+      ]
+    }
+  }
+}

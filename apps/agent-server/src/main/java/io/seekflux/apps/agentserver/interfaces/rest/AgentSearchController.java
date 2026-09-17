@@ -5,15 +5,20 @@ import io.seekflux.agent.port.in.AgentRequestedMode;
 import io.seekflux.agent.port.in.AgentSearchCommand;
 import io.seekflux.agent.port.in.AgentSearchUseCase;
 import io.seekflux.platform.agentruntime.application.api.Router;
+import io.seekflux.platform.agentruntime.application.api.WaitResumeDispatcher;
+import io.seekflux.platform.agentruntime.application.api.model.RouterResult;
 import io.seekflux.platform.agentruntime.application.spi.capability.event.PushEventStream;
 import io.seekflux.platform.agentruntime.application.spi.capability.event.model.PushEvent;
+import io.seekflux.platform.agentruntime.application.spi.capability.session.AgentSessionStore;
+import io.seekflux.platform.agentruntime.domain.model.wait.WaitResolution;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Size;
+import java.nio.charset.StandardCharsets;
+import java.time.Clock;
+import java.time.Duration;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
-import java.time.Duration;
-import java.io.IOException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
 import java.util.concurrent.RejectedExecutionException;
@@ -42,9 +47,22 @@ public class AgentSearchController {
     private final PushEventStream pushEvents;
     private final ExecutorService sseExecutor;
     private final long sseTimeoutMillis;
+    private final WaitResumeDispatcher waitResumes;
+    private final AgentSessionStore sessions;
+    private final Clock clock;
 
     public AgentSearchController(AgentSearchUseCase agentSearch, Router router) {
-        this(agentSearch, router, null, null, 30_000);
+        this(agentSearch, router, null, null, 30_000, null, null, Clock.systemUTC());
+    }
+
+    public AgentSearchController(
+            AgentSearchUseCase agentSearch,
+            Router router,
+            PushEventStream pushEvents,
+            @Qualifier("agentSseExecutor") ExecutorService sseExecutor,
+            @Value("${seekflux.agent.push.sse-timeout-ms:30000}") long sseTimeoutMillis) {
+        this(agentSearch, router, pushEvents, sseExecutor, sseTimeoutMillis,
+                null, null, Clock.systemUTC());
     }
 
     @Autowired
@@ -53,12 +71,18 @@ public class AgentSearchController {
             Router router,
             PushEventStream pushEvents,
             @Qualifier("agentSseExecutor") ExecutorService sseExecutor,
-            @Value("${seekflux.agent.push.sse-timeout-ms:30000}") long sseTimeoutMillis) {
+            @Value("${seekflux.agent.push.sse-timeout-ms:30000}") long sseTimeoutMillis,
+            WaitResumeDispatcher waitResumes,
+            AgentSessionStore sessions,
+            Clock agentClock) {
         this.agentSearch = agentSearch;
         this.router = router;
         this.pushEvents = pushEvents;
         this.sseExecutor = sseExecutor;
         this.sseTimeoutMillis = sseTimeoutMillis;
+        this.waitResumes = waitResumes;
+        this.sessions = sessions;
+        this.clock = agentClock;
     }
 
     @PostMapping("/search")
@@ -234,7 +258,35 @@ public class AgentSearchController {
     @PostMapping("/sessions/{sessionId}:cancel")
     public Map<String, Object> cancel(
             @PathVariable("sessionId") @Size(min = 1, max = 128) String sessionId) {
-        boolean cancelled = router.cancel(sessionId, false);
+        boolean cancelled = cancelPendingWait(sessionId) || router.cancel(sessionId, false);
         return Map.of("sessionId", sessionId, "cancelled", cancelled);
+    }
+
+    private boolean cancelPendingWait(String sessionId) {
+        if (waitResumes == null || sessions == null) {
+            return false;
+        }
+        var pending = sessions.restoreFresh(sessionId).flatMap(session -> session.pendingWait());
+        if (pending.isEmpty()) {
+            return false;
+        }
+        var wait = pending.get();
+        String resolutionId = "cancel:" + UUID.nameUUIDFromBytes(
+                (sessionId + ":" + wait.waitId()).getBytes(StandardCharsets.UTF_8));
+        WaitResolution resolution = new WaitResolution(
+                1,
+                resolutionId,
+                wait.waitId(),
+                wait.sessionId(),
+                wait.requestId(),
+                wait.turnId(),
+                WaitResolution.Outcome.CANCELLED,
+                Map.of(),
+                "USER_CANCEL",
+                "session-cancel-api",
+                clock.instant());
+        RouterResult result = waitResumes.dispatch(resolution, event -> -1);
+        return result.status() == RouterResult.Status.COMPLETED
+                || result.status() == RouterResult.Status.DUPLICATE;
     }
 }

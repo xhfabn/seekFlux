@@ -6,7 +6,7 @@
 
 SeekFlux 没有依赖 Ark-Leto 二进制或源码。当前实现参考《Ark-Leto 框架内核 与 Agentspark 主链路 原理详解》中的主链路、会话事件和执行权思想，自行实现内部 Runtime。类名相似只代表设计映射，不代表复制或集成了未提供的框架。
 
-Phase 1 已证明业务无关、有界、可追踪、能稳定回退的运行内核；Phase 2 完成 Query Mode、多轮约束、动态并行 Tool、OpenAI-compatible Provider Adapter 和复杂 Query Eval；Phase 3 已补齐 fencing、失主接管、跨实例取消、事务 Outbox、故障注入、Shadow 与成本计量边界。后续 AR-1～AR-7 已进一步完成原因化取消、完整消息历史、精确恢复、`MUTATING` Tool 副作用账本、持久 Steer Queue/Drain、上下文预算/压缩、400/413 与 OutputGuard，以及真实模型流、实时 Push、跨实例重连和安全 Eager Tool。
+Phase 1 已证明业务无关、有界、可追踪、能稳定回退的运行内核；Phase 2 完成 Query Mode、多轮约束、动态并行 Tool、OpenAI-compatible Provider Adapter 和复杂 Query Eval；Phase 3 已补齐 fencing、失主接管、跨实例取消、事务 Outbox、故障注入、Shadow 与成本计量边界。后续 AR-1～AR-8B 已进一步完成原因化取消、完整消息历史、精确恢复、`MUTATING` Tool 副作用账本、持久 Steer Queue/Drain、上下文预算/压缩、400/413 与 OutputGuard、真实模型流、实时 Push、跨实例重连、安全 Eager Tool，以及持久等待、HITL 和异步恢复。
 
 ## 2. 模块职责
 
@@ -202,7 +202,7 @@ Tool 参数校验失败后只做一次不改变业务意图的确定性修复；
 
 请求用 `ingressMode` 显式选择 `NEW_EXECUTION`、`STEER` 或 `QUEUE`。普通请求在已有 owner 时返回 BUSY；STEER 先原子提交排队事件，成功后才以相同时间戳写 Redis `STEER`，因此取消写失败或实例退出都不会丢消息；QUEUE 只接受 `SUSPENDED` Session，不中断任务，其他状态返回 `SESSION_NOT_WAITING`。队列达到上限返回 `STEER_QUEUE_FULL`，重复的 pending 请求幂等返回 QUEUED，已经消费的重复请求返回 DUPLICATE。
 
-当前 owner 在一个 segment 提交 Outcome 后继续持权 drain：强读 Session，以 fencing token 原子提升当前所有排队事件，逐条形成正式 UserMessage，并由最后一条请求的身份、请求上下文和状态补丁驱动下一 segment；agent/model/prompt/eval/manifest/chained/LLM 等请求级 override 会在 segment 边界清理。提升后先清除不晚于批次 cutoff 的旧 STEER，再建立从该 cutoff 开始的新取消 token，所以更晚 STEER 和真实 `USER_CANCEL` 不会被误删。提升后崩溃通过已提升 Workspace 事实恢复；drain 边界失权则由后续 owner 接管。当前等待态 QUEUE 只负责可靠积压，主动恢复规则由后续 HITL/Waitpoint 状态机定义。
+当前 owner 在一个 segment 提交 Outcome 后继续持权 drain：强读 Session，以 fencing token 原子提升当前所有排队事件，逐条形成正式 UserMessage，并由最后一条请求的身份、请求上下文和状态补丁驱动下一 segment；agent/model/prompt/eval/manifest/chained/LLM 等请求级 override 会在 segment 边界清理。提升后先清除不晚于批次 cutoff 的旧 STEER，再建立从该 cutoff 开始的新取消 token，所以更晚 STEER 和真实 `USER_CANCEL` 不会被误删。提升后崩溃通过已提升 Workspace 事实恢复；drain 边界失权则由后续 owner 接管。typed wait 恢复成终态后复用同一 drain 机制消费等待期间积压的 QUEUE；等待未解决时不会提前提升消息。
 
 模型和 Tool 还受两个独立 Bulkhead 保护，分别返回 `MODEL_BULKHEAD_FULL` 和 `TOOL_BULKHEAD_FULL`；故障注入只存在于 Runtime 调用边界，不要求业务 Tool 编写测试分支。Tool Call ID 由 request/step/tool/规范化参数确定性生成，Tool 同时声明副作用类型。`READ_ONLY/IDEMPOTENT` 使用稳定 Call ID 安全重试；`MUTATING` 还要求注册权限、运行时 `ALLOW/MODIFY/DENY/NEED_APPROVAL` 策略、持久账本和稳定幂等键。每次调用建立独立不可变 `AgentToolContext`，before/after/failure 观察携带 source、effect、attempt 和耗时。
 
@@ -212,7 +212,7 @@ Runtime 在每次模型调用前保存 `PRE_TURN`，完成一批 Tool 后保存 
 
 Tool 决策与对应 Assistant 在 journal 中先落为 `DECIDED`；真正提交执行器前变为 `EXECUTING`；结果按单个 call 落为 `SUCCEEDED/FAILED/CANCELLED/TIMED_OUT`。新 owner 在续租和 `restoreFresh` 后，通过受 fencing 保护的 `commitResume` 把遗留执行态原子改为 `UNKNOWN`，再得到有限 `ResumeAction`。已完成 Tool 直接复用 observation；`READ_ONLY/IDEMPOTENT` 可用原 Tool Call ID 重试；`MUTATING` 则按账本的 `PREPARED` 首次执行、已知终态复用或 `UNKNOWN` 对账三条路径恢复，绝不从 `UNKNOWN` 重放原写请求。
 
-当前统一内部入口由版本化 `ResumeIngress` 表达，已接入 `USER_MESSAGE` 与 `CRASH_RECOVERY`；HITL、异步任务、Waitpoint 和 Child Agent 只保留枚举扩展位，不宣称状态机已经实现。恢复逻辑契约见 [`agent-recovery-v1.schema.json`](../contracts/events/agent-recovery-v1.schema.json)。
+当前统一内部入口由版本化 `ResumeIngress` 表达。用户消息、崩溃接管和 `WaitResolution` 都先在 execution authority/fencing 下提交持久事实，再 dispatch 到同一恢复主链；外部回调不能直接调用 Loop。恢复逻辑契约见 [`agent-recovery-v1.schema.json`](../contracts/events/agent-recovery-v1.schema.json)。
 
 ### 6.3 上下文治理与输出保护
 
@@ -221,6 +221,34 @@ Tool 决策与对应 Assistant 在 journal 中先落为 `DECIDED`；真正提交
 `DefaultContextEngine` 每次 assemble 只读取一次最新 `CompactionSummary`，并依据 `ContextWindowPolicy` 选择 `NONE/ASYNC/SYNC`。ASYNC 使用有界单线程执行器和 Session single-flight；硬限额或 Provider overflow 使用确定性 Skeleton 强压缩。摘要先追加到 PostgreSQL `agent.context_compactions`，以 `fromExclusive → inclusiveCutoff` 连续推进，当前没有另设 Redis 热投影。压缩不能继续时保留受保护上下文并发出 `COMPACTION_NOOP/COMPACTION_EXHAUSTED`，禁止用删除原文但不产摘要的截断伪装成功。逻辑契约见 [`agent-context-compaction-v1.schema.json`](../contracts/events/agent-context-compaction-v1.schema.json)。
 
 同步 OpenAI-compatible Adapter 把无模型输出的 HTTP 413，以及带已知上下文超长 marker 的 HTTP 400 映射为 `ContextOverflowException`。`DefaultAgentLoop` 最多按配置以 `OVERFLOW_FALLBACK` 重组并重试，耗尽后稳定映射为 `LLM_CONTEXT_OVERFLOW_EXHAUSTED`；同步协议不存在已发 chunk 后重试。结构化 Decision 的 OutputGuard 支持 accept、有限 repair、degrade 和 fail；repair 使用原请求 Deadline 与 CancellationToken，降级不会把非法原始文本写进 Assistant 历史。格式保护与业务内容安全分层，内容安审应通过独立策略 Adapter 接入。生命周期契约见 [`agent-context-event-v1.schema.json`](../contracts/events/agent-context-event-v1.schema.json)。
+
+### 6.4 持久等待、HITL 与异步恢复
+
+Runtime 用独立 `WAITING` 结果表示当前 segment 已挂起，Session 将 `WAIT_SUSPENDED` 投影为
+`SUSPENDED`。`WaitState` 区分 HITL、Async Task、Waitpoint、Handoff 和 Child Agent，并保存
+wait/session/request/turn/checkpoint/tool call、创建时间和 deadline。普通新请求和 STEER 不能越过
+typed wait；只有 `QUEUE` 可以可靠积压，外部恢复只能调用 `Router.resume`。
+
+Tool 策略返回 `NEED_APPROVAL` 时，Runtime 在执行 Tool 前保存原 Assistant/Tool 决策；审批通过
+后按原 call ID 恢复一次，拒绝、超时和取消形成稳定 ToolResult。Tool 本身也可返回
+`WaitRequest.AsyncTask/Waitpoint/Handoff/ChildAgent`；其中 `COMPLETED` 回调直接补 observation 和
+ToolResult，不重新派发原异步 Tool。HITL 只接受 approve/deny，其他 wait 只接受 completed，关闭类
+决议两边都可用，防止绕过审批或误重派。
+
+`JdbcAgentRecoveryStore` 在同一事务保存 suspended Checkpoint、`WAITING` journal 和
+`agent.runtime_waits` pending 行。决议通过行锁、Session fencing 和唯一 pending/resolution 索引执行
+first-writer-wins；相同 resolution ID、内容与 actor 的重试忽略服务端接收时间差异并返回 duplicate，
+不同晚到结论返回 conflict。HITL/Waitpoint/Handoff 丢失 pending 时 fail-fast；Async/Child 可以从
+仍存在的 suspended Checkpoint 重建后接纳 callback。resolved wait 在恢复状态清理后继续保留审计。
+
+执行预算在挂起时冻结，等待时间由审批策略或 Tool WaitRequest 独立声明；`needApproval(reason)`
+默认 15 分钟，也可显式传入 Duration。后台 worker 有界扫描
+过期 wait 并提交确定性 timeout resolution；人工回调、异步完成、超时和 Session cancel 都使用同一
+竞态仲裁。当前 `DelegatedAgentLauncher/ParentChildAgentCoordinator` 只定义子执行的深度、预算、
+身份传播和结果回填协议；没有真实产品 launcher、持久父子关系、自动取消级联或 Fork promotion，
+Fork 明确返回 `FORK_PROMOTION_UNSUPPORTED`。完整决策见
+[ADR-012](adr/ADR-012-agent-durable-wait-and-resume.md)，事件契约见
+[`agent-wait-lifecycle-v1.schema.json`](../contracts/events/agent-wait-lifecycle-v1.schema.json)。
 
 ## 7. Search Agent
 
@@ -254,11 +282,12 @@ Agent Server 默认端口为 `8083`，避免与可选 Flink UI 的 `8082` 冲突
 ```http
 POST /v1/agent/search
 POST /v1/agent/sessions/{sessionId}:cancel
+POST /v1/agent/sessions/{sessionId}/waits/{waitId}:resolve
 GET  /v1/agent/runtime/shadow
 PUT  /v1/agent/runtime/shadow
 ```
 
-搜索请求可传 `ingressMode`；排队成功返回 `state=QUEUED` 和当前 `queueDepth`，不执行 Agent 投影或 Direct Search fallback。普通搜索响应同时返回稳定业务状态、`AgentTrace` 和可选的 `SearchTrace`；取消响应的顶层和 Trace 都返回枚举化 `cancellationReason`，且不会执行 Direct Search fallback。完整请求/响应 Schema 见 [`contracts/openapi/seekflux-v1.yaml`](../contracts/openapi/seekflux-v1.yaml)。
+搜索请求可传 `ingressMode`；排队成功返回 `state=QUEUED` 和当前 `queueDepth`，不执行 Agent 投影或 Direct Search fallback。挂起返回独立 `state=WAITING`、`waitId` 和 `waitType`。wait resolve API 要求 `X-User-Id` 并把它写入决议 actor；宿主仍须在调用 Controller 前完成真实身份认证和租户授权。普通搜索响应同时返回稳定业务状态、`AgentTrace` 和可选的 `SearchTrace`；取消响应的顶层和 Trace 都返回枚举化 `cancellationReason`，且不会执行 Direct Search fallback。完整请求/响应 Schema 见 [`contracts/openapi/seekflux-v1.yaml`](../contracts/openapi/seekflux-v1.yaml)。
 
 ## 9. 验证和当前边界
 
@@ -271,6 +300,6 @@ python3 evals/run_agent_reliability_eval.py
 
 固定 `direct-search-v1` 六 Query 基线上，强制 Agent 与 Direct 的 `Recall@5/MRR@5/nDCG@5` 均为 `1.0`，证明基础复用没有回归。`complex-search-v1` 的六条关键词陷阱 Query 中，Direct `MRR@1/Recall@1=0.0`，Agent `MRR@1/Recall@1=1.0`；Tool 选择、任务完成、简单 Direct 路由和多轮版本测试全部通过。
 
-`agent-reliability-v1` 固定评测证明单写者、fencing 单调、重复请求无额外 Tool 事件、事务 Outbox、幂等审计、Shadow 主结果隔离和快速关闭；12 次样本可用性 `1.0`，P95 `226.402 ms`，Fallback `0.0`。旧 owner、跨实例取消、停机取消、模型/Tool 在途取消、取消后禁止下一轮、OpenAI 调用中断、模型/Tool 故障和 Bulkhead 另有自动化测试。AR-3 增加 PRE/POST/终态 Checkpoint、模型后、Tool 提交/结果和未知写 Tool 的固定崩溃测试；AR-4 增加请求前、外部成功未确认、账本成功未推进 Session 和重复恢复测试；AR-5 增加 STEER/QUEUE、容量、FIFO 批量提升、最后意图、幂等、崩溃恢复和 drain 失权测试；AR-6 增加长上下文完整轮次、摘要 no-gap、ASYNC single-flight、400/413 有界重试、OutputGuard 和 repair 取消测试。隔离 PostgreSQL 17 已顺序执行 V1～V13，并真实插入版本化摘要。
+`agent-reliability-v1` 固定评测证明单写者、fencing 单调、重复请求无额外 Tool 事件、事务 Outbox、幂等审计、Shadow 主结果隔离和快速关闭；12 次样本可用性 `1.0`，P95 `226.402 ms`，Fallback `0.0`。旧 owner、跨实例取消、停机取消、模型/Tool 在途取消、取消后禁止下一轮、OpenAI 调用中断、模型/Tool 故障和 Bulkhead 另有自动化测试。AR-3 增加 PRE/POST/终态 Checkpoint、模型后、Tool 提交/结果和未知写 Tool 的固定崩溃测试；AR-4 增加请求前、外部成功未确认、账本成功未推进 Session 和重复恢复测试；AR-5 增加 STEER/QUEUE、容量、FIFO 批量提升、最后意图、幂等、崩溃恢复和 drain 失权测试；AR-6 增加长上下文完整轮次、摘要 no-gap、ASYNC single-flight、400/413 有界重试、OutputGuard 和 repair 取消测试；AR-8A/8B 增加审批只执行一次、Async 不重派、决议类型、幂等/冲突、timeout/callback、等待中取消和投影恢复测试。隔离 PostgreSQL 17 已顺序执行 V1～V14，并确认 wait 约束与索引。
 
-对照 Ark-Leto 后仍未完成的是实时 Push/SSE、HITL、Handoff、子 Agent、MCP/Skill/Graph 和完整 OTel。当前压缩器是确定性 Skeleton，不包含模型摘要器或 Redis 热投影；流式协议中的首 chunk、已输出后失败和背压语义属于 AR-7。写 Tool 已有持久账本与 reconciliation 协议，但每个真实写 Tool 仍必须依据其外部系统能力实现状态查询或补偿，框架不能把不支持查询/幂等的外部接口变安全。真实付费 Provider 基线也需要部署方端点与密钥；当前报告不伪造 Token/成本。完整取舍见 [ADR-006](adr/ADR-006-agent-reliability-fencing-outbox-shadow.md)。
+对照 Ark-Leto 后仍未完成的是产品化 Handoff/子 Agent/Fork、MCP/Skill/Graph 和完整 OTel；AR-8C 当前只有通用协议，不计为能力完成。当前压缩器是确定性 Skeleton，不包含模型摘要器或 Redis 热投影。写 Tool 已有持久账本与 reconciliation 协议，但每个真实写 Tool 仍必须依据其外部系统能力实现状态查询或补偿，框架不能把不支持查询/幂等的外部接口变安全。真实付费 Provider 基线也需要部署方端点与密钥；当前报告不伪造 Token/成本。完整取舍见 [ADR-006](adr/ADR-006-agent-reliability-fencing-outbox-shadow.md) 和 [ADR-012](adr/ADR-012-agent-durable-wait-and-resume.md)。

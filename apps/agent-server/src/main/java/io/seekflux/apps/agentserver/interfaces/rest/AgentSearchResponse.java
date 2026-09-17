@@ -34,7 +34,9 @@ public record AgentSearchResponse(
         boolean degraded,
         String fallbackReason,
         String cancellationReason,
-        int queueDepth) {
+        int queueDepth,
+        String waitId,
+        String waitType) {
 
     public static AgentSearchResponse from(AgentSearchResult result) {
         var search = result.searchResult();
@@ -62,6 +64,8 @@ public record AgentSearchResponse(
                 result.degraded(),
                 result.fallbackReason(),
                 result.cancellationReason(),
-                result.queueDepth());
+                result.queueDepth(),
+                result.waitId(),
+                result.waitType());
     }
 }

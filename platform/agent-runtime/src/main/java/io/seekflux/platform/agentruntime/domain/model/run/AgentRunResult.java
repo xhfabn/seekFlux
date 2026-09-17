@@ -1,6 +1,7 @@
 package io.seekflux.platform.agentruntime.domain.model.run;
 
 import io.seekflux.platform.agentruntime.domain.model.message.AgentMessage;
+import io.seekflux.platform.agentruntime.domain.model.wait.WaitState;
 import java.util.List;
 import java.util.Map;
 
@@ -12,6 +13,7 @@ public record AgentRunResult(
         String cancellationReason,
         boolean degraded,
         List<AgentMessage> messages,
+        WaitState waitState,
         AgentRunTrace trace) {
 
     public AgentRunResult(
@@ -21,8 +23,22 @@ public record AgentRunResult(
             String fallbackReason,
             String cancellationReason,
             boolean degraded,
+            List<AgentMessage> messages,
             AgentRunTrace trace) {
-        this(state, output, clarification, fallbackReason, cancellationReason, degraded, List.of(), trace);
+        this(state, output, clarification, fallbackReason, cancellationReason, degraded,
+                messages, null, trace);
+    }
+
+    public AgentRunResult(
+            AgentTerminalState state,
+            Map<String, Object> output,
+            String clarification,
+            String fallbackReason,
+            String cancellationReason,
+            boolean degraded,
+            AgentRunTrace trace) {
+        this(state, output, clarification, fallbackReason, cancellationReason, degraded,
+                List.of(), null, trace);
     }
 
     public AgentRunResult(
@@ -32,7 +48,8 @@ public record AgentRunResult(
             String fallbackReason,
             boolean degraded,
             AgentRunTrace trace) {
-        this(state, output, clarification, fallbackReason, null, degraded, List.of(), trace);
+        this(state, output, clarification, fallbackReason, null, degraded,
+                List.of(), null, trace);
     }
 
     public AgentRunResult {
@@ -43,6 +60,9 @@ public record AgentRunResult(
         }
         if (state != AgentTerminalState.CANCELLED && cancellationReason != null) {
             throw new IllegalArgumentException("only a cancelled run can have a cancellation reason");
+        }
+        if ((state == AgentTerminalState.WAITING) != (waitState != null)) {
+            throw new IllegalArgumentException("only a waiting run can contain a WaitState");
         }
     }
 }

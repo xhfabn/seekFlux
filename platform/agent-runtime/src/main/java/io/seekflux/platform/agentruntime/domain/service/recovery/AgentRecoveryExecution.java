@@ -6,6 +6,7 @@ import io.seekflux.platform.agentruntime.domain.model.recovery.RuntimeCheckpoint
 import io.seekflux.platform.agentruntime.domain.model.recovery.ToolCallJournalEntry;
 import io.seekflux.platform.agentruntime.domain.model.sideeffect.SideEffectLedgerEntry;
 import io.seekflux.platform.agentruntime.domain.model.sideeffect.SideEffectStatus;
+import io.seekflux.platform.agentruntime.domain.model.wait.WaitState;
 import java.time.Clock;
 import java.util.List;
 import java.util.Map;
@@ -82,6 +83,14 @@ public final class AgentRecoveryExecution {
             List<ToolCallJournalEntry> calls) {
         store.recordToolDecision(checkpoint, calls, fencingToken, clock.instant());
         faultInjector.at(RecoveryPoint.AFTER_MODEL_DECISION_COMMIT);
+    }
+
+    public void suspendWait(
+            RuntimeCheckpoint checkpoint,
+            WaitState waitState,
+            ToolCallJournalEntry waitingCall) {
+        store.suspendWait(
+                checkpoint, waitState, waitingCall, fencingToken, clock.instant());
     }
 
     public void markToolExecuting(

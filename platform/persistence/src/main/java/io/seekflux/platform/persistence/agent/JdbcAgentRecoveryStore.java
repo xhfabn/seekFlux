@@ -14,6 +14,12 @@ import io.seekflux.platform.agentruntime.domain.model.recovery.ToolCallJournalEn
 import io.seekflux.platform.agentruntime.domain.model.recovery.ToolJournalStatus;
 import io.seekflux.platform.agentruntime.domain.model.sideeffect.SideEffectLedgerEntry;
 import io.seekflux.platform.agentruntime.domain.model.sideeffect.SideEffectStatus;
+import io.seekflux.platform.agentruntime.domain.model.tool.AgentToolObservation;
+import io.seekflux.platform.agentruntime.domain.model.tool.AgentToolResult;
+import io.seekflux.platform.agentruntime.domain.model.wait.WaitResolution;
+import io.seekflux.platform.agentruntime.domain.model.wait.WaitResolutionResult;
+import io.seekflux.platform.agentruntime.domain.model.wait.WaitState;
+import java.nio.charset.StandardCharsets;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Instant;
@@ -118,8 +124,39 @@ public class JdbcAgentRecoveryStore implements AgentRecoveryStore {
                 .query(this::mapJournal)
                 .list();
 
+        if (restored.boundary() == CheckpointBoundary.SUSPENDED
+                && restored.terminalResult() != null
+                && restored.terminalResult().state()
+                        == io.seekflux.platform.agentruntime.domain.model.run.AgentTerminalState.WAITING) {
+            WaitState checkpointWait = restored.terminalResult().waitState();
+            if (checkpointWait == null) {
+                throw new IllegalStateException("waiting checkpoint has no WaitState");
+            }
+            Optional<String> waitStatus = jdbcClient.sql("""
+                            SELECT status
+                            FROM agent.runtime_waits
+                            WHERE wait_id = :waitId
+                            """)
+                    .param("waitId", UUID.fromString(checkpointWait.waitId()))
+                    .query(String.class)
+                    .optional();
+            if (waitStatus.isEmpty()) {
+                if (checkpointWait.missingPendingPolicy()
+                                == WaitState.MissingPendingPolicy.FAIL_FAST) {
+                    throw new IllegalStateException("pending WaitState is missing");
+                }
+                return new RecoveryPlan(ResumeAction.WAIT_FOR_EXTERNAL, restored, calls);
+            } else if ("PENDING".equals(waitStatus.get())) {
+                return new RecoveryPlan(ResumeAction.WAIT_FOR_EXTERNAL, restored, calls);
+            }
+        }
+
         if (restored.terminal()) {
-            return new RecoveryPlan(ResumeAction.COMMIT_TERMINAL, restored, calls);
+            if (restored.boundary() != CheckpointBoundary.SUSPENDED
+                    || restored.terminalResult().state()
+                            != io.seekflux.platform.agentruntime.domain.model.run.AgentTerminalState.WAITING) {
+                return new RecoveryPlan(ResumeAction.COMMIT_TERMINAL, restored, calls);
+            }
         }
         if (restored.boundary() == CheckpointBoundary.POST_TURN) {
             return new RecoveryPlan(ResumeAction.RESUME_POST_TURN, restored, List.of());
@@ -244,6 +281,160 @@ public class JdbcAgentRecoveryStore implements AgentRecoveryStore {
 
     @Override
     @Transactional
+    public void suspendWait(
+            RuntimeCheckpoint checkpoint,
+            WaitState waitState,
+            ToolCallJournalEntry waitingCall,
+            long fencingToken,
+            Instant eventTime) {
+        if (checkpoint.boundary() != CheckpointBoundary.SUSPENDED
+                || checkpoint.terminalResult() == null
+                || checkpoint.terminalResult().state()
+                        != io.seekflux.platform.agentruntime.domain.model.run.AgentTerminalState.WAITING) {
+            throw new IllegalArgumentException("a durable wait requires a suspended waiting checkpoint");
+        }
+        if (waitingCall.status() != ToolJournalStatus.WAITING
+                || !waitingCall.toolCallId().equals(waitState.toolCallId())
+                || !checkpoint.checkpointId().equals(waitState.checkpointId())) {
+            throw new IllegalArgumentException("WaitState does not match its checkpoint and Tool call");
+        }
+        saveCheckpoint(checkpoint, fencingToken, eventTime);
+        int journalRows = jdbcClient.sql("""
+                        UPDATE agent.tool_call_journal journal
+                        SET status = 'WAITING',
+                            fencing_token = :fencingToken,
+                            updated_at = :eventTime
+                        WHERE journal.tool_call_id = :toolCallId
+                          AND journal.session_id = :sessionId
+                          AND journal.request_id = :requestId
+                          AND journal.status IN ('DECIDED', 'EXECUTING', 'WAITING')
+                          AND EXISTS (
+                              SELECT 1 FROM agent.sessions session
+                              WHERE session.session_id = journal.session_id
+                                AND session.active_fencing_token = :fencingToken
+                                AND session.status = 'EXECUTING'
+                          )
+                        """)
+                .param("fencingToken", fencingToken)
+                .param("eventTime", databaseTime(eventTime))
+                .param("toolCallId", waitingCall.toolCallId())
+                .param("sessionId", waitState.sessionId())
+                .param("requestId", waitState.requestId())
+                .update();
+        if (journalRows != 1) {
+            throw new AgentExecutionFencedException(waitState.sessionId(), fencingToken);
+        }
+        int waitRows = jdbcClient.sql("""
+                        INSERT INTO agent.runtime_waits (
+                            wait_id, schema_version, session_id, request_id, turn_id,
+                            checkpoint_id, tool_call_id, wait_type, status, resolution_id,
+                            deadline_at, fencing_token, payload, resolution, created_at, updated_at
+                        ) VALUES (
+                            :waitId, :schemaVersion, :sessionId, :requestId, :turnId,
+                            :checkpointId, :toolCallId, :waitType, 'PENDING', NULL,
+                            :deadlineAt, :fencingToken, CAST(:payload AS jsonb), NULL,
+                            :createdAt, :eventTime
+                        )
+                        ON CONFLICT (wait_id) DO NOTHING
+                        """)
+                .param("waitId", UUID.fromString(waitState.waitId()))
+                .param("schemaVersion", waitState.schemaVersion())
+                .param("sessionId", waitState.sessionId())
+                .param("requestId", waitState.requestId())
+                .param("turnId", waitState.turnId())
+                .param("checkpointId", UUID.fromString(waitState.checkpointId()))
+                .param("toolCallId", waitState.toolCallId())
+                .param("waitType", waitState.type().name())
+                .param("deadlineAt", databaseTime(waitState.deadlineAt()))
+                .param("fencingToken", fencingToken)
+                .param("payload", toJson(codec.encodeWaitState(waitState)))
+                .param("createdAt", databaseTime(waitState.createdAt()))
+                .param("eventTime", databaseTime(eventTime))
+                .update();
+        if (waitRows != 1 && findStoredWait(waitState.waitId()).isEmpty()) {
+            throw new AgentExecutionFencedException(waitState.sessionId(), fencingToken);
+        }
+    }
+
+    @Override
+    @Transactional
+    public WaitResolutionResult resolveWait(
+            WaitResolution resolution, long fencingToken, Instant eventTime) {
+        StoredWait stored = findStoredWaitForUpdate(resolution.waitId()).orElse(null);
+        if (stored == null) {
+            reconstructTolerantWait(resolution, fencingToken, eventTime);
+            stored = findStoredWaitForUpdate(resolution.waitId()).orElse(null);
+        }
+        if (stored == null) {
+            return WaitResolutionResult.missing();
+        }
+        WaitState waitState = stored.waitState();
+        if (!waitState.sessionId().equals(resolution.sessionId())
+                || !waitState.requestId().equals(resolution.requestId())
+                || !waitState.turnId().equals(resolution.turnId())) {
+            return WaitResolutionResult.conflict(waitState, stored.resolution());
+        }
+        if (!"PENDING".equals(stored.status())) {
+            return stored.resolution() != null
+                            && stored.resolution().sameDecisionAs(resolution)
+                    ? WaitResolutionResult.duplicate(waitState, stored.resolution())
+                    : WaitResolutionResult.conflict(waitState, stored.resolution());
+        }
+        if (!waitState.accepts(resolution.outcome())) {
+            return WaitResolutionResult.conflict(waitState, null);
+        }
+        if (resolution.outcome() != WaitResolution.Outcome.TIMED_OUT
+                && eventTime.isAfter(waitState.deadlineAt())) {
+            return WaitResolutionResult.conflict(waitState, null);
+        }
+        assertAuthorityForWait(waitState.sessionId(), fencingToken);
+        int rows = jdbcClient.sql("""
+                        UPDATE agent.runtime_waits
+                        SET status = :status,
+                            resolution_id = :resolutionId,
+                            resolution = CAST(:resolution AS jsonb),
+                            fencing_token = :fencingToken,
+                            updated_at = :eventTime
+                        WHERE wait_id = :waitId AND status = 'PENDING'
+                        """)
+                .param("status", resolution.outcome().name())
+                .param("resolutionId", resolution.resolutionId())
+                .param("resolution", toJson(codec.encodeWaitResolution(resolution)))
+                .param("fencingToken", fencingToken)
+                .param("eventTime", databaseTime(eventTime))
+                .param("waitId", UUID.fromString(waitState.waitId()))
+                .update();
+        if (rows != 1) {
+            StoredWait raced = findStoredWaitForUpdate(resolution.waitId()).orElseThrow();
+            return raced.resolution() != null && raced.resolution().sameDecisionAs(resolution)
+                    ? WaitResolutionResult.duplicate(raced.waitState(), raced.resolution())
+                    : WaitResolutionResult.conflict(raced.waitState(), raced.resolution());
+        }
+        applyWaitResolution(waitState, resolution, fencingToken, eventTime);
+        appendWaitResolvedEvent(waitState, resolution, fencingToken, eventTime);
+        return WaitResolutionResult.committed(waitState, resolution);
+    }
+
+    @Override
+    public List<WaitState> findExpiredWaits(Instant deadlineExclusive, int limit) {
+        if (limit < 1 || limit > 1000) {
+            throw new IllegalArgumentException("expired wait query limit must be between 1 and 1000");
+        }
+        return jdbcClient.sql("""
+                        SELECT wait_type, status, payload::text, resolution::text
+                        FROM agent.runtime_waits
+                        WHERE status = 'PENDING' AND deadline_at < :deadline
+                        ORDER BY deadline_at, wait_id
+                        LIMIT :limit
+                        """)
+                .param("deadline", databaseTime(deadlineExclusive))
+                .param("limit", limit)
+                .query((row, rowNumber) -> codec.decodeWaitState(fromJson(row.getString("payload"))))
+                .list();
+    }
+
+    @Override
+    @Transactional
     public void markToolExecuting(
             String sessionId,
             String requestId,
@@ -317,7 +508,7 @@ public class JdbcAgentRecoveryStore implements AgentRecoveryStore {
                         WHERE journal.tool_call_id = :toolCallId
                           AND journal.session_id = :sessionId
                           AND journal.request_id = :requestId
-                          AND journal.status IN ('DECIDED', 'EXECUTING', 'UNKNOWN')
+                          AND journal.status IN ('DECIDED', 'EXECUTING', 'UNKNOWN', 'WAITING')
                           AND EXISTS (
                               SELECT 1 FROM agent.sessions session
                               WHERE session.session_id = journal.session_id
@@ -539,6 +730,245 @@ public class JdbcAgentRecoveryStore implements AgentRecoveryStore {
                 .optional();
     }
 
+    private void applyWaitResolution(
+            WaitState waitState,
+            WaitResolution resolution,
+            long fencingToken,
+            Instant eventTime) {
+        if (resolution.resumesToolExecution()) {
+            int rows = jdbcClient.sql("""
+                            UPDATE agent.tool_call_journal
+                            SET status = 'DECIDED',
+                                fencing_token = :fencingToken,
+                                updated_at = :eventTime
+                            WHERE tool_call_id = :toolCallId
+                              AND session_id = :sessionId
+                              AND request_id = :requestId
+                              AND status = 'WAITING'
+                            """)
+                    .param("fencingToken", fencingToken)
+                    .param("eventTime", databaseTime(eventTime))
+                    .param("toolCallId", waitState.toolCallId())
+                    .param("sessionId", waitState.sessionId())
+                    .param("requestId", waitState.requestId())
+                    .update();
+            if (rows != 1) {
+                throw new IllegalStateException("approved wait has no waiting Tool call");
+            }
+            return;
+        }
+        ToolCallJournalEntry call = jdbcClient.sql("""
+                        SELECT schema_version, session_id, request_id, turn_id, attempt_id,
+                               step, call_index, tool_call_id, tool_name, tool_schema_version,
+                               effect, status, arguments_digest, updated_at, payload::text
+                        FROM agent.tool_call_journal
+                        WHERE tool_call_id = :toolCallId
+                        """)
+                .param("toolCallId", waitState.toolCallId())
+                .query(this::mapJournal)
+                .optional()
+                .orElseThrow(() -> new IllegalStateException("wait has no Tool journal entry"));
+        ToolJournalStatus status = switch (resolution.outcome()) {
+            case COMPLETED -> ToolJournalStatus.SUCCEEDED;
+            case CANCELLED -> ToolJournalStatus.CANCELLED;
+            case TIMED_OUT -> ToolJournalStatus.TIMED_OUT;
+            case DENIED, FAILED -> ToolJournalStatus.FAILED;
+            case APPROVED -> throw new IllegalStateException("approval should resume Tool execution");
+        };
+        String errorCode = switch (resolution.outcome()) {
+            case COMPLETED -> null;
+            case DENIED -> "TOOL_APPROVAL_DENIED";
+            case TIMED_OUT -> resolution.errorCode();
+            case CANCELLED -> resolution.errorCode() == null
+                    ? "USER_CANCEL" : resolution.errorCode();
+            case FAILED -> resolution.errorCode();
+            case APPROVED -> null;
+        };
+        AgentToolResult result = status == ToolJournalStatus.SUCCEEDED
+                ? AgentToolResult.success(resolution.output(), null)
+                : AgentToolResult.failure(errorCode);
+        AgentToolObservation observation = new AgentToolObservation(
+                call.toolCallId(),
+                call.toolName(),
+                call.toolSchemaVersion(),
+                call.arguments(),
+                call.argumentsRepaired(),
+                result,
+                0);
+        recordToolResult(
+                call.forAttempt(call.attemptId(), status, observation, eventTime),
+                fencingToken,
+                eventTime);
+    }
+
+    private void appendWaitResolvedEvent(
+            WaitState waitState,
+            WaitResolution resolution,
+            long fencingToken,
+            Instant eventTime) {
+        long position = jdbcClient.sql("""
+                        UPDATE agent.sessions
+                        SET event_position = event_position + 1,
+                            version = version + 1,
+                            status = 'EXECUTING',
+                            updated_at = :eventTime
+                        WHERE session_id = :sessionId
+                          AND active_fencing_token = :fencingToken
+                        RETURNING event_position
+                        """)
+                .param("eventTime", databaseTime(eventTime))
+                .param("sessionId", waitState.sessionId())
+                .param("fencingToken", fencingToken)
+                .query(Long.class)
+                .optional()
+                .orElseThrow(() -> new AgentExecutionFencedException(
+                        waitState.sessionId(), fencingToken));
+        UUID eventId;
+        try {
+            eventId = UUID.fromString(resolution.resolutionId());
+        } catch (IllegalArgumentException invalidUuid) {
+            eventId = UUID.nameUUIDFromBytes(
+                    ("wait-resolution:" + resolution.resolutionId())
+                            .getBytes(StandardCharsets.UTF_8));
+        }
+        int inserted = jdbcClient.sql("""
+                        INSERT INTO agent.workspace_events (
+                            event_id, session_id, event_position, event_type, schema_version,
+                            message_id, tool_call_id, request_id, turn_id, event_time, payload
+                        ) VALUES (
+                            :eventId, :sessionId, :position, 'WAIT_RESOLVED', :schemaVersion,
+                            NULL, :toolCallId, :requestId, :turnId, :eventTime,
+                            CAST(:payload AS jsonb)
+                        )
+                        """)
+                .param("eventId", eventId)
+                .param("sessionId", waitState.sessionId())
+                .param("position", position)
+                .param("schemaVersion", resolution.schemaVersion())
+                .param("toolCallId", waitState.toolCallId())
+                .param("requestId", waitState.requestId())
+                .param("turnId", waitState.turnId())
+                .param("eventTime", databaseTime(eventTime))
+                .param("payload", toJson(codec.encodeWaitResolution(resolution)))
+                .update();
+        if (inserted != 1) {
+            throw new IllegalStateException("wait resolution event was not appended");
+        }
+    }
+
+    private Optional<StoredWait> findStoredWait(String waitId) {
+        return findStoredWait(waitId, false);
+    }
+
+    private Optional<StoredWait> findStoredWaitForUpdate(String waitId) {
+        return findStoredWait(waitId, true);
+    }
+
+    private Optional<StoredWait> findStoredWait(String waitId, boolean lock) {
+        String sql = """
+                SELECT status, payload::text, resolution::text
+                FROM agent.runtime_waits
+                WHERE wait_id = :waitId
+                """ + (lock ? " FOR UPDATE" : "");
+        return jdbcClient.sql(sql)
+                .param("waitId", UUID.fromString(waitId))
+                .query((row, rowNumber) -> {
+                    WaitState state = codec.decodeWaitState(fromJson(row.getString("payload")));
+                    String resolutionJson = row.getString("resolution");
+                    WaitResolution resolution = resolutionJson == null
+                            ? null : codec.decodeWaitResolution(fromJson(resolutionJson));
+                    return new StoredWait(row.getString("status"), state, resolution);
+                })
+                .optional();
+    }
+
+    private void reconstructTolerantWait(
+            WaitResolution resolution, long fencingToken, Instant eventTime) {
+        Optional<RuntimeCheckpoint> checkpoint = jdbcClient.sql("""
+                        SELECT checkpoint_id, schema_version, session_id, request_id, turn_id,
+                               attempt_id, boundary, fencing_token, message_cutoff, next_step,
+                               tool_call_count, remaining_budget_ms, created_at, payload::text
+                        FROM agent.runtime_checkpoints
+                        WHERE session_id = :sessionId AND request_id = :requestId
+                        """)
+                .param("sessionId", resolution.sessionId())
+                .param("requestId", resolution.requestId())
+                .query(this::mapCheckpoint)
+                .optional();
+        if (checkpoint.isEmpty() || checkpoint.get().terminalResult() == null) {
+            return;
+        }
+        WaitState state = checkpoint.get().terminalResult().waitState();
+        if (state == null
+                || !state.waitId().equals(resolution.waitId())
+                || state.missingPendingPolicy() != WaitState.MissingPendingPolicy.TOLERATE_CALLBACK_RESULT) {
+            return;
+        }
+        assertAuthorityForWait(state.sessionId(), fencingToken);
+        jdbcClient.sql("""
+                        INSERT INTO agent.runtime_waits (
+                            wait_id, schema_version, session_id, request_id, turn_id,
+                            checkpoint_id, tool_call_id, wait_type, status, resolution_id,
+                            deadline_at, fencing_token, payload, resolution, created_at, updated_at
+                        ) VALUES (
+                            :waitId, :schemaVersion, :sessionId, :requestId, :turnId,
+                            :checkpointId, :toolCallId, :waitType, 'PENDING', NULL,
+                            :deadlineAt, :fencingToken, CAST(:payload AS jsonb), NULL,
+                            :createdAt, :eventTime
+                        )
+                        ON CONFLICT (wait_id) DO NOTHING
+                        """)
+                .param("waitId", UUID.fromString(state.waitId()))
+                .param("schemaVersion", state.schemaVersion())
+                .param("sessionId", state.sessionId())
+                .param("requestId", state.requestId())
+                .param("turnId", state.turnId())
+                .param("checkpointId", UUID.fromString(state.checkpointId()))
+                .param("toolCallId", state.toolCallId())
+                .param("waitType", state.type().name())
+                .param("deadlineAt", databaseTime(state.deadlineAt()))
+                .param("fencingToken", fencingToken)
+                .param("payload", toJson(codec.encodeWaitState(state)))
+                .param("createdAt", databaseTime(state.createdAt()))
+                .param("eventTime", databaseTime(eventTime))
+                .update();
+        jdbcClient.sql("""
+                        UPDATE agent.sessions
+                        SET status = 'SUSPENDED'
+                        WHERE session_id = :sessionId
+                          AND active_fencing_token = :fencingToken
+                        """)
+                .param("sessionId", state.sessionId())
+                .param("fencingToken", fencingToken)
+                .update();
+    }
+
+    private void assertAuthorityForWait(String sessionId, long fencingToken) {
+        int rows = jdbcClient.sql("""
+                        UPDATE agent.sessions
+                        SET active_fencing_token = :fencingToken,
+                            updated_at = updated_at
+                        WHERE session_id = :sessionId
+                          AND active_fencing_token <= :fencingToken
+                          AND status = 'SUSPENDED'
+                        """)
+                .param("sessionId", sessionId)
+                .param("fencingToken", fencingToken)
+                .update();
+        if (rows != 1) {
+            throw new AgentExecutionFencedException(sessionId, fencingToken);
+        }
+        jdbcClient.sql("""
+                        UPDATE agent.sessions
+                        SET status = 'EXECUTING'
+                        WHERE session_id = :sessionId
+                          AND active_fencing_token = :fencingToken
+                        """)
+                .param("sessionId", sessionId)
+                .param("fencingToken", fencingToken)
+                .update();
+    }
+
     private void assertExistingDecision(ToolCallJournalEntry call, long fencingToken) {
         boolean same = jdbcClient.sql("""
                         SELECT EXISTS (
@@ -652,5 +1082,11 @@ public class JdbcAgentRecoveryStore implements AgentRecoveryStore {
 
     private static OffsetDateTime databaseTime(Instant value) {
         return value.atOffset(ZoneOffset.UTC);
+    }
+
+    private record StoredWait(
+            String status,
+            WaitState waitState,
+            WaitResolution resolution) {
     }
 }

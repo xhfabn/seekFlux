@@ -1,11 +1,13 @@
 package io.seekflux.platform.agentruntime.domain.model.session;
 
 import io.seekflux.platform.agentruntime.domain.model.run.AgentTerminalState;
+import io.seekflux.platform.agentruntime.domain.model.wait.WaitState;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 public record AgentSession(
@@ -41,6 +43,8 @@ public record AgentSession(
         Set<String> messageIds = new HashSet<>();
         Set<String> toolCalls = new HashSet<>();
         Set<String> toolResults = new HashSet<>();
+        Set<String> suspendedToolCalls = new HashSet<>();
+        Map<String, WaitState> pendingWaits = new LinkedHashMap<>();
         Map<String, WorkspaceEvent.QueuedUserMessage> queuedMessages = new LinkedHashMap<>();
         for (WorkspaceEvent event : ordered) {
             if (event.position() <= position) {
@@ -75,6 +79,7 @@ public record AgentSession(
                         throw new IllegalArgumentException("a tool result must follow its assistant tool call");
                     }
                     requireUnique(toolResults, message.toolCallId(), "tool result");
+                    suspendedToolCalls.remove(message.toolCallId());
                     yield status;
                 }
                 case WorkspaceEvent.StatePatched patched -> {
@@ -86,6 +91,24 @@ public record AgentSession(
                     workspaceState = patched.state();
                     yield status;
                 }
+                case WorkspaceEvent.WaitSuspended suspended -> {
+                    WaitState wait = suspended.waitState();
+                    if (pendingWaits.putIfAbsent(wait.waitId(), wait) != null) {
+                        throw new IllegalArgumentException("wait ids must be unique within a session");
+                    }
+                    suspendedToolCalls.add(wait.toolCallId());
+                    yield AgentSessionStatus.SUSPENDED;
+                }
+                case WorkspaceEvent.WaitResolved resolved -> {
+                    var resolution = resolved.resolution();
+                    WaitState removed = pendingWaits.remove(resolution.waitId());
+                    if (removed == null
+                            && pendingWaits.values().stream().noneMatch(wait ->
+                                    wait.waitId().equals(resolution.waitId()))) {
+                        throw new IllegalArgumentException("wait resolution must follow a suspension");
+                    }
+                    yield AgentSessionStatus.EXECUTING;
+                }
                 case WorkspaceEvent.RunCompleted completed ->
                         completed.state() == AgentTerminalState.NEED_CLARIFICATION
                                 ? AgentSessionStatus.SUSPENDED
@@ -94,7 +117,10 @@ public record AgentSession(
                 case WorkspaceEvent.RunFailed failed -> AgentSessionStatus.COMPLETED;
             };
         }
-        if (!toolCalls.equals(toolResults)) {
+        Set<String> temporarilyPending = status == AgentSessionStatus.COMPLETED
+                ? Set.of() : suspendedToolCalls;
+        if (!toolResults.containsAll(toolCalls.stream()
+                .filter(callId -> !temporarilyPending.contains(callId)).toList())) {
             throw new IllegalArgumentException("every assistant tool call must have exactly one tool result");
         }
         return new AgentSession(
@@ -106,6 +132,30 @@ public record AgentSession(
                 workspaceState,
                 status,
                 ordered);
+    }
+
+    public Optional<WaitState> pendingWait() {
+        Map<String, WaitState> pending = new LinkedHashMap<>();
+        for (WorkspaceEvent event : events) {
+            if (event instanceof WorkspaceEvent.WaitSuspended suspended) {
+                pending.put(suspended.waitState().waitId(), suspended.waitState());
+            } else if (event instanceof WorkspaceEvent.WaitResolved resolved) {
+                pending.remove(resolved.resolution().waitId());
+            }
+        }
+        if (pending.size() > 1) {
+            throw new IllegalStateException("a session cannot contain multiple pending waits");
+        }
+        return pending.values().stream().findFirst();
+    }
+
+    public Optional<WaitState> waitState(String waitId) {
+        return events.stream()
+                .filter(WorkspaceEvent.WaitSuspended.class::isInstance)
+                .map(WorkspaceEvent.WaitSuspended.class::cast)
+                .map(WorkspaceEvent.WaitSuspended::waitState)
+                .filter(wait -> wait.waitId().equals(waitId))
+                .findFirst();
     }
 
     public List<WorkspaceEvent.QueuedUserMessage> queuedMessages() {

@@ -17,6 +17,8 @@ import io.seekflux.platform.agentruntime.domain.model.session.IngressCommitResul
 import io.seekflux.platform.agentruntime.domain.model.session.QueueCommitResult;
 import io.seekflux.platform.agentruntime.domain.model.session.QueuedMessageBatch;
 import io.seekflux.platform.agentruntime.domain.model.session.WorkspaceEvent;
+import io.seekflux.platform.agentruntime.domain.model.wait.WaitResolution;
+import io.seekflux.platform.agentruntime.domain.model.wait.WaitState;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Instant;
@@ -388,13 +390,41 @@ public class JdbcAgentSessionStore implements AgentSessionStore {
         String eventType = switch (result.state()) {
             case CANCELLED -> "RUN_CANCELLED";
             case FAILED -> "RUN_FAILED";
+            case WAITING -> "WAIT_SUSPENDED";
             default -> "RUN_COMPLETED";
         };
+        java.util.Set<String> persistedMessageIds = new java.util.HashSet<>(jdbcClient.sql("""
+                        SELECT message_id
+                        FROM agent.workspace_events
+                        WHERE session_id = :sessionId AND message_id IS NOT NULL
+                        """)
+                .param("sessionId", sessionId)
+                .query(String.class)
+                .list());
+        List<AgentMessage> newMessages = result.messages().stream()
+                .filter(message -> !persistedMessageIds.contains(message.messageId()))
+                .toList();
         long position = advanceOutcomePosition(
-                sessionId, result, fencingToken, eventTime, result.messages().size() + 1);
-        long messagePosition = position - result.messages().size();
-        for (AgentMessage message : result.messages()) {
+                sessionId, result, fencingToken, eventTime, newMessages.size() + 1);
+        long messagePosition = position - newMessages.size();
+        for (AgentMessage message : newMessages) {
             insertMessageEvent(sessionId, messagePosition++, message, eventTime);
+        }
+        if (result.state() == AgentTerminalState.WAITING) {
+            WaitState waitState = result.waitState();
+            insertWorkspaceEvent(
+                    eventId(waitState.waitId()),
+                    sessionId,
+                    position,
+                    eventType,
+                    waitState.schemaVersion(),
+                    null,
+                    waitState.toolCallId(),
+                    waitState.requestId(),
+                    waitState.turnId(),
+                    eventTime,
+                    encodeWaitState(waitState));
+            return;
         }
         Map<String, Object> payload = new java.util.LinkedHashMap<>();
         payload.put("agentRunId", result.trace().agentRunId());
@@ -494,6 +524,7 @@ public class JdbcAgentSessionStore implements AgentSessionStore {
                 .param("turnId", result.trace().turnId())
                 .param("eventCount", eventCount)
                 .param("status", result.state() == AgentTerminalState.NEED_CLARIFICATION
+                        || result.state() == AgentTerminalState.WAITING
                         ? "SUSPENDED"
                         : "COMPLETED")
                 .param("eventTime", databaseTime(eventTime))
@@ -525,6 +556,8 @@ public class JdbcAgentSessionStore implements AgentSessionStore {
             case FALLBACK_REQUIRED -> "agent.run.fallback.v1";
             case CANCELLED -> "agent.run.cancelled.v1";
             case FAILED -> "agent.run.failed.v1";
+            case WAITING -> throw new IllegalArgumentException(
+                    "a suspended wait is not a terminal outbox outcome");
             default -> "agent.run.completed.v1";
         };
         UUID eventId = UUID.nameUUIDFromBytes(
@@ -747,6 +780,14 @@ public class JdbcAgentSessionStore implements AgentSessionStore {
                     number(payload, "baseVersion"),
                     number(payload, "stateVersion"),
                     map(payload, "state"));
+            case "WAIT_SUSPENDED" -> new WorkspaceEvent.WaitSuspended(
+                    position,
+                    eventTime,
+                    decodeWaitState(payload));
+            case "WAIT_RESOLVED" -> new WorkspaceEvent.WaitResolved(
+                    position,
+                    eventTime,
+                    objectMapper.convertValue(payload, WaitResolution.class));
             case "RUN_COMPLETED" -> new WorkspaceEvent.RunCompleted(
                     position,
                     eventTime,
@@ -767,6 +808,28 @@ public class JdbcAgentSessionStore implements AgentSessionStore {
         } catch (JsonProcessingException exception) {
             throw new IllegalStateException("failed to serialize workspace event", exception);
         }
+    }
+
+    private Map<String, Object> encodeWaitState(WaitState state) {
+        Map<String, Object> encoded = new java.util.LinkedHashMap<>(
+                objectMapper.convertValue(state, MAP_TYPE));
+        encoded.remove("type");
+        encoded.remove("missingPendingPolicy");
+        encoded.put("waitType", state.type().name());
+        return java.util.Collections.unmodifiableMap(encoded);
+    }
+
+    private WaitState decodeWaitState(Map<String, Object> encoded) {
+        WaitState.WaitType type = WaitState.WaitType.valueOf(string(encoded, "waitType"));
+        Map<String, Object> value = new java.util.LinkedHashMap<>(encoded);
+        value.remove("waitType");
+        return switch (type) {
+            case HITL -> objectMapper.convertValue(value, WaitState.Hitl.class);
+            case ASYNC_TASK -> objectMapper.convertValue(value, WaitState.AsyncTask.class);
+            case WAITPOINT -> objectMapper.convertValue(value, WaitState.Waitpoint.class);
+            case HANDOFF -> objectMapper.convertValue(value, WaitState.Handoff.class);
+            case CHILD_AGENT -> objectMapper.convertValue(value, WaitState.ChildAgent.class);
+        };
     }
 
     private Map<String, Object> fromJson(String value) {

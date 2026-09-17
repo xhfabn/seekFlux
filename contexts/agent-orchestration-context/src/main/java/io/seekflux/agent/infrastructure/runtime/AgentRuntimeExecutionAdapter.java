@@ -164,7 +164,10 @@ public final class AgentRuntimeExecutionAdapter implements AgentExecutionPort {
                 degraded,
                 runtime.fallbackReason(),
                 runtime.cancellationReason(),
-                traceView(runtime.trace(), mode));
+                traceView(runtime.trace(), mode),
+                0,
+                runtime.waitState() == null ? null : runtime.waitState().waitId(),
+                runtime.waitState() == null ? null : runtime.waitState().type().name());
         projection.project(result);
         metrics.succeeded(runtime, System.nanoTime() - startedNanos);
         return result;
@@ -212,6 +215,7 @@ public final class AgentRuntimeExecutionAdapter implements AgentExecutionPort {
         return switch (state) {
             case RESULTS_READY -> AgentSearchState.RESULTS_READY;
             case NEED_CLARIFICATION -> AgentSearchState.NEED_CLARIFICATION;
+            case WAITING -> AgentSearchState.WAITING;
             case FALLBACK_REQUIRED -> AgentSearchState.FALLBACK_RESULTS;
             case CANCELLED -> AgentSearchState.CANCELLED;
             case FAILED -> AgentSearchState.FAILED;

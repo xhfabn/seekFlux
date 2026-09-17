@@ -5,6 +5,9 @@ import io.seekflux.platform.agentruntime.domain.model.recovery.ResumeIngress;
 import io.seekflux.platform.agentruntime.domain.model.recovery.RuntimeCheckpoint;
 import io.seekflux.platform.agentruntime.domain.model.recovery.ToolCallJournalEntry;
 import io.seekflux.platform.agentruntime.domain.model.sideeffect.SideEffectLedgerEntry;
+import io.seekflux.platform.agentruntime.domain.model.wait.WaitResolution;
+import io.seekflux.platform.agentruntime.domain.model.wait.WaitResolutionResult;
+import io.seekflux.platform.agentruntime.domain.model.wait.WaitState;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
@@ -35,6 +38,24 @@ public interface AgentRecoveryStore {
             List<ToolCallJournalEntry> calls,
             long fencingToken,
             Instant eventTime) {
+    }
+
+    default void suspendWait(
+            RuntimeCheckpoint checkpoint,
+            WaitState waitState,
+            ToolCallJournalEntry waitingCall,
+            long fencingToken,
+            Instant eventTime) {
+        throw new IllegalStateException("durable Agent waiting is not configured");
+    }
+
+    default WaitResolutionResult resolveWait(
+            WaitResolution resolution, long fencingToken, Instant eventTime) {
+        return WaitResolutionResult.missing();
+    }
+
+    default List<WaitState> findExpiredWaits(Instant deadlineExclusive, int limit) {
+        return List.of();
     }
 
     default void markToolExecuting(

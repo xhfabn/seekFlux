@@ -38,6 +38,8 @@ import io.seekflux.platform.agentruntime.domain.model.sideeffect.SideEffectLedge
 import io.seekflux.platform.agentruntime.domain.model.sideeffect.SideEffectReconciliation;
 import io.seekflux.platform.agentruntime.domain.model.sideeffect.SideEffectStatus;
 import io.seekflux.platform.agentruntime.domain.exception.UnsafeToolRecoveryException;
+import io.seekflux.platform.agentruntime.domain.model.wait.WaitState;
+import io.seekflux.platform.agentruntime.domain.model.wait.WaitRequest;
 import io.seekflux.platform.agentruntime.domain.service.execution.AgentCallGuard;
 import io.seekflux.platform.agentruntime.domain.service.recovery.AgentRecoveryExecution;
 import java.time.Clock;
@@ -164,7 +166,8 @@ public final class AgentRuntime {
         };
 
         RecoveryPlan recoveryPlan = recovery.plan();
-        if (recoveryPlan.action() == ResumeAction.COMMIT_TERMINAL) {
+        if (recoveryPlan.action() == ResumeAction.COMMIT_TERMINAL
+                || recoveryPlan.action() == ResumeAction.WAIT_FOR_EXTERNAL) {
             AgentRunResult terminal = recoveryPlan.checkpoint().terminalResult();
             publisher.publish(new PushEvent.SegmentStarted(
                     terminal.trace().agentRunId(), clock.instant(),
@@ -370,6 +373,30 @@ public final class AgentRuntime {
                 eager.cancelAll();
                 throw persistenceFailure;
             }
+            List<PreparedToolCall> approvalCalls = prepared.stream()
+                    .filter(call -> call.approvalReason() != null)
+                    .toList();
+            if (!approvalCalls.isEmpty()) {
+                eager.cancelAll();
+                if (prepared.size() != 1 || approvalCalls.size() != 1) {
+                    return finishFailure(
+                            run, definition, "MULTIPLE_TOOL_APPROVAL_UNSUPPORTED", null);
+                }
+                PreparedToolCall approval = approvalCalls.getFirst();
+                ToolCallJournalEntry waitingCall = journalEntries.getFirst().withStatus(
+                        ToolJournalStatus.WAITING, null, clock.instant());
+                WaitState.Hitl waitState = approvalWait(run, approval);
+                run.steps.add(new AgentRunTrace.StepTrace(
+                        step, "CALL_TOOL", "WAITING_APPROVAL", approval.toolCallId(),
+                        approval.tool().name(), null, elapsedMillis(decisionStarted), null));
+                run.record(AgentRunEvent.Type.TOOL_COMPLETED, Map.of(
+                        "step", step,
+                        "toolCallId", approval.toolCallId(),
+                        "toolName", approval.tool().name(),
+                        "schemaVersion", approval.tool().schema().version(),
+                        "status", "WAITING_APPROVAL"));
+                return finishWaiting(run, waitState, waitingCall);
+            }
             eager.retainOnly(prepared);
             boolean noProgress = false;
             for (PreparedToolCall call : prepared) {
@@ -472,6 +499,35 @@ public final class AgentRuntime {
                 }
                 return finishCancelled(run, afterTools);
             }
+            List<AgentToolObservation> waitingObservations = completed.stream()
+                    .filter(observation -> observation.result().waiting())
+                    .toList();
+            if (!waitingObservations.isEmpty()) {
+                if (completed.size() != 1 || waitingObservations.size() != 1) {
+                    return finishFailure(
+                            run, definition, "MULTIPLE_TOOL_WAITS_UNSUPPORTED", null);
+                }
+                AgentToolObservation waiting = waitingObservations.getFirst();
+                PreparedToolCall waitingPrepared = prepared.getFirst();
+                if (waitingPrepared.tool().effect() == AgentTool.Effect.MUTATING) {
+                    return finishFailure(
+                            run, definition, "MUTATING_TOOL_WAIT_UNSUPPORTED", null);
+                }
+                WaitState waitState = toolWait(run, waitingPrepared, waiting.result().waitRequest());
+                ToolCallJournalEntry waitingCall = journalEntries.getFirst().forAttempt(
+                        run.runId, ToolJournalStatus.WAITING, null, clock.instant());
+                run.steps.add(new AgentRunTrace.StepTrace(
+                        step, "CALL_TOOL", "WAITING_" + waitState.type().name(),
+                        waiting.toolCallId(), waiting.toolName(), null,
+                        waiting.tookMillis(), null));
+                run.record(AgentRunEvent.Type.TOOL_COMPLETED, Map.of(
+                        "step", step,
+                        "toolCallId", waiting.toolCallId(),
+                        "toolName", waiting.toolName(),
+                        "schemaVersion", waiting.schemaVersion(),
+                        "status", "WAITING_" + waitState.type().name()));
+                return finishWaiting(run, waitState, waitingCall);
+            }
             observations.addAll(completed);
             for (AgentToolObservation observation : completed) {
                 AgentToolResult toolResult = observation.result();
@@ -543,6 +599,23 @@ public final class AgentRuntime {
                 "AGENT");
     }
 
+    private AgentRunResult finishWaiting(
+            RunState run,
+            WaitState waitState,
+            ToolCallJournalEntry waitingCall) {
+        return finish(
+                run,
+                AgentTerminalState.WAITING,
+                Map.of("waitId", waitState.waitId(), "waitType", waitState.type().name()),
+                waitState instanceof WaitState.Hitl hitl ? hitl.reason() : null,
+                null,
+                null,
+                false,
+                "AGENT_WAITING",
+                waitState,
+                waitingCall);
+    }
+
     private AgentRunResult finish(
             RunState run,
             AgentTerminalState state,
@@ -551,7 +624,8 @@ public final class AgentRuntime {
             String fallbackReason,
             boolean degraded,
             String executionMode) {
-        return finish(run, state, output, clarification, fallbackReason, null, degraded, executionMode);
+        return finish(run, state, output, clarification, fallbackReason, null, degraded,
+                executionMode, null, null);
     }
 
     private AgentRunResult finish(
@@ -563,6 +637,21 @@ public final class AgentRuntime {
             String cancellationReason,
             boolean degraded,
             String executionMode) {
+        return finish(run, state, output, clarification, fallbackReason, cancellationReason,
+                degraded, executionMode, null, null);
+    }
+
+    private AgentRunResult finish(
+            RunState run,
+            AgentTerminalState state,
+            Map<String, Object> output,
+            String clarification,
+            String fallbackReason,
+            String cancellationReason,
+            boolean degraded,
+            String executionMode,
+            WaitState waitState,
+            ToolCallJournalEntry waitingCall) {
         AgentRunTrace trace = new AgentRunTrace(
                 run.runId,
                 run.request.requestId(),
@@ -589,12 +678,71 @@ public final class AgentRuntime {
         if (cancellationReason != null) {
             payload.put("cancellationReason", cancellationReason);
         }
+        if (waitState != null) {
+            payload.put("waitId", waitState.waitId());
+            payload.put("waitType", waitState.type().name());
+        }
         run.record(AgentRunEvent.Type.RUN_COMPLETED, payload);
         AgentRunResult result = new AgentRunResult(
                 state, output, clarification, fallbackReason, cancellationReason, degraded,
-                run.messages, trace);
-        run.saveTerminal(result);
+                run.messages, waitState, trace);
+        if (waitState == null) {
+            run.saveTerminal(result);
+        } else {
+            run.saveWait(result, waitState, waitingCall);
+        }
         return result;
+    }
+
+    private WaitState.Hitl approvalWait(RunState run, PreparedToolCall call) {
+        Instant createdAt = clock.instant();
+        Instant deadlineAt = createdAt.plus(call.approvalTimeout());
+        String waitId = UUID.nameUUIDFromBytes(("wait:hitl:" + run.request.sessionId()
+                + ":" + call.toolCallId()).getBytes(StandardCharsets.UTF_8)).toString();
+        return new WaitState.Hitl(
+                1,
+                waitId,
+                run.request.sessionId(),
+                run.request.requestId(),
+                run.request.turnId(),
+                run.checkpointId(CheckpointBoundary.SUSPENDED, call.step()),
+                call.toolCallId(),
+                createdAt,
+                deadlineAt,
+                call.approvalReason(),
+                call.tool().name(),
+                call.arguments());
+    }
+
+    private WaitState toolWait(
+            RunState run, PreparedToolCall call, WaitRequest request) {
+        Instant createdAt = clock.instant();
+        long remainingMillis = Math.max(
+                1, TimeUnit.NANOSECONDS.toMillis(remainingNanos(run.deadlineNanos)));
+        Instant deadlineAt = createdAt.plus(request.timeout());
+        String waitId = UUID.nameUUIDFromBytes(("wait:" + request.getClass().getSimpleName()
+                + ":" + run.request.sessionId() + ":" + call.toolCallId())
+                .getBytes(StandardCharsets.UTF_8)).toString();
+        String checkpointId = run.checkpointId(CheckpointBoundary.SUSPENDED, call.step());
+        return switch (request) {
+            case WaitRequest.AsyncTask async -> new WaitState.AsyncTask(
+                    1, waitId, run.request.sessionId(), run.request.requestId(),
+                    run.request.turnId(), checkpointId, call.toolCallId(), createdAt,
+                    deadlineAt, async.taskId(), async.callbackType());
+            case WaitRequest.Waitpoint waitpoint -> new WaitState.Waitpoint(
+                    1, waitId, run.request.sessionId(), run.request.requestId(),
+                    run.request.turnId(), checkpointId, call.toolCallId(), createdAt,
+                    deadlineAt, waitpoint.key(), waitpoint.condition());
+            case WaitRequest.Handoff handoff -> new WaitState.Handoff(
+                    1, waitId, run.request.sessionId(), run.request.requestId(),
+                    run.request.turnId(), checkpointId, call.toolCallId(), createdAt,
+                    deadlineAt, handoff.targetAgentId(), handoff.targetSessionId());
+            case WaitRequest.ChildAgent child -> new WaitState.ChildAgent(
+                    1, waitId, run.request.sessionId(), run.request.requestId(),
+                    run.request.turnId(), checkpointId, call.toolCallId(), createdAt,
+                    deadlineAt, child.childAgentId(), child.childSessionId(), child.depth(),
+                    Math.min(child.remainingBudgetMillis(), remainingMillis));
+        };
     }
 
     private static Map<String, Object> decisionPayload(int step, AgentDecision decision) {
@@ -764,7 +912,8 @@ public final class AgentRuntime {
         if (batchFailure != null && batchFailure.cancellationCause == null) {
             recoveredFailure = batchFailure.code;
         } else if (recoveredTimeout) {
-            recoveredFailure = "AGENT_DEADLINE_EXCEEDED";
+            recoveredFailure = firstFailure == null
+                    ? "AGENT_DEADLINE_EXCEEDED" : firstFailure;
         } else if (!anySucceeded && recoveredCancellation == null) {
             recoveredFailure = firstFailure == null ? "TOOL_RECOVERY_FAILED" : firstFailure;
         }
@@ -796,7 +945,9 @@ public final class AgentRuntime {
                 entry.arguments(),
                 entry.argumentsRepaired(),
                 entry.step(),
-                entry.callIndex());
+                entry.callIndex(),
+                null,
+                null);
     }
 
     private static AgentMessage.ToolResultStatus messageStatus(ToolJournalStatus status) {
@@ -805,7 +956,7 @@ public final class AgentRuntime {
             case FAILED -> AgentMessage.ToolResultStatus.FAILED;
             case CANCELLED -> AgentMessage.ToolResultStatus.CANCELLED;
             case TIMED_OUT -> AgentMessage.ToolResultStatus.TIMED_OUT;
-            case DECIDED, EXECUTING, UNKNOWN -> AgentMessage.ToolResultStatus.WAITING;
+            case DECIDED, EXECUTING, UNKNOWN, WAITING -> AgentMessage.ToolResultStatus.WAITING;
         };
     }
 
@@ -1201,9 +1352,11 @@ public final class AgentRuntime {
         if (policyDecision.action() == ToolExecutionPolicy.Action.DENY) {
             throw new ToolPolicyFailure("TOOL_POLICY_DENIED");
         }
-        if (policyDecision.action() == ToolExecutionPolicy.Action.NEED_APPROVAL) {
-            throw new ToolPolicyFailure("TOOL_APPROVAL_REQUIRED");
-        }
+        String approvalReason = policyDecision.action() == ToolExecutionPolicy.Action.NEED_APPROVAL
+                ? policyDecision.reason() == null || policyDecision.reason().isBlank()
+                        ? "Tool execution requires approval"
+                        : policyDecision.reason()
+                : null;
         if (policyDecision.action() == ToolExecutionPolicy.Action.MODIFY) {
             arguments = policyDecision.arguments();
             tool.schema().validate(arguments);
@@ -1213,7 +1366,15 @@ public final class AgentRuntime {
                 + tool.name() + ":" + new TreeMap<>(arguments);
         String toolCallId = UUID.nameUUIDFromBytes(
                 identity.getBytes(java.nio.charset.StandardCharsets.UTF_8)).toString();
-        return new PreparedToolCall(toolCallId, tool, arguments, repaired, step, callIndex);
+        return new PreparedToolCall(
+                toolCallId,
+                tool,
+                arguments,
+                repaired,
+                step,
+                callIndex,
+                approvalReason,
+                policyDecision.approvalTimeout());
     }
 
     private static List<AgentDecision.ToolCall> toolCalls(AgentDecision decision) {
@@ -1525,7 +1686,9 @@ public final class AgentRuntime {
             Map<String, Object> arguments,
             boolean argumentsRepaired,
             int step,
-            int index) {
+            int index,
+            String approvalReason,
+            Duration approvalTimeout) {
     }
 
     private record PendingToolCall(
@@ -1729,6 +1892,7 @@ public final class AgentRuntime {
 
         private void saveTerminal(AgentRunResult result) {
             CheckpointBoundary boundary = result.state() == AgentTerminalState.NEED_CLARIFICATION
+                    || result.state() == AgentTerminalState.WAITING
                     ? CheckpointBoundary.SUSPENDED
                     : CheckpointBoundary.COMPLETED;
             RuntimeCheckpoint checkpoint = checkpoint(
@@ -1743,6 +1907,26 @@ public final class AgentRuntime {
                     runId, clock.instant(), checkpoint.boundary().name(), checkpoint.nextStep()));
         }
 
+        private void saveWait(
+                AgentRunResult result,
+                WaitState waitState,
+                ToolCallJournalEntry waitingCall) {
+            RuntimeCheckpoint checkpoint = checkpoint(
+                    CheckpointBoundary.SUSPENDED,
+                    latestNextStep,
+                    latestToolCallCount,
+                    latestObservations,
+                    latestCompletedInvocations,
+                    result);
+            if (!checkpoint.checkpointId().equals(waitState.checkpointId())) {
+                throw new IllegalStateException("WaitState checkpoint identity does not match");
+            }
+            recovery.suspendWait(checkpoint, waitState, waitingCall);
+            publish(new PushEvent.CheckpointSaved(
+                    runId, clock.instant(), checkpoint.boundary().name(), checkpoint.nextStep()));
+            publish(new PushEvent.WaitSuspended(runId, clock.instant(), waitState));
+        }
+
         private RuntimeCheckpoint checkpoint(
                 CheckpointBoundary boundary,
                 int nextStep,
@@ -1750,10 +1934,7 @@ public final class AgentRuntime {
                 List<AgentToolObservation> observations,
                 Set<String> completedInvocations,
                 AgentRunResult terminalResult) {
-            String checkpointIdentity = request.sessionId() + ":" + request.requestId() + ":"
-                    + boundary + ":" + nextStep + ":" + messages.size();
-            String checkpointId = UUID.nameUUIDFromBytes(
-                    checkpointIdentity.getBytes(StandardCharsets.UTF_8)).toString();
+            String checkpointId = checkpointId(boundary, nextStep);
             return new RuntimeCheckpoint(
                     1,
                     checkpointId,
@@ -1776,6 +1957,13 @@ public final class AgentRuntime {
                     steps,
                     terminalResult,
                     clock.instant());
+        }
+
+        private String checkpointId(CheckpointBoundary boundary, int nextStep) {
+            String checkpointIdentity = request.sessionId() + ":" + request.requestId() + ":"
+                    + boundary + ":" + nextStep + ":" + messages.size();
+            return UUID.nameUUIDFromBytes(
+                    checkpointIdentity.getBytes(StandardCharsets.UTF_8)).toString();
         }
 
         private void remember(RuntimeCheckpoint checkpoint) {

@@ -1,6 +1,6 @@
 # Agent Runtime 演进路线与交付记录
 
-> 文档状态：**AR-1～AR-7 已完成**；下一步为 **AR-8 挂起、恢复与父子执行**。
+> 文档状态：**AR-1～AR-8B 已完成**；**AR-8C Handoff/子 Agent/Fork 后置可选**；下一步为 **AR-9 动态能力与编排引擎**。
 >
 > 本文只记录 `platform/agent-runtime` 后续演进的实施顺序、完成门槛和交付证据。写进计划不代表已经实现；只有代码、自动化测试以及必要的真实验收或固定评测共同证明后，阶段状态才能改为“已完成”。
 
@@ -17,7 +17,7 @@
 
 - [全局学习路线](../../docs/learning/README.md)：全仓唯一的当前 Step 与总体进度入口；
 - [Agent Runtime 内核设计](../../docs/agent-runtime.md)：已经实现的 Runtime 结构与运行语义；
-- [ADR-004](../../docs/adr/ADR-004-ark-leto-inspired-agent-runtime.md)、[ADR-006](../../docs/adr/ADR-006-agent-reliability-fencing-outbox-shadow.md) 与 [ADR-011](../../docs/adr/ADR-011-agent-streaming-push-and-eager-tool-safety.md)：长期架构决定和 Ark-Leto 差距矩阵；
+- [ADR-004](../../docs/adr/ADR-004-ark-leto-inspired-agent-runtime.md)、[ADR-006](../../docs/adr/ADR-006-agent-reliability-fencing-outbox-shadow.md)、[ADR-011](../../docs/adr/ADR-011-agent-streaming-push-and-eager-tool-safety.md) 与 [ADR-012](../../docs/adr/ADR-012-agent-durable-wait-and-resume.md)：长期架构决定和 Ark-Leto 差距矩阵；
 - [Ark-Leto 框架内核与 Agentspark 主链路原理详解](<../../Ark-Leto 框架内核 与 Agentspark 主链路 原理详解.md>)：目标能力的参考材料，不是 SeekFlux 当前实现证明。
 
 状态只使用：`已完成`、`下一步`、`未开始`、`后置可选`。阶段文档或接口草图不能作为完成证据。
@@ -44,7 +44,9 @@
 - Steer 已支持有界持久队列、先入队后取消、fencing drain、批量升格、旧信号精确清理和崩溃恢复；
 - 上下文已按显式 Layer 组装并计量完整消息/Tool Schema，支持 `NONE/ASYNC/SYNC` 压缩、持久增量摘要、400/413 强压缩重试与有界 OutputGuard repair；
 - 已有真实模型 SSE、Session 单调 Push sequence、有界 replay/背压、Redis 跨实例 relay 和 Last-Event-ID 重连；
-- HITL、异步等待点、Handoff、子 Agent、MCP 和 Graph 尚未实现。
+- 类型化持久等待、HITL、Async/Waitpoint、超时扫描和幂等恢复已经实现；Handoff/子 Agent
+  仅有通用协调协议，真实 launcher、持久父子关系、取消级联和 Fork promotion 尚未实现；
+  MCP 和 Graph 尚未实现。
 
 ## 3. 实施顺序与依赖
 
@@ -74,8 +76,10 @@ flowchart TD
 | AR-5 | Steer Queue/Drain | 已完成 | 中到大 | AR-1、AR-2 |
 | AR-6 | 上下文压缩、413 重试和 OutputGuard | 已完成 | 大 | AR-2 |
 | AR-7 | 流式调用、实时 Push 与跨实例订阅 | 已完成 | 大 | AR-6 |
-| AR-8 | HITL、异步等待点、Handoff 与子 Agent | 下一步 | 多个独立大阶段 | AR-3、AR-4、AR-7 |
-| AR-9 | Skill/ToolGroup、MCP、Chained/Graph | 后置可选 | 多个独立大阶段 | AR-2/3/4/7，按子阶段区分 |
+| AR-8A | 类型化等待、挂起与恢复基础 | 已完成 | 大 | AR-3、AR-7 |
+| AR-8B | HITL、Async、Waitpoint 与超时/取消竞态 | 已完成 | 大 | AR-4、AR-8A |
+| AR-8C | Handoff、子 Agent 与 Fork promotion | 后置可选 | 大 | AR-8A、真实产品用例 |
+| AR-9 | Skill/ToolGroup、MCP、Chained/Graph | 下一步 | 多个独立大阶段 | AR-2/3/4/7，按子阶段区分 |
 
 这里的工作量只表示相对复杂度，不是工期承诺。表格中的“主要前置”表示技术依赖，不等于实际交付顺序：AR-5 技术上只依赖 AR-1/AR-2，但仍可按产品优先级排在 AR-4 之后。AR-8 和 AR-9 必须继续拆成独立子阶段，不能用一个“大功能完成”状态掩盖其中的缺口。
 
@@ -259,13 +263,23 @@ WorkspaceEvent 仍是恢复事实，PushEvent 只是过程投影；外部 SSE/We
 
 该阶段复用 AR-3 的 Resume 协议，并按实际产品场景分别立项：
 
-- **AR-8A 等待状态基础**：`SUSPENDED`、类型化 WaitState、挂起事件、恢复事件、超时器、Checkpoint 与 Internal Ingress；
-- **AR-8B HITL/Async/Waitpoint**：need-approval、人工结论、异步任务回调、超时/取消幂等和恢复后 ToolResult 渲染补偿；
-- **AR-8C Handoff/子 Agent/Fork**：父子/源目标 Session 关联、预算和身份传播、等待/取消级联、结果回填、fork/promote 幂等和失败隔离。
+- **AR-8A 等待状态基础（已完成）**：`WAITING → SUSPENDED` 投影、类型化 WaitState、挂起/恢复事件、独立超时器、Checkpoint 与 Internal Ingress；
+- **AR-8B HITL/Async/Waitpoint（已完成）**：need-approval、人工结论、异步任务回调、合法决议类型、超时/取消幂等和恢复后 ToolResult 渲染补偿；
+- **AR-8C Handoff/子 Agent/Fork（后置可选）**：已有通用 launcher SPI、深度/预算/身份传播、Child/Handoff Wait 与结果回填协调器；真实父子/源目标 Session 关系、父取消级联、产品 launcher 和 fork/promote 幂等尚未开始，Fork 显式失败关闭。
 
 不同等待类型必须明确 pending 状态丢失时是 fail-fast 还是容错恢复，不能统一吞掉。挂起前 Checkpoint 失败、重复回调、回调与超时竞态、父取消和子完成竞态均需固定测试。
 
 完成门槛不能共用。每个子阶段都要有独立产品用例、契约、故障模型、测试和验收证据；没有真实需求的子阶段保持“后置可选”。
+
+实现说明：`AgentRuntime` 在 `NEED_APPROVAL` 前保存原 Assistant/Tool 决策并挂起，审批通过后
+复用原 Tool Call ID；Tool 也可返回 `WaitRequest.AsyncTask/Waitpoint/Handoff/ChildAgent`。
+`agent.runtime_waits` 在 PostgreSQL 中以行锁、fencing token 和唯一 pending 索引仲裁
+first-writer-wins；同一 `resolutionId` 的同一决议忽略服务端接收时间差异并幂等返回，改变
+outcome/output/actor 则冲突。HITL 与异步类等待的合法结论不同，防止绕过审批或重复派发异步
+任务。执行预算在挂起时冻结，等待使用策略/Tool 声明的独立 deadline；定时扫描、人工/API
+回调和 Session cancel 最终都调用 `Router.resume`。恢复后补齐 ToolResult，并在终态后继续 drain
+等待期间的 QUEUE。缺失 pending 时 HITL/Waitpoint/Handoff fail-fast，Async/Child 可从 suspended
+Checkpoint 重建。长期取舍见 [ADR-012](../../docs/adr/ADR-012-agent-durable-wait-and-resume.md)。
 
 ### AR-9：动态能力与编排引擎
 
@@ -402,6 +416,17 @@ WorkspaceEvent 仍是恢复事实，PushEvent 只是过程投影；外部 SSE/We
 - 剩余边界：当前传输为 SSE，不含 WebSocket；Push 是瞬态有界投影，不是持久审计流；Redis 短暂不可用时跨实例实时订阅会降级；单端点 Provider 尚不需要会话粘性或动态 client cache；完整 OpenTelemetry exporter、多模态 Provider 转换属于后续独立集成。
 - 下一步：AR-8A 先实现类型化 WaitState、挂起/恢复事件、超时器、Checkpoint 和 Internal Ingress；HITL/Async 与 Handoff/子 Agent 分别独立验收。
 - 关联文档/ADR/契约：[`docs/agent-runtime.md`](../../docs/agent-runtime.md)、[ADR-011](../../docs/adr/ADR-011-agent-streaming-push-and-eager-tool-safety.md)、[`agent-push-frame-v1.schema.json`](../../contracts/events/agent-push-frame-v1.schema.json)、[`contracts/openapi/seekflux-v1.yaml`](../../contracts/openapi/seekflux-v1.yaml)。
+
+### 2026-09-17：完成 AR-8A/AR-8B 持久等待、HITL 与异步恢复
+
+- 阶段：AR-8A、AR-8B（已完成）；AR-8C 调整为后置可选；AR-9 调整为下一步。
+- 本轮范围：实现类型化持久等待、HITL 审批、Async/Waitpoint 回调、独立等待期限、超时扫描、等待中取消、幂等决议和恢复后的 ToolResult/Loop/Queue 闭环。
+- 实现事实与关键入口：新增 `WaitState/WaitRequest/WaitResolution`、`WAITING` Runtime 终态、`WAIT_SUSPENDED/WAIT_RESOLVED` Workspace 事实与 Push；`AgentRuntime` 可在 Tool 前等待审批，也可接收 Tool 发起的 Async/Waitpoint；`SessionExecutor.resumeWait` 与 `DefaultRouter.resume` 复用 execution authority、fencing 和恢复主链；`JdbcAgentRecoveryStore` 与 V14 原子保存 Checkpoint、WAITING journal、pending wait 并仲裁决议；Agent Server 新增 wait resolve API、等待超时 worker，Search 响应暴露 `WAITING/waitId/waitType`；Session cancel 会解析持久等待。
+- 失败/取消/恢复语义：每个 Session 最多一个 pending wait；同一决议 ID、内容和 actor 重试幂等，服务端接收时间不参与比较，不同晚到结论冲突；HITL 不能用 `COMPLETED` 绕过，Async/Child 不能用 `APPROVED` 重派；callback/timeout first-writer-wins；执行预算在等待期间冻结，等待使用独立 deadline；HITL/Waitpoint/Handoff 丢 pending 时 fail-fast，Async/Child 可由 suspended Checkpoint 重建；取消、deny、timeout、failure 都补稳定 ToolResult 后收敛。
+- 验证命令与结果：JDK 21 下 `mvn -q test` 全仓回归通过；受影响模块 132 个测试无失败，其中 Agent Runtime 92 个、Persistence 8 个、Agent Orchestration Context 28 个、Agent Server 4 个；Web build/lint 通过。固定测试覆盖 Tool 前审批且只执行一次、Async 回调不重派、决议类型限制、重复决议接收时间差异、timeout/late callback、等待态 cancel、超时扫描/single-flight、Session 投影、Checkpoint JSON 往返及协调器预算/深度/失败隔离。隔离 PostgreSQL 17 按版本顺序执行 V1～V14，并确认 wait 表、类型/状态/决议约束及索引生效。
+- 剩余边界：当前 Search 产品没有真实 Handoff/子 Agent/Fork 用例。`DelegatedAgentLauncher/ParentChildAgentCoordinator` 只提供深度、预算、身份、Child/Handoff wait、完成/取消回填和启动失败隔离；父子关系持久化、父取消自动级联、真实 launcher、Fork 基线与 promotion 幂等均未实现，Fork 返回 `FORK_PROMOTION_UNSUPPORTED`。审批页面和业务级授权也属于具体产品 Adapter；API 只记录已经认证的 `X-User-Id`，不替代租户权限判断。
+- 下一步：AR-9A 先定义 Skill/ToolGroup 的全局、Session 持久和请求级 ephemeral 激活边界及版本冻结；AR-8C 等出现真实产品父子执行用例后再立项。
+- 关联文档/ADR/契约：[`docs/agent-runtime.md`](../../docs/agent-runtime.md)、[ADR-012](../../docs/adr/ADR-012-agent-durable-wait-and-resume.md)、[`agent-wait-lifecycle-v1.schema.json`](../../contracts/events/agent-wait-lifecycle-v1.schema.json)、[`contracts/openapi/seekflux-v1.yaml`](../../contracts/openapi/seekflux-v1.yaml)、`V14__agent_wait_states.sql`。
 
 ---
 
