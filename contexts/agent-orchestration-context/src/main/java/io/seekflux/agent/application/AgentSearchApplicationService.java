@@ -17,6 +17,7 @@ import io.seekflux.agent.port.out.DirectSearchPort;
 import io.seekflux.agent.port.out.SearchGoalChange;
 import java.util.List;
 import java.util.Objects;
+import io.seekflux.platform.agentruntime.application.spi.capability.event.PushEventPublisher;
 
 public final class AgentSearchApplicationService implements AgentSearchUseCase {
 
@@ -44,6 +45,12 @@ public final class AgentSearchApplicationService implements AgentSearchUseCase {
 
     @Override
     public AgentSearchResult search(AgentSearchCommand command) {
+        return search(command, PushEventPublisher.NOOP);
+    }
+
+    @Override
+    public AgentSearchResult search(
+            AgentSearchCommand command, PushEventPublisher publisher) {
         Objects.requireNonNull(command, "agent search command must not be null");
         var current = conversations.loadGoal(command.sessionId());
         SearchGoal goal;
@@ -86,6 +93,6 @@ public final class AgentSearchApplicationService implements AgentSearchUseCase {
                 && command.ingressMode()
                 == io.seekflux.platform.agentruntime.application.command.AgentIngressMode.NEW_EXECUTION
                 ? directSearch.execute(request)
-                : executor.execute(request);
+                : executor.execute(request, publisher == null ? PushEventPublisher.NOOP : publisher);
     }
 }

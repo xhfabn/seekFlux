@@ -22,5 +22,5 @@ public interface ToolExecutionObserver {
 
     enum Phase { BEFORE, AFTER, FAILURE }
 
-    enum Source { INITIAL, RECOVERY, RECONCILIATION }
+    enum Source { INITIAL, EAGER, RECOVERY, RECONCILIATION }
 }

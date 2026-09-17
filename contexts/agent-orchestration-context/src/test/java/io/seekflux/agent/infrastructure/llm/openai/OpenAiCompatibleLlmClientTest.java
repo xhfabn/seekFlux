@@ -12,9 +12,12 @@ import io.seekflux.platform.agentruntime.domain.model.tool.AgentToolObservation;
 import io.seekflux.platform.agentruntime.domain.model.tool.AgentToolResult;
 import io.seekflux.platform.agentruntime.application.spi.capability.llm.model.AssembledContext;
 import io.seekflux.platform.agentruntime.application.spi.capability.llm.model.ContextMessage;
+import io.seekflux.platform.agentruntime.application.spi.capability.llm.model.ChatChunk;
+import io.seekflux.platform.agentruntime.application.spi.capability.llm.model.ChatToolDefinition;
 import io.seekflux.platform.agentruntime.domain.exception.AgentCancellationException;
 import io.seekflux.platform.agentruntime.domain.exception.AgentModelOutputException;
 import io.seekflux.platform.agentruntime.domain.exception.ContextOverflowException;
+import io.seekflux.platform.agentruntime.domain.exception.LlmStreamException;
 import io.seekflux.platform.agentruntime.application.spi.business.output.OutputGuardPolicy;
 import io.seekflux.platform.agentruntime.domain.model.context.ContextEvent;
 import io.seekflux.platform.agentruntime.domain.model.execution.CancellationCause;
@@ -89,7 +92,7 @@ class OpenAiCompatibleLlmClientTest {
                     "search_direct", Map.of("query", "杭州露营")));
             assertThat(authorization.get()).isEqualTo("Bearer test-key");
             assertThat(requestBody.get()).contains("test-model", "structured prompt", "json_object");
-            assertThat(client.version()).isEqualTo("openai-compatible:test-model:v1");
+            assertThat(client.version()).isEqualTo("openai-compatible:test-model:v2@127.0.0.1");
 
             var measured = client.chatWithUsage(new AssembledContext(
                     decisionContext,
@@ -454,6 +457,290 @@ class OpenAiCompatibleLlmClientTest {
         }
     }
 
+    @Test
+    void streamsTextReasoningDetailedUsageAndRequestMetadata() throws Exception {
+        ObjectMapper objectMapper = new ObjectMapper();
+        AtomicReference<String> body = new AtomicReference<>();
+        AtomicReference<String> requestId = new AtomicReference<>();
+        AtomicReference<String> runId = new AtomicReference<>();
+        AtomicReference<String> traceparent = new AtomicReference<>();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/chat/completions", exchange -> {
+            body.set(new String(exchange.getRequestBody().readAllBytes(),
+                    java.nio.charset.StandardCharsets.UTF_8));
+            requestId.set(exchange.getRequestHeaders().getFirst("X-Request-Id"));
+            runId.set(exchange.getRequestHeaders().getFirst("X-Agent-Run-Id"));
+            traceparent.set(exchange.getRequestHeaders().getFirst("traceparent"));
+            sse(exchange,
+                    "{\"choices\":[{\"delta\":{\"reasoning_content\":\"plan \"}}]}",
+                    "{\"choices\":[{\"delta\":{\"content\":\"{\\\"action\\\":\\\"clarify\\\",\"}}]}",
+                    "{\"choices\":[{\"delta\":{\"content\":\"\\\"question\\\":\\\"where\\\"}\"},\"finish_reason\":\"stop\"}]}",
+                    "{\"choices\":[],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5,"
+                            + "\"total_tokens\":15,\"prompt_tokens_details\":{\"cached_tokens\":4},"
+                            + "\"completion_tokens_details\":{\"reasoning_tokens\":2}}}");
+        });
+        server.start();
+        try {
+            OpenAiCompatibleLlmClient client = client(server, objectMapper, Duration.ofSeconds(1));
+            AgentRunRequest run = new AgentRunRequest(
+                    "request-stream", "session-stream", "turn-stream", "find", Map.of(
+                            "modelOverride", "fast-model",
+                            "traceparent", "00-0123456789abcdef0123456789abcdef-0123456789abcdef-01"));
+            AgentDecisionContext decision = new AgentDecisionContext(
+                    run, 1, Duration.ofSeconds(1), List.of(), ignored -> { }, ignored -> { },
+                    "run-stream");
+            List<ChatChunk> chunks = new ArrayList<>();
+
+            var result = client.streamWithUsage(new AssembledContext(
+                    decision, List.of(new ContextMessage("user", "find")), "stream", 12),
+                    new CancellationToken(), chunks::add);
+
+            assertThat(result.decision()).isEqualTo(new AgentDecision.Clarify("where"));
+            assertThat(chunks).extracting(ChatChunk::sequence)
+                    .containsExactly(0L, 1L, 2L, 3L, 4L);
+            assertThat(result.usage().cachedInputTokens()).isEqualTo(4);
+            assertThat(result.usage().reasoningTokens()).isEqualTo(2);
+            assertThat(body.get()).contains("\"stream\":true", "fast-model");
+            assertThat(requestId.get()).isEqualTo("request-stream");
+            assertThat(runId.get()).isEqualTo("run-stream");
+            assertThat(traceparent.get()).startsWith("00-");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void assemblesFragmentedNativeToolCallAndDispatchesOnlyAfterArgumentsComplete() throws Exception {
+        ObjectMapper objectMapper = new ObjectMapper();
+        AtomicReference<String> requestBody = new AtomicReference<>();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/chat/completions", exchange -> {
+            requestBody.set(new String(exchange.getRequestBody().readAllBytes(),
+                    java.nio.charset.StandardCharsets.UTF_8));
+            sse(exchange,
+                    "{\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call-\","
+                            + "\"function\":{\"name\":\"search_\",\"arguments\":\"{\\\"query\\\":\"}}]}}]}",
+                    "{\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"1\","
+                            + "\"function\":{\"name\":\"direct\",\"arguments\":\"\\\"camp\\\"}\"}}]},"
+                            + "\"finish_reason\":\"tool_calls\"}]}"
+            );
+        });
+        server.start();
+        try {
+            AtomicReference<Map<String, Object>> eagerArguments = new AtomicReference<>();
+            AtomicReference<String> eagerTool = new AtomicReference<>();
+            AgentRunRequest run = new AgentRunRequest(
+                    "request-tool-stream", "session-stream", "turn-stream", "find", Map.of());
+            AgentDecisionContext decision = new AgentDecisionContext(
+                    run, 1, Duration.ofSeconds(1), List.of(), ignored -> { }, ignored -> { },
+                    "run-tool", (index, tool, arguments) -> {
+                        eagerTool.set(tool);
+                        eagerArguments.set(arguments);
+                        return new io.seekflux.platform.agentruntime.application.spi.business.planner.model.EagerToolDispatcher.Dispatch(
+                                io.seekflux.platform.agentruntime.application.spi.business.planner.model.EagerToolDispatcher.Disposition.STARTED,
+                                "stable-call");
+                    });
+
+            var result = client(server, objectMapper, Duration.ofSeconds(1)).streamWithUsage(
+                    new AssembledContext(
+                            decision,
+                            List.of(),
+                            "stream",
+                            1,
+                            Integer.MAX_VALUE,
+                            false,
+                            0,
+                            io.seekflux.platform.agentruntime.domain.model.context.ContextAssemblyMode.NORMAL,
+                            List.of(new ChatToolDefinition(
+                                    "search_direct",
+                                    "search",
+                                    Map.of(
+                                            "type", "object",
+                                            "properties", Map.of(
+                                                    "query", Map.of("type", "string")),
+                                            "required", List.of("query"))))),
+                    new CancellationToken(), ignored -> { });
+
+            assertThat(result.decision()).isEqualTo(new AgentDecision.CallTool(
+                    "search_direct", Map.of("query", "camp")));
+            assertThat(eagerTool.get()).isEqualTo("search_direct");
+            assertThat(eagerArguments.get()).isEqualTo(Map.of("query", "camp"));
+            assertThat(requestBody.get()).contains(
+                    "\"tools\"", "\"tool_choice\":\"auto\"", "search_direct");
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void retriesAnEmptyPreOutputStreamWithoutPublishingDuplicateChunks() throws Exception {
+        ObjectMapper objectMapper = new ObjectMapper();
+        AtomicInteger calls = new AtomicInteger();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/chat/completions", exchange -> {
+            if (calls.incrementAndGet() == 1) {
+                sse(exchange);
+            } else {
+                sse(exchange, "{\"choices\":[{\"delta\":{\"content\":"
+                        + "\"{\\\"action\\\":\\\"clarify\\\",\\\"question\\\":\\\"retry\\\"}\"},"
+                        + "\"finish_reason\":\"stop\"}]}");
+            }
+        });
+        server.start();
+        try {
+            List<ChatChunk> chunks = new ArrayList<>();
+            var result = client(server, objectMapper, Duration.ofSeconds(1)).streamWithUsage(
+                    context("request-stream-retry"), new CancellationToken(), chunks::add);
+
+            assertThat(result.decision()).isEqualTo(new AgentDecision.Clarify("retry"));
+            assertThat(calls.get()).isEqualTo(2);
+            assertThat(chunks).extracting(ChatChunk::sequence).containsExactly(0L, 1L);
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void returnsStableEmptyStreamFailureAfterTheBoundedRetry() throws Exception {
+        ObjectMapper objectMapper = new ObjectMapper();
+        AtomicInteger calls = new AtomicInteger();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/chat/completions", exchange -> {
+            calls.incrementAndGet();
+            sse(exchange);
+        });
+        server.start();
+        try {
+            assertThatThrownBy(() -> client(server, objectMapper, Duration.ofSeconds(1))
+                    .streamWithUsage(context("request-stream-empty"),
+                            new CancellationToken(), ignored -> { }))
+                    .isInstanceOfSatisfying(LlmStreamException.class, error -> {
+                        assertThat(error.code()).isEqualTo("LLM_STREAM_EMPTY");
+                        assertThat(error.outputStarted()).isFalse();
+                    });
+            assertThat(calls.get()).isEqualTo(2);
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void neverRetriesAfterAChunkWasPublished() throws Exception {
+        ObjectMapper objectMapper = new ObjectMapper();
+        AtomicInteger calls = new AtomicInteger();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/chat/completions", exchange -> {
+            calls.incrementAndGet();
+            exchange.getResponseHeaders().set("Content-Type", "text/event-stream");
+            exchange.sendResponseHeaders(200, 0);
+            exchange.getResponseBody().write(("data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n")
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            exchange.close();
+        });
+        server.start();
+        try {
+            List<ChatChunk> chunks = new ArrayList<>();
+            assertThatThrownBy(() -> client(server, objectMapper, Duration.ofSeconds(1))
+                    .streamWithUsage(context("request-stream-partial"),
+                            new CancellationToken(), chunks::add))
+                    .isInstanceOfSatisfying(LlmStreamException.class, error -> {
+                        assertThat(error.code()).isEqualTo("LLM_STREAM_INTERRUPTED_AFTER_OUTPUT");
+                        assertThat(error.outputStarted()).isTrue();
+                    });
+            assertThat(calls.get()).isEqualTo(1);
+            assertThat(chunks).hasSize(1);
+        } finally {
+            server.stop(0);
+        }
+    }
+
+    @Test
+    void classifiesFirstChunkTimeoutAfterTheBoundedPreOutputRetry() throws Exception {
+        ObjectMapper objectMapper = new ObjectMapper();
+        AtomicInteger calls = new AtomicInteger();
+        ExecutorService serverExecutor = Executors.newCachedThreadPool();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/chat/completions", exchange -> {
+            calls.incrementAndGet();
+            try {
+                Thread.sleep(150);
+                sse(exchange, "{\"choices\":[{\"delta\":{\"content\":\"late\"}}]}");
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                exchange.close();
+            } catch (java.io.IOException disconnected) {
+                exchange.close();
+            }
+        });
+        server.setExecutor(serverExecutor);
+        server.start();
+        try {
+            assertThatThrownBy(() -> client(server, objectMapper, Duration.ofMillis(50))
+                    .streamWithUsage(context("request-first-timeout"),
+                            new CancellationToken(), ignored -> { }))
+                    .isInstanceOfSatisfying(LlmStreamException.class, error ->
+                            assertThat(error.code()).isEqualTo("LLM_FIRST_CHUNK_TIMEOUT"));
+            assertThat(calls.get()).isEqualTo(2);
+        } finally {
+            server.stop(0);
+            serverExecutor.shutdownNow();
+        }
+    }
+
+    @Test
+    void cancellationAfterFirstChunkStopsTheStreamWithoutRetry() throws Exception {
+        ObjectMapper objectMapper = new ObjectMapper();
+        AtomicInteger calls = new AtomicInteger();
+        CountDownLatch firstChunk = new CountDownLatch(1);
+        CountDownLatch release = new CountDownLatch(1);
+        ExecutorService serverExecutor = Executors.newCachedThreadPool();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/chat/completions", exchange -> {
+            calls.incrementAndGet();
+            exchange.getResponseHeaders().set("Content-Type", "text/event-stream");
+            exchange.sendResponseHeaders(200, 0);
+            exchange.getResponseBody().write(("data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n")
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            exchange.getResponseBody().flush();
+            try {
+                release.await(5, TimeUnit.SECONDS);
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+            } finally {
+                exchange.close();
+            }
+        });
+        server.setExecutor(serverExecutor);
+        server.start();
+        ExecutorService callerExecutor = Executors.newSingleThreadExecutor();
+        try {
+            CancellationToken token = new CancellationToken();
+            AtomicReference<Thread> caller = new AtomicReference<>();
+            var future = callerExecutor.submit(() -> {
+                caller.set(Thread.currentThread());
+                try {
+                    client(server, objectMapper, Duration.ofSeconds(5)).streamWithUsage(
+                            context("request-mid-cancel"), token, chunk -> firstChunk.countDown());
+                    return null;
+                } catch (AgentCancellationException cancelled) {
+                    return cancelled.cancellationCause();
+                }
+            });
+            assertThat(firstChunk.await(1, TimeUnit.SECONDS)).isTrue();
+
+            token.cancel(CancellationCause.USER_CANCEL);
+            caller.get().interrupt();
+
+            assertThat(future.get(1, TimeUnit.SECONDS)).isEqualTo(CancellationCause.USER_CANCEL);
+            assertThat(calls.get()).isEqualTo(1);
+        } finally {
+            release.countDown();
+            callerExecutor.shutdownNow();
+            server.stop(0);
+            serverExecutor.shutdownNow();
+        }
+    }
+
     private static OpenAiCompatibleLlmClient guardedClient(
             HttpServer server,
             ObjectMapper objectMapper,
@@ -472,6 +759,30 @@ class OpenAiCompatibleLlmClientTest {
                 policy,
                 events::add,
                 Clock.fixed(Instant.parse("2026-09-16T00:00:00Z"), ZoneOffset.UTC));
+    }
+
+    private static OpenAiCompatibleLlmClient client(
+            HttpServer server,
+            ObjectMapper objectMapper,
+            Duration timeout) {
+        return new OpenAiCompatibleLlmClient(
+                HttpClient.newHttpClient(), objectMapper,
+                java.net.URI.create("http://127.0.0.1:" + server.getAddress().getPort()
+                        + "/v1/chat/completions"),
+                "", "test-model", timeout);
+    }
+
+    private static void sse(com.sun.net.httpserver.HttpExchange exchange, String... payloads)
+            throws java.io.IOException {
+        exchange.getResponseHeaders().set("Content-Type", "text/event-stream");
+        exchange.sendResponseHeaders(200, 0);
+        for (String payload : payloads) {
+            exchange.getResponseBody().write(("data: " + payload + "\n\n")
+                    .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        }
+        exchange.getResponseBody().write("data: [DONE]\n\n"
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        exchange.close();
     }
 
     private static AssembledContext context(String requestId) {

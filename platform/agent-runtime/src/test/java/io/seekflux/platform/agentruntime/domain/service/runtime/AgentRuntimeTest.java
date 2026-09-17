@@ -22,6 +22,8 @@ import io.seekflux.platform.agentruntime.domain.model.tool.AgentToolResult;
 import io.seekflux.platform.agentruntime.domain.model.tool.AgentToolSchema;
 import io.seekflux.platform.agentruntime.domain.model.run.LlmUsage;
 import io.seekflux.platform.agentruntime.infrastructure.tool.DefaultAgentToolExecutor;
+import io.seekflux.platform.agentruntime.domain.model.execution.CancellationToken;
+import io.seekflux.platform.agentruntime.domain.service.recovery.AgentRecoveryExecution;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -370,6 +372,31 @@ class AgentRuntimeTest {
 
         assertEquals(AgentTerminalState.FALLBACK_REQUIRED, result.state());
         assertEquals("INJECTED_TOOL_FAILURE", result.fallbackReason());
+    }
+
+    @Test
+    void pushListenerFailureCannotChangeTheRuntimeResult() {
+        AgentToolRegistry registry = new AgentToolRegistry(List.of(tool(
+                context -> AgentToolResult.success(Map.of(), null))));
+        AgentRuntime runtime = new AgentRuntime(
+                registry,
+                new DefaultAgentToolExecutor(registry),
+                executor,
+                AgentRunRecorder.NOOP,
+                Clock.systemUTC());
+
+        AgentRunResult result = runtime.run(
+                definition(Duration.ofSeconds(1), 2),
+                request(),
+                ignored -> new AgentDecision.Complete(Map.of("ok", true)),
+                new CancellationToken(),
+                AgentRecoveryExecution.DISABLED,
+                event -> {
+                    throw new IllegalStateException("broken listener");
+                });
+
+        assertEquals(AgentTerminalState.RESULTS_READY, result.state());
+        assertEquals(true, result.output().get("ok"));
     }
 
     private static AgentDefinition definition(Duration timeout, int maxSteps) {

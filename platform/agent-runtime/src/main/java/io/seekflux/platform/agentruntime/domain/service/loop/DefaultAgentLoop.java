@@ -58,33 +58,43 @@ public final class DefaultAgentLoop implements AgentLoop {
             PushEventPublisher publisher,
             CancellationToken cancellationToken,
             AgentRecoveryExecution recovery) {
+        PushEventPublisher isolatedPublisher = isolated(publisher);
         AgentRunResult result = finiteStepRuntime.run(
                 context.definition(),
                 context.request(),
                 decisionContext -> {
                     cancellationToken.throwIfCancelled();
                     var call = callModel(
-                            session, context, decisionContext, cancellationToken);
+                            session, context, decisionContext, cancellationToken, isolatedPublisher);
                     decisionContext.recordUsage(call.usage());
                     decisionContext.recordAssistantContent(call.assistantContent());
                     return call.decision();
                 },
                 cancellationToken,
-                recovery);
-        publisher.publish(new PushEvent.LoopStarted(
-                result.trace().agentRunId(),
-                result.trace().startedAt(),
-                context.definition().id()));
+                recovery,
+                isolatedPublisher);
         result.trace().steps().stream()
                 .filter(step -> "CALL_TOOL".equals(step.action()))
-                .forEach(step -> publisher.publish(new PushEvent.ToolCompleted(
+                .forEach(step -> isolatedPublisher.publish(new PushEvent.ToolCompleted(
                         result.trace().agentRunId(),
                         clock.instant(),
                         step.toolCallId(),
                         step.toolName(),
                         step.status(),
                         step.linkedTraceId())));
-        publisher.publish(new PushEvent.LoopCompleted(
+        if (result.state()
+                == io.seekflux.platform.agentruntime.domain.model.run.AgentTerminalState.CANCELLED) {
+            isolatedPublisher.publish(new PushEvent.Control(
+                    result.trace().agentRunId(), clock.instant(), "CANCELLED",
+                    result.cancellationReason()));
+        } else if (result.state()
+                        == io.seekflux.platform.agentruntime.domain.model.run.AgentTerminalState.FAILED
+                || result.state()
+                        == io.seekflux.platform.agentruntime.domain.model.run.AgentTerminalState.FALLBACK_REQUIRED) {
+            isolatedPublisher.publish(new PushEvent.RuntimeError(
+                    result.trace().agentRunId(), clock.instant(), result.fallbackReason()));
+        }
+        isolatedPublisher.publish(new PushEvent.LoopCompleted(
                 result.trace().agentRunId(),
                 clock.instant(),
                 result.state(),
@@ -93,17 +103,40 @@ public final class DefaultAgentLoop implements AgentLoop {
         return result;
     }
 
+    private static PushEventPublisher isolated(PushEventPublisher publisher) {
+        PushEventPublisher delegate = publisher == null ? PushEventPublisher.NOOP : publisher;
+        return event -> {
+            try {
+                return delegate.publish(event);
+            } catch (RuntimeException ignored) {
+                return -1;
+            }
+        };
+    }
+
     private io.seekflux.platform.agentruntime.application.spi.capability.llm.model.LlmCallResult callModel(
             AgentSession session,
             RuntimeContext runtimeContext,
             io.seekflux.platform.agentruntime.application.spi.business.planner.model.AgentDecisionContext decision,
-            CancellationToken cancellationToken) {
+            CancellationToken cancellationToken,
+            PushEventPublisher publisher) {
         var assembled = contextEngine.assemble(session, runtimeContext, decision);
         int attempt = 0;
         while (true) {
             cancellationToken.throwIfCancelled();
             try {
-                return runtimeContext.llmClient().chatWithUsage(assembled, cancellationToken);
+                publisher.publish(new PushEvent.LlmTurnStarted(
+                        decision.agentRunId(), clock.instant(), decision.step(),
+                        runtimeContext.llmClient().version()));
+                var result = runtimeContext.llmClient().streamWithUsage(
+                        assembled,
+                        cancellationToken,
+                        chunk -> publishChunk(publisher, decision, chunk));
+                publisher.publish(new PushEvent.LlmTurnCompleted(
+                        decision.agentRunId(), clock.instant(), decision.step(), "completed",
+                        result.usage().inputTokens(), result.usage().outputTokens(),
+                        result.usage().cachedInputTokens(), result.usage().reasoningTokens()));
+                return result;
             } catch (ContextOverflowException overflow) {
                 if (attempt >= contextEngine.overflowRetryLimit()) {
                     recordContextEvent(
@@ -125,6 +158,29 @@ public final class DefaultAgentLoop implements AgentLoop {
                         decision,
                         ContextAssemblyMode.OVERFLOW_FALLBACK);
             }
+        }
+    }
+
+    private void publishChunk(
+            PushEventPublisher publisher,
+            io.seekflux.platform.agentruntime.application.spi.business.planner.model.AgentDecisionContext decision,
+            io.seekflux.platform.agentruntime.application.spi.capability.llm.model.ChatChunk chunk) {
+        if (!chunk.contentDelta().isEmpty()) {
+            publisher.publish(new PushEvent.ContentDelta(
+                    decision.agentRunId(), clock.instant(), decision.step(),
+                    chunk.sequence(), chunk.contentDelta()));
+        }
+        if (!chunk.reasoningDelta().isEmpty()) {
+            publisher.publish(new PushEvent.ReasoningDelta(
+                    decision.agentRunId(), clock.instant(), decision.step(),
+                    chunk.sequence(), chunk.reasoningDelta()));
+        }
+        if (chunk.toolCallDelta() != null) {
+            var tool = chunk.toolCallDelta();
+            publisher.publish(new PushEvent.ToolCallDelta(
+                    decision.agentRunId(), clock.instant(), decision.step(), chunk.sequence(),
+                    tool.index(), tool.idDelta(), tool.nameDelta(), tool.argumentsDelta(),
+                    tool.argumentsComplete()));
         }
     }
 

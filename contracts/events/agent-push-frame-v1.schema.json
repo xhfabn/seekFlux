@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://seekflux.io/contracts/events/agent-push-frame-v1.schema.json",
+  "title": "Agent Push Frame v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["sessionId", "requestId", "sequence", "sourceId", "event", "publishedAt"],
+  "properties": {
+    "sessionId": {"type": "string", "minLength": 1, "maxLength": 128},
+    "requestId": {"type": "string", "maxLength": 128},
+    "sequence": {"type": "integer", "minimum": 0},
+    "sourceId": {"type": "string", "minLength": 1},
+    "event": {
+      "type": "object",
+      "required": ["agentRunId", "eventTime"],
+      "properties": {
+        "agentRunId": {"type": "string"},
+        "eventTime": {"type": "string", "format": "date-time"}
+      },
+      "additionalProperties": true
+    },
+    "publishedAt": {"type": "string", "format": "date-time"}
+  }
+}

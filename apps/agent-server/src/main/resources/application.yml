@@ -54,6 +54,16 @@ seekflux:
       compaction-timeout-ms: ${AGENT_CONTEXT_COMPACTION_TIMEOUT_MS:500}
       overflow-retry-limit: ${AGENT_CONTEXT_OVERFLOW_RETRY_LIMIT:1}
       async-queue-capacity: ${AGENT_CONTEXT_ASYNC_QUEUE_CAPACITY:20}
+    push:
+      history-capacity: ${AGENT_PUSH_HISTORY_CAPACITY:256}
+      subscriber-capacity: ${AGENT_PUSH_SUBSCRIBER_CAPACITY:64}
+      max-sessions: ${AGENT_PUSH_MAX_SESSIONS:1024}
+      redis-channel: ${AGENT_PUSH_REDIS_CHANNEL:seekflux:agent:push:v1}
+      sequence-key-prefix: ${AGENT_PUSH_SEQUENCE_KEY_PREFIX:seekflux:agent:push:seq:}
+      relay-queue-capacity: ${AGENT_PUSH_RELAY_QUEUE_CAPACITY:100}
+      sse-max-concurrency: ${AGENT_PUSH_SSE_MAX_CONCURRENCY:8}
+      sse-queue-capacity: ${AGENT_PUSH_SSE_QUEUE_CAPACITY:100}
+      sse-timeout-ms: ${AGENT_PUSH_SSE_TIMEOUT_MS:30000}
     bulkhead:
       max-concurrent-model-calls: ${AGENT_MODEL_MAX_CONCURRENCY:4}
       max-concurrent-tool-calls: ${AGENT_TOOL_MAX_CONCURRENCY:8}

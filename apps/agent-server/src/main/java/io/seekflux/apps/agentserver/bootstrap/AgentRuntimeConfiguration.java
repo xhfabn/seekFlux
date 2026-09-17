@@ -16,6 +16,7 @@ import io.seekflux.agent.infrastructure.observability.AgentExecutionMetrics;
 import io.seekflux.agent.infrastructure.observability.MicrometerAgentExecutionMetrics;
 import io.seekflux.agent.infrastructure.observability.MicrometerToolExecutionObserver;
 import io.seekflux.agent.infrastructure.observability.MicrometerContextEventRecorder;
+import io.seekflux.agent.infrastructure.event.RedisPushEventRelay;
 import io.seekflux.agent.infrastructure.projection.RedisAgentSessionProjection;
 import io.seekflux.agent.infrastructure.runtime.AgentRuntimeExecutionAdapter;
 import io.seekflux.agent.infrastructure.search.DirectSearchExecutionAdapter;
@@ -61,6 +62,9 @@ import io.seekflux.platform.agentruntime.application.spi.capability.session.Agen
 import io.seekflux.platform.agentruntime.application.spi.capability.session.AgentRecoveryStore;
 import io.seekflux.platform.agentruntime.application.spi.capability.context.ContextCompactionStore;
 import io.seekflux.platform.agentruntime.application.spi.capability.context.ContextEventRecorder;
+import io.seekflux.platform.agentruntime.application.spi.capability.event.PushEventRelay;
+import io.seekflux.platform.agentruntime.application.spi.capability.event.PushEventStream;
+import io.seekflux.platform.agentruntime.infrastructure.event.DefaultPushEventStream;
 import io.seekflux.platform.agentruntime.application.spi.business.output.OutputGuardPolicy;
 import io.seekflux.platform.agentruntime.domain.model.context.ContextCompactionMode;
 import io.seekflux.platform.agentruntime.domain.model.context.ContextWindowPolicy;
@@ -80,6 +84,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.data.redis.connection.RedisConnectionFactory;
 import io.micrometer.core.instrument.MeterRegistry;
 
 @Configuration
@@ -130,6 +135,51 @@ class AgentRuntimeConfiguration {
             @Value("${seekflux.agent.context.async-queue-capacity:20}") int queueCapacity) {
         return AgentSearchConfiguration.boundedExecutor(
                 "seekflux-agent-context-", 1, 1, queueCapacity);
+    }
+
+    @Bean(name = "agentPushRelayExecutor", destroyMethod = "shutdown")
+    ExecutorService agentPushRelayExecutor(
+            @Value("${seekflux.agent.push.relay-queue-capacity:100}") int queueCapacity) {
+        return AgentSearchConfiguration.boundedExecutor(
+                "seekflux-agent-push-relay-", 1, 1, queueCapacity);
+    }
+
+    @Bean(name = "agentSseExecutor", destroyMethod = "shutdown")
+    ExecutorService agentSseExecutor(
+            @Value("${seekflux.agent.push.sse-max-concurrency:8}") int maxConcurrency,
+            @Value("${seekflux.agent.push.sse-queue-capacity:100}") int queueCapacity) {
+        return AgentSearchConfiguration.boundedExecutor(
+                "seekflux-agent-sse-", 2, Math.max(2, maxConcurrency), queueCapacity);
+    }
+
+    @Bean(destroyMethod = "close")
+    PushEventRelay agentPushEventRelay(
+            RedisConnectionFactory connectionFactory,
+            StringRedisTemplate redis,
+            ObjectMapper objectMapper,
+            @Qualifier("agentPushRelayExecutor") ExecutorService relayExecutor,
+            @Value("${seekflux.agent.push.redis-channel:seekflux:agent:push:v1}") String channel,
+            @Value("${seekflux.agent.push.sequence-key-prefix:seekflux:agent:push:seq:}")
+                    String sequenceKeyPrefix) {
+        return new RedisPushEventRelay(
+                connectionFactory, redis, objectMapper, relayExecutor,
+                channel, sequenceKeyPrefix);
+    }
+
+    @Bean(destroyMethod = "close")
+    PushEventStream agentPushEventStream(
+            PushEventRelay agentPushEventRelay,
+            Clock agentClock,
+            @Value("${seekflux.agent.push.history-capacity:256}") int historyCapacity,
+            @Value("${seekflux.agent.push.subscriber-capacity:64}") int subscriberCapacity,
+            @Value("${seekflux.agent.push.max-sessions:1024}") int maxSessions) {
+        return new DefaultPushEventStream(
+                historyCapacity,
+                subscriberCapacity,
+                maxSessions,
+                java.util.UUID.randomUUID().toString(),
+                agentPushEventRelay,
+                agentClock);
     }
 
     @Bean

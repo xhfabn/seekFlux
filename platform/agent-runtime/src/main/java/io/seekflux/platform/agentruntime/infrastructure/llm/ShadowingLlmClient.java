@@ -8,10 +8,12 @@ import io.seekflux.platform.agentruntime.domain.model.execution.CancellationToke
 import io.seekflux.platform.agentruntime.application.spi.capability.llm.model.LlmCallResult;
 import io.seekflux.platform.agentruntime.application.spi.capability.shadow.model.ShadowEvaluation;
 import io.seekflux.platform.agentruntime.application.spi.capability.llm.model.AssembledContext;
+import io.seekflux.platform.agentruntime.application.spi.capability.llm.model.ChatChunk;
 import java.time.Clock;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.RejectedExecutionException;
+import java.util.function.Consumer;
 
 public final class ShadowingLlmClient implements LlmClient {
 
@@ -60,6 +62,24 @@ public final class ShadowingLlmClient implements LlmClient {
             AssembledContext context,
             CancellationToken cancellationToken) {
         LlmCallResult primaryResult = primary.chatWithUsage(context, cancellationToken);
+        scheduleShadow(context, primaryResult, cancellationToken);
+        return primaryResult;
+    }
+
+    @Override
+    public LlmCallResult streamWithUsage(
+            AssembledContext context,
+            CancellationToken cancellationToken,
+            Consumer<ChatChunk> chunks) {
+        LlmCallResult primaryResult = primary.streamWithUsage(context, cancellationToken, chunks);
+        scheduleShadow(context, primaryResult, cancellationToken);
+        return primaryResult;
+    }
+
+    private void scheduleShadow(
+            AssembledContext context,
+            LlmCallResult primaryResult,
+            CancellationToken cancellationToken) {
         cancellationToken.throwIfCancelled();
         String requestId = context.decisionContext().request().requestId();
         if (control.shouldSample(requestId)) {
@@ -70,7 +90,6 @@ public final class ShadowingLlmClient implements LlmClient {
                 // Shadow saturation must never affect the primary result.
             }
         }
-        return primaryResult;
     }
 
     private void evaluate(

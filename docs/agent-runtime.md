@@ -6,7 +6,7 @@
 
 SeekFlux 没有依赖 Ark-Leto 二进制或源码。当前实现参考《Ark-Leto 框架内核 与 Agentspark 主链路 原理详解》中的主链路、会话事件和执行权思想，自行实现内部 Runtime。类名相似只代表设计映射，不代表复制或集成了未提供的框架。
 
-Phase 1 已证明业务无关、有界、可追踪、能稳定回退的运行内核；Phase 2 完成 Query Mode、多轮约束、动态并行 Tool、OpenAI-compatible Provider Adapter 和复杂 Query Eval；Phase 3 已补齐 fencing、失主接管、跨实例取消、事务 Outbox、故障注入、Shadow 与成本计量边界。后续 AR-1～AR-6 已进一步完成原因化取消、完整消息历史、精确恢复、`MUTATING` Tool 副作用账本、持久 Steer Queue/Drain，以及上下文预算/压缩、400/413 重试和 OutputGuard。
+Phase 1 已证明业务无关、有界、可追踪、能稳定回退的运行内核；Phase 2 完成 Query Mode、多轮约束、动态并行 Tool、OpenAI-compatible Provider Adapter 和复杂 Query Eval；Phase 3 已补齐 fencing、失主接管、跨实例取消、事务 Outbox、故障注入、Shadow 与成本计量边界。后续 AR-1～AR-7 已进一步完成原因化取消、完整消息历史、精确恢复、`MUTATING` Tool 副作用账本、持久 Steer Queue/Drain、上下文预算/压缩、400/413 与 OutputGuard，以及真实模型流、实时 Push、跨实例重连和安全 Eager Tool。
 
 ## 2. 模块职责
 
@@ -168,9 +168,11 @@ FeatureNode 不依赖 Spring 扫描顺序，装配层明确传入列表，Pipeli
 | --- | --- | --- |
 | `WorkspaceEvent` | PostgreSQL 追加式事实源 | 重建 Session：Created、StatePatched、User/Assistant/ToolResult、RunCompleted/Cancelled/Failed |
 | `AgentRunEvent` | PostgreSQL 独立运行表 | 诊断每次 Decision、Tool 和终态，关联版本及 Search Trace ID |
-| `PushEvent` | 请求内 Publisher；当前不持久化 | 客户端过程投影；Phase 1 同步响应内按逻辑顺序缓冲 |
+| `PushEvent` | 有界内存 history + Redis Pub/Sub relay；不持久化 | 客户端过程投影；SSE 按 Session sequence 增量消费和断线重连 |
 
 PostgreSQL 的 `agent.sessions` 保存最新版本、状态版本、事件位置、快照和当前 fencing token，`agent.workspace_events` 以 `(session_id, event_position)` 排序。UserMessage 的 `(session_id, request_id)` 部分唯一索引保证 Ingress 幂等，同一 request 下允许追加多个 Assistant/ToolResult；每条消息还有全局唯一 `message_id`、Schema 版本和可选 `tool_call_id`。状态补丁和 UserMessage 在同一事务中提交，旧 `baseVersion` 不能覆盖新目标。本轮 Assistant/ToolResult、终态 WorkspaceEvent 与 `outbox.events` 在同一 fencing 事务中按连续 position 提交，外部不会看到半轮历史。Worker 按确定性 `eventId` 幂等写入 `agent.audit_events`。`agent.runs` 与 `agent.run_events` 记录每个失主/接管 attempt，但不参与 Workspace 重放。Redis 只保存热投影、执行权、取消信号和 Shadow 开关，不是 Session 真相源。
+
+`ChatChunk` 把 Provider 流统一为 content/reasoning/usage/finish/tool-call delta；Tool Call 按 index 严格组装，chunk sequence 不连续会失败关闭。`DefaultPushEventStream` 把 Runtime 事件包装成 `PushFrame`，Redis `INCR` 分配跨实例 Session sequence，Pub/Sub frame 使用 `sourceId` 防回环。内存 history、每订阅者队列、Session 数量和 SSE 执行器均有硬上限；慢消费者溢出即断开。`POST /v1/agent/search:stream` 仅在没有 `Last-Event-ID` 时创建执行，重连只 replay/订阅，避免重复请求。逻辑契约见 [`agent-push-frame-v1.schema.json`](../contracts/events/agent-push-frame-v1.schema.json)，安全边界见 [ADR-011](adr/ADR-011-agent-streaming-push-and-eager-tool-safety.md)。
 
 STEER/QUEUE 的接收事实同样写入 `workspace_events`，事件类型为 `QUEUED_USER_MESSAGE`。V12 以 `(message_id, event_type)` 保证排队与正式 UserMessage 各自唯一，并以 `(session_id, event_type, event_position)` 支持 FIFO 读取；相同 request 在 pending 和 consumed 两个生命周期都保持幂等。队列默认每个 Session 最多 32 条，可用 `seekflux.agent.steer.queue-max-depth` 调整。逻辑契约见 [`agent-steer-queue-v1.schema.json`](../contracts/events/agent-steer-queue-v1.schema.json)。
 

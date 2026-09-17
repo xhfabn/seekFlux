@@ -14,14 +14,17 @@ public record AgentDecisionContext(
         Duration remaining,
         List<AgentToolObservation> observations,
         Consumer<LlmUsage> usageRecorder,
-        Consumer<AgentAssistantContent> assistantContentRecorder) {
+        Consumer<AgentAssistantContent> assistantContentRecorder,
+        String agentRunId,
+        EagerToolDispatcher eagerToolDispatcher) {
 
     public AgentDecisionContext(
             AgentRunRequest request,
             int step,
             Duration remaining,
             List<AgentToolObservation> observations) {
-        this(request, step, remaining, observations, ignored -> { }, ignored -> { });
+        this(request, step, remaining, observations, ignored -> { }, ignored -> { }, null,
+                EagerToolDispatcher.DISABLED);
     }
 
     public AgentDecisionContext(
@@ -30,13 +33,40 @@ public record AgentDecisionContext(
             Duration remaining,
             List<AgentToolObservation> observations,
             Consumer<LlmUsage> usageRecorder) {
-        this(request, step, remaining, observations, usageRecorder, ignored -> { });
+        this(request, step, remaining, observations, usageRecorder, ignored -> { }, null,
+                EagerToolDispatcher.DISABLED);
+    }
+
+    public AgentDecisionContext(
+            AgentRunRequest request,
+            int step,
+            Duration remaining,
+            List<AgentToolObservation> observations,
+            Consumer<LlmUsage> usageRecorder,
+            Consumer<AgentAssistantContent> assistantContentRecorder) {
+        this(request, step, remaining, observations,
+                usageRecorder, assistantContentRecorder, null, EagerToolDispatcher.DISABLED);
+    }
+
+    public AgentDecisionContext(
+            AgentRunRequest request,
+            int step,
+            Duration remaining,
+            List<AgentToolObservation> observations,
+            Consumer<LlmUsage> usageRecorder,
+            Consumer<AgentAssistantContent> assistantContentRecorder,
+            String agentRunId) {
+        this(request, step, remaining, observations, usageRecorder,
+                assistantContentRecorder, agentRunId, EagerToolDispatcher.DISABLED);
     }
 
     public AgentDecisionContext {
         observations = observations == null ? List.of() : List.copyOf(observations);
         usageRecorder = usageRecorder == null ? ignored -> { } : usageRecorder;
         assistantContentRecorder = assistantContentRecorder == null ? ignored -> { } : assistantContentRecorder;
+        agentRunId = agentRunId == null ? "" : agentRunId;
+        eagerToolDispatcher = eagerToolDispatcher == null
+                ? EagerToolDispatcher.DISABLED : eagerToolDispatcher;
     }
 
     public void recordUsage(LlmUsage usage) {
@@ -46,5 +76,12 @@ public record AgentDecisionContext(
     public void recordAssistantContent(AgentAssistantContent assistantContent) {
         assistantContentRecorder.accept(
                 assistantContent == null ? AgentAssistantContent.EMPTY : assistantContent);
+    }
+
+    public EagerToolDispatcher.Dispatch dispatchEagerTool(
+            int index,
+            String toolName,
+            java.util.Map<String, Object> arguments) {
+        return eagerToolDispatcher.dispatch(index, toolName, arguments);
     }
 }

@@ -1,11 +1,14 @@
 package io.seekflux.platform.agentruntime.domain.service.runtime;
 
 import io.seekflux.platform.agentruntime.application.spi.capability.event.AgentRunRecorder;
+import io.seekflux.platform.agentruntime.application.spi.capability.event.PushEventPublisher;
+import io.seekflux.platform.agentruntime.application.spi.capability.event.model.PushEvent;
 import io.seekflux.platform.agentruntime.application.spi.capability.tool.AgentToolExecutor;
 import io.seekflux.platform.agentruntime.application.spi.capability.tool.ToolExecutionObserver;
 import io.seekflux.platform.agentruntime.domain.service.tool.AgentToolRegistry;
 import io.seekflux.platform.agentruntime.domain.model.decision.AgentDecision;
 import io.seekflux.platform.agentruntime.application.spi.business.planner.model.AgentDecisionContext;
+import io.seekflux.platform.agentruntime.application.spi.business.planner.model.EagerToolDispatcher;
 import io.seekflux.platform.agentruntime.domain.model.agent.definition.AgentDefinition;
 import io.seekflux.platform.agentruntime.application.spi.business.planner.AgentPlanner;
 import io.seekflux.platform.agentruntime.domain.model.run.AgentRunEvent;
@@ -135,15 +138,40 @@ public final class AgentRuntime {
             AgentPlanner planner,
             CancellationToken cancellationToken,
             AgentRecoveryExecution recovery) {
+        return run(definition, request, planner, cancellationToken, recovery,
+                PushEventPublisher.NOOP);
+    }
+
+    public AgentRunResult run(
+            AgentDefinition definition,
+            AgentRunRequest request,
+            AgentPlanner planner,
+            CancellationToken cancellationToken,
+            AgentRecoveryExecution recovery,
+            PushEventPublisher publisher) {
         Objects.requireNonNull(definition, "agent definition must not be null");
         Objects.requireNonNull(request, "agent run request must not be null");
         Objects.requireNonNull(planner, "agent planner must not be null");
         Objects.requireNonNull(cancellationToken, "cancellation token must not be null");
         Objects.requireNonNull(recovery, "recovery execution must not be null");
+        PushEventPublisher delegate = publisher == null ? PushEventPublisher.NOOP : publisher;
+        publisher = event -> {
+            try {
+                return delegate.publish(event);
+            } catch (RuntimeException ignored) {
+                return -1;
+            }
+        };
 
         RecoveryPlan recoveryPlan = recovery.plan();
         if (recoveryPlan.action() == ResumeAction.COMMIT_TERMINAL) {
-            return recoveryPlan.checkpoint().terminalResult();
+            AgentRunResult terminal = recoveryPlan.checkpoint().terminalResult();
+            publisher.publish(new PushEvent.SegmentStarted(
+                    terminal.trace().agentRunId(), clock.instant(),
+                    request.requestId(), request.turnId()));
+            publisher.publish(new PushEvent.LoopStarted(
+                    terminal.trace().agentRunId(), clock.instant(), definition.id()));
+            return terminal;
         }
         if (recoveryPlan.action() == ResumeAction.FAIL_UNSAFE_PENDING_TOOL) {
             throw new IllegalStateException("unsafe pending Tool must be rejected before Loop dispatch");
@@ -175,8 +203,13 @@ public final class AgentRuntime {
             validateCheckpoint(restored, request, snapshot);
         }
         RunState run = new RunState(
-                runId, request, snapshot, startedAt, startedNanos, deadlineNanos, recovery, restored);
+                runId, request, snapshot, startedAt, startedNanos, deadlineNanos,
+                recovery, restored, publisher);
         run.record(AgentRunEvent.Type.RUN_STARTED, Map.of("definition", snapshot));
+        run.publish(new PushEvent.SegmentStarted(
+                runId, clock.instant(), request.requestId(), request.turnId()));
+        run.publish(new PushEvent.LoopStarted(
+                runId, clock.instant(), definition.id()));
 
         CancellationCause initialCancellation = cancellationToken.cause();
         if (initialCancellation != null) {
@@ -231,6 +264,8 @@ public final class AgentRuntime {
             AgentDecision decision;
             long decisionStarted = System.nanoTime();
             int currentStep = step;
+            EagerToolBatch eager = new EagerToolBatch(
+                    run, request, effectiveTools, step, deadlineNanos, cancellationToken);
             try {
                 AgentDecisionContext context = new AgentDecisionContext(
                         request,
@@ -238,12 +273,15 @@ public final class AgentRuntime {
                         Duration.ofNanos(remainingNanos(deadlineNanos)),
                         observations,
                         run::recordUsage,
-                        content -> run.recordAssistantContent(currentStep, content));
+                        content -> run.recordAssistantContent(currentStep, content),
+                        run.runId,
+                        eager);
                 decision = invoke(
                         () -> callGuard.execute(AgentCallGuard.CallType.MODEL, () -> planner.decide(context)),
                         deadlineNanos,
                         cancellationToken);
             } catch (CallFailure failure) {
+                eager.cancelAll();
                 String stepStatus = failure.cancellationCause == null ? "FAILED" : "CANCELLED";
                 run.steps.add(new AgentRunTrace.StepTrace(
                         step, "PLAN", stepStatus, null, null, null,
@@ -260,14 +298,17 @@ public final class AgentRuntime {
 
             CancellationCause decisionCancellation = cancellationToken.cause();
             if (decisionCancellation != null) {
+                eager.cancelAll();
                 return finishCancelled(run, decisionCancellation);
             }
             if (decision == null) {
+                eager.cancelAll();
                 return finishFailure(run, definition, "PLANNER_RETURNED_NULL", null);
             }
             run.record(AgentRunEvent.Type.DECISION_MADE, decisionPayload(step, decision));
 
             if (decision instanceof AgentDecision.Complete complete) {
+                eager.cancelAll();
                 run.recordAssistant(step, decision, List.of());
                 run.steps.add(new AgentRunTrace.StepTrace(
                         step, "COMPLETE", "SUCCEEDED", null, null, null,
@@ -276,6 +317,7 @@ public final class AgentRuntime {
                         null, false, "AGENT");
             }
             if (decision instanceof AgentDecision.Clarify clarify) {
+                eager.cancelAll();
                 run.recordAssistant(step, decision, List.of());
                 run.steps.add(new AgentRunTrace.StepTrace(
                         step, "CLARIFY", "SUCCEEDED", null, null, null,
@@ -284,6 +326,7 @@ public final class AgentRuntime {
                         null, false, "AGENT");
             }
             if (decision instanceof AgentDecision.Fallback fallback) {
+                eager.cancelAll();
                 run.recordAssistant(step, decision, List.of());
                 run.steps.add(new AgentRunTrace.StepTrace(
                         step, "FALLBACK", "SUCCEEDED", null, null, null,
@@ -293,6 +336,7 @@ public final class AgentRuntime {
 
             List<AgentDecision.ToolCall> calls = toolCalls(decision);
             if (toolCalls + calls.size() > definition.maxToolCalls()) {
+                eager.cancelAll();
                 run.recordAssistant(step, decision, List.of());
                 return finishFailure(run, definition, "TOOL_CALL_LIMIT_REACHED", null);
             }
@@ -306,9 +350,11 @@ public final class AgentRuntime {
                 }
                 prepared = List.copyOf(preparedCalls);
             } catch (ToolPolicyFailure policyFailure) {
+                eager.cancelAll();
                 run.recordAssistant(step, decision, List.of());
                 return finishFailure(run, definition, policyFailure.code, null);
             } catch (IllegalArgumentException invalidArguments) {
+                eager.cancelAll();
                 run.recordAssistant(step, decision, List.of());
                 return finishFailure(run, definition, "TOOL_ARGUMENT_INVALID", null);
             }
@@ -318,7 +364,13 @@ public final class AgentRuntime {
                     .map(call -> run.journalEntry(
                             journalStep, call, assistant, ToolJournalStatus.DECIDED, null))
                     .toList();
-            run.recordToolDecision(preTurnCheckpoint, journalEntries);
+            try {
+                run.recordToolDecision(preTurnCheckpoint, journalEntries);
+            } catch (RuntimeException persistenceFailure) {
+                eager.cancelAll();
+                throw persistenceFailure;
+            }
+            eager.retainOnly(prepared);
             boolean noProgress = false;
             for (PreparedToolCall call : prepared) {
                 String fingerprint = call.tool().name() + ":" + new TreeMap<>(call.arguments());
@@ -327,6 +379,7 @@ public final class AgentRuntime {
                 }
             }
             if (noProgress) {
+                eager.cancelAll();
                 for (PreparedToolCall call : prepared) {
                     run.steps.add(new AgentRunTrace.StepTrace(
                             step, "CALL_TOOL", "FAILED", call.toolCallId(),
@@ -355,7 +408,7 @@ public final class AgentRuntime {
             try {
                 completed = executeBatch(
                         run, request, prepared, deadlineNanos, cancellationToken,
-                        ToolExecutionObserver.Source.INITIAL);
+                        ToolExecutionObserver.Source.INITIAL, eager);
             } catch (CallFailure failure) {
                 if (failure.cancellationCause != null
                         || "AGENT_DEADLINE_EXCEEDED".equals(failure.code)) {
@@ -639,7 +692,8 @@ public final class AgentRuntime {
                         pending,
                         deadlineNanos,
                         cancellationToken,
-                        ToolExecutionObserver.Source.RECOVERY)) {
+                        ToolExecutionObserver.Source.RECOVERY,
+                        null)) {
                     newlyCompleted.put(observation.toolCallId(), observation);
                 }
             } catch (CallFailure failure) {
@@ -925,7 +979,8 @@ public final class AgentRuntime {
             List<PreparedToolCall> calls,
             long deadlineNanos,
             CancellationToken cancellationToken,
-            ToolExecutionObserver.Source source) throws CallFailure {
+            ToolExecutionObserver.Source source,
+            EagerToolBatch eager) throws CallFailure {
         CancellationToken batchToken = cancellationToken.child();
         List<PendingToolCall> pending = new ArrayList<>();
         for (PreparedToolCall call : calls) {
@@ -942,6 +997,14 @@ public final class AgentRuntime {
                 continue;
             }
             try {
+                PendingToolCall eagerCall = eager == null ? null : eager.take(call);
+                if (eagerCall != null) {
+                    run.recovery.markToolExecuting(
+                            request.sessionId(), request.requestId(), run.runId,
+                            List.of(call.toolCallId()));
+                    pending.add(eagerCall);
+                    continue;
+                }
                 if (call.tool().effect() == AgentTool.Effect.MUTATING) {
                     ledger = prepareSideEffect(run, call);
                 }
@@ -953,6 +1016,9 @@ public final class AgentRuntime {
                 }
                 CancellationToken toolToken = batchToken.child();
                 SideEffectLedgerEntry executingLedger = ledger;
+                run.publish(new PushEvent.ToolStarted(
+                        run.runId, clock.instant(), call.toolCallId(), call.tool().name(),
+                        call.index(), false));
                 observe(call, run.runId, source, ToolExecutionObserver.Phase.BEFORE, 0, "STARTED");
                 Future<AgentToolInvocation> future = executor.submit(() -> {
                     AgentToolContext context = new AgentToolContext(
@@ -1267,6 +1333,9 @@ public final class AgentRuntime {
         if (error instanceof io.seekflux.platform.agentruntime.domain.exception.ContextOverflowException) {
             return "LLM_CONTEXT_OVERFLOW_EXHAUSTED";
         }
+        if (error instanceof io.seekflux.platform.agentruntime.domain.exception.LlmStreamException stream) {
+            return stream.code();
+        }
         return fallback;
     }
 
@@ -1297,6 +1366,129 @@ public final class AgentRuntime {
     @FunctionalInterface
     private interface CheckedSupplier<T> {
         T get() throws Exception;
+    }
+
+    private final class EagerToolBatch implements EagerToolDispatcher {
+        private final RunState run;
+        private final AgentRunRequest request;
+        private final Set<String> effectiveTools;
+        private final int step;
+        private final long deadlineNanos;
+        private final CancellationToken cancellationToken;
+        private final Map<Integer, PendingToolCall> pending = new ConcurrentHashMap<>();
+
+        private EagerToolBatch(
+                RunState run,
+                AgentRunRequest request,
+                Set<String> effectiveTools,
+                int step,
+                long deadlineNanos,
+                CancellationToken cancellationToken) {
+            this.run = run;
+            this.request = request;
+            this.effectiveTools = effectiveTools;
+            this.step = step;
+            this.deadlineNanos = deadlineNanos;
+            this.cancellationToken = cancellationToken;
+        }
+
+        @Override
+        public synchronized Dispatch dispatch(
+                int index,
+                String toolName,
+                Map<String, Object> arguments) {
+            if (index < 0 || toolName == null || toolName.isBlank() || arguments == null) {
+                return new Dispatch(Disposition.INELIGIBLE, null);
+            }
+            PendingToolCall existing = pending.get(index);
+            if (existing != null) {
+                return new Dispatch(Disposition.DUPLICATE, existing.call().toolCallId());
+            }
+            if (cancellationToken.isCancelled() || remainingNanos(deadlineNanos) <= 0) {
+                return new Dispatch(Disposition.REJECTED, null);
+            }
+            PreparedToolCall call;
+            try {
+                call = prepare(
+                        new AgentDecision.ToolCall(toolName, arguments),
+                        effectiveTools,
+                        request,
+                        step,
+                        index);
+            } catch (RuntimeException invalidOrDenied) {
+                return new Dispatch(Disposition.INELIGIBLE, null);
+            }
+            // A write call cannot leave the process before the decision journal and side-effect
+            // ledger are durable. It follows the normal AR-4 execution path instead.
+            if (call.tool().effect() == AgentTool.Effect.MUTATING) {
+                return new Dispatch(Disposition.INELIGIBLE, call.toolCallId());
+            }
+            long started = System.nanoTime();
+            CancellationToken toolToken = cancellationToken.child();
+            try {
+                observe(call, run.runId, ToolExecutionObserver.Source.EAGER,
+                        ToolExecutionObserver.Phase.BEFORE, 0, "STARTED");
+                Future<AgentToolInvocation> future = executor.submit(() -> {
+                    AgentToolContext context = new AgentToolContext(
+                            run.runId,
+                            call.toolCallId(),
+                            "tool-call:" + call.toolCallId(),
+                            request,
+                            call.arguments(),
+                            Duration.ofNanos(remainingNanos(deadlineNanos)),
+                            toolToken);
+                    return callGuard.execute(
+                            AgentCallGuard.CallType.TOOL,
+                            () -> toolExecutor.execute(call.tool().name(), call.arguments(), context));
+                });
+                pending.put(index, new PendingToolCall(
+                        call, started, future, null, null, ToolExecutionObserver.Source.EAGER));
+                run.publish(new PushEvent.ToolStarted(
+                        run.runId, clock.instant(), call.toolCallId(), call.tool().name(),
+                        call.index(), true));
+                return new Dispatch(Disposition.STARTED, call.toolCallId());
+            } catch (RejectedExecutionException saturated) {
+                observe(call, run.runId, ToolExecutionObserver.Source.EAGER,
+                        ToolExecutionObserver.Phase.FAILURE, 0, "RUNTIME_SATURATED");
+                return new Dispatch(Disposition.REJECTED, call.toolCallId());
+            }
+        }
+
+        private void retainOnly(List<PreparedToolCall> decided) {
+            Map<Integer, PreparedToolCall> expected = decided.stream()
+                    .collect(java.util.stream.Collectors.toMap(PreparedToolCall::index, call -> call));
+            List.copyOf(pending.entrySet()).forEach(entry -> {
+                PreparedToolCall decidedCall = expected.get(entry.getKey());
+                if (decidedCall == null
+                        || !decidedCall.toolCallId().equals(entry.getValue().call().toolCallId())) {
+                    PendingToolCall removed = pending.remove(entry.getKey());
+                    if (removed != null && removed.future() != null) {
+                        removed.future().cancel(true);
+                    }
+                }
+            });
+        }
+
+        private PendingToolCall take(PreparedToolCall call) {
+            PendingToolCall candidate = pending.remove(call.index());
+            if (candidate == null) {
+                return null;
+            }
+            if (!candidate.call().toolCallId().equals(call.toolCallId())) {
+                candidate.future().cancel(true);
+                return null;
+            }
+            return candidate;
+        }
+
+        private void cancelAll() {
+            List.copyOf(pending.values()).forEach(item -> {
+                if (item.future() != null) {
+                    item.future().cancel(true);
+                }
+            });
+            pending.clear();
+        }
     }
 
     private static final class CallFailure extends Exception {
@@ -1360,6 +1552,7 @@ public final class AgentRuntime {
         private final long startedNanos;
         private final long deadlineNanos;
         private final AgentRecoveryExecution recovery;
+        private final PushEventPublisher publisher;
         private final List<AgentRunTrace.StepTrace> steps = new ArrayList<>();
         private final List<AgentMessage> messages = new ArrayList<>();
         private final Map<Integer, AgentAssistantContent> assistantContents = new ConcurrentHashMap<>();
@@ -1379,7 +1572,8 @@ public final class AgentRuntime {
                 long startedNanos,
                 long deadlineNanos,
                 AgentRecoveryExecution recovery,
-                RuntimeCheckpoint restored) {
+                RuntimeCheckpoint restored,
+                PushEventPublisher publisher) {
             this.runId = runId;
             this.request = request;
             this.snapshot = snapshot;
@@ -1387,6 +1581,7 @@ public final class AgentRuntime {
             this.startedNanos = startedNanos;
             this.deadlineNanos = deadlineNanos;
             this.recovery = recovery;
+            this.publisher = publisher;
             if (restored != null) {
                 this.steps.addAll(restored.steps());
                 this.messages.addAll(restored.messages());
@@ -1409,6 +1604,14 @@ public final class AgentRuntime {
                     type,
                     clock.instant(),
                     payload));
+        }
+
+        private void publish(PushEvent event) {
+            try {
+                publisher.publish(event);
+            } catch (RuntimeException ignored) {
+                // Process projections cannot alter durable runtime execution semantics.
+            }
         }
 
         private void recordUsage(io.seekflux.platform.agentruntime.domain.model.run.LlmUsage usage) {
@@ -1491,6 +1694,8 @@ public final class AgentRuntime {
                     null);
             recovery.savePreTurn(checkpoint);
             remember(checkpoint);
+            publish(new PushEvent.CheckpointSaved(
+                    runId, clock.instant(), checkpoint.boundary().name(), checkpoint.nextStep()));
             return checkpoint;
         }
 
@@ -1518,6 +1723,8 @@ public final class AgentRuntime {
                     null);
             recovery.savePostTurn(checkpoint);
             remember(checkpoint);
+            publish(new PushEvent.CheckpointSaved(
+                    runId, clock.instant(), checkpoint.boundary().name(), checkpoint.nextStep()));
         }
 
         private void saveTerminal(AgentRunResult result) {
@@ -1532,6 +1739,8 @@ public final class AgentRuntime {
                     latestCompletedInvocations,
                     result);
             recovery.saveTerminal(checkpoint);
+            publish(new PushEvent.CheckpointSaved(
+                    runId, clock.instant(), checkpoint.boundary().name(), checkpoint.nextStep()));
         }
 
         private RuntimeCheckpoint checkpoint(

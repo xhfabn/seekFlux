@@ -1,6 +1,6 @@
 # Agent Runtime 演进路线与交付记录
 
-> 文档状态：**AR-1～AR-6 已完成**；下一步为 **AR-7 流式模型与实时 Push**。
+> 文档状态：**AR-1～AR-7 已完成**；下一步为 **AR-8 挂起、恢复与父子执行**。
 >
 > 本文只记录 `platform/agent-runtime` 后续演进的实施顺序、完成门槛和交付证据。写进计划不代表已经实现；只有代码、自动化测试以及必要的真实验收或固定评测共同证明后，阶段状态才能改为“已完成”。
 
@@ -17,7 +17,7 @@
 
 - [全局学习路线](../../docs/learning/README.md)：全仓唯一的当前 Step 与总体进度入口；
 - [Agent Runtime 内核设计](../../docs/agent-runtime.md)：已经实现的 Runtime 结构与运行语义；
-- [ADR-004](../../docs/adr/ADR-004-ark-leto-inspired-agent-runtime.md) 与 [ADR-006](../../docs/adr/ADR-006-agent-reliability-fencing-outbox-shadow.md)：长期架构决定和 Ark-Leto 差距矩阵；
+- [ADR-004](../../docs/adr/ADR-004-ark-leto-inspired-agent-runtime.md)、[ADR-006](../../docs/adr/ADR-006-agent-reliability-fencing-outbox-shadow.md) 与 [ADR-011](../../docs/adr/ADR-011-agent-streaming-push-and-eager-tool-safety.md)：长期架构决定和 Ark-Leto 差距矩阵；
 - [Ark-Leto 框架内核与 Agentspark 主链路原理详解](<../../Ark-Leto 框架内核 与 Agentspark 主链路 原理详解.md>)：目标能力的参考材料，不是 SeekFlux 当前实现证明。
 
 状态只使用：`已完成`、`下一步`、`未开始`、`后置可选`。阶段文档或接口草图不能作为完成证据。
@@ -43,7 +43,7 @@
 - `MUTATING` Tool 已有注册/执行双层策略、外部回执、请求/结果摘要及 `PREPARED → EXECUTING → SUCCEEDED/FAILED/UNKNOWN/RECONCILED` 状态机；
 - Steer 已支持有界持久队列、先入队后取消、fencing drain、批量升格、旧信号精确清理和崩溃恢复；
 - 上下文已按显式 Layer 组装并计量完整消息/Tool Schema，支持 `NONE/ASYNC/SYNC` 压缩、持久增量摘要、400/413 强压缩重试与有界 OutputGuard repair；
-- 尚无实时流式 Push；
+- 已有真实模型 SSE、Session 单调 Push sequence、有界 replay/背压、Redis 跨实例 relay 和 Last-Event-ID 重连；
 - HITL、异步等待点、Handoff、子 Agent、MCP 和 Graph 尚未实现。
 
 ## 3. 实施顺序与依赖
@@ -73,8 +73,8 @@ flowchart TD
 | AR-4 | Mutating Tool 副作用账本 | 已完成 | 大 | AR-3 |
 | AR-5 | Steer Queue/Drain | 已完成 | 中到大 | AR-1、AR-2 |
 | AR-6 | 上下文压缩、413 重试和 OutputGuard | 已完成 | 大 | AR-2 |
-| AR-7 | 流式调用、实时 Push 与跨实例订阅 | 下一步 | 大 | AR-6 |
-| AR-8 | HITL、异步等待点、Handoff 与子 Agent | 未开始 | 多个独立大阶段 | AR-3、AR-4、AR-7 |
+| AR-7 | 流式调用、实时 Push 与跨实例订阅 | 已完成 | 大 | AR-6 |
+| AR-8 | HITL、异步等待点、Handoff 与子 Agent | 下一步 | 多个独立大阶段 | AR-3、AR-4、AR-7 |
 | AR-9 | Skill/ToolGroup、MCP、Chained/Graph | 后置可选 | 多个独立大阶段 | AR-2/3/4/7，按子阶段区分 |
 
 这里的工作量只表示相对复杂度，不是工期承诺。表格中的“主要前置”表示技术依赖，不等于实际交付顺序：AR-5 技术上只依赖 AR-1/AR-2，但仍可按产品优先级排在 AR-4 之后。AR-8 和 AR-9 必须继续拆成独立子阶段，不能用一个“大功能完成”状态掩盖其中的缺口。
@@ -246,12 +246,14 @@ Checkpoint、journal、Workspace/Run 事件的事务边界和写入顺序必须�
 
 1. **AR-7A 流式 LLM**：定义 provider 无关的 `ChatChunk`、文本/reasoning 增量、usage 和按 index 组装的 Tool Call delta；只有格式兼容的 reasoning 才能进入历史。首 chunk 超时、空流和流中异常使用不同重试语义。
 2. **AR-7B Push 与订阅**：Push 覆盖 segment、LLM turn、内容、Tool、取消/Steer、Checkpoint、Control 和终态；publisher 分配单调 seq，单个 listener 失败不拖垮主链。建立请求级 sink、session 级订阅、断线/重连、背压、缓冲硬上限和防回环跨实例 relay。
-3. **AR-7C Eager Dispatch**：Tool 参数 JSON 完整、Schema 与权限校验通过后才允许派发；`MUTATING` Tool 还必须先准备副作用账本。eager 结果按 tool index 合并，超时/取消可追踪，线程池有界并传播 Trace Context。
-4. **AR-7D Provider 韧性**：补齐请求级 timeout/tracing/model override、细分 usage、端点版本追踪和有界 client cache；Failover/重试必须区分“尚未产生输出”和“已经产生 chunk”，不能造成重复吐字或 Tool 副作用。会话粘性和多模态协议转换按实际 Provider 需要放在 Adapter 层。
+3. **AR-7C Eager Dispatch**：Tool 参数 JSON 完整、Schema 与权限校验通过后才允许派发；`MUTATING` Tool 不能越过 Decision journal 和副作用账本。eager 结果按 tool index 合并，超时/取消可追踪，线程池有界并传播 request/run/trace 上下文。
+4. **AR-7D Provider 韧性**：补齐请求级 timeout/tracing/model override、细分 usage、端点版本追踪和受控 client 生命周期；Failover/重试必须区分“尚未产生输出”和“已经产生 chunk”，不能造成重复吐字或 Tool 副作用。会话粘性、多端点有界 client cache 和多模态协议转换只在实际 Provider 路由需要时放在 Adapter 层。
 
 WorkspaceEvent 仍是恢复事实，PushEvent 只是过程投影；外部 SSE/WebSocket envelope、页面组件和落库协议属于应用 Adapter/契约，不进入 Runtime Domain。同步 JSON 能力或兼容层是否保留由产品契约决定。
 
 完成门槛：首 token、断线重连、慢消费者、空流、首 chunk 超时、流中取消、Tool Call 分片和跨实例执行都有自动化或集成证据，缓冲不会无界增长。
+
+实现说明：`ChatChunk/ChatStreamAssembler` 对 content、reasoning、usage、finish 和 Tool delta 执行严格 sequence/index 组装；OpenAI-compatible Adapter 使用 SSE，并以首个可见输出为重试线性化点，空流、首包超时、输出前失败和输出后中断分别编码。`DefaultPushEventStream` 对 history、subscriber queue 和 Session 数设置硬上限，Redis Lua 原子完成 Session sequence 分配与 Pub/Sub 发布，`sourceId` 防回环。`POST /v1/agent/search:stream` 没有 `Last-Event-ID` 时启动执行，携带时只 replay/订阅，历史缺口发 `REPLAY_GAP`。完整参数后的 `READ_ONLY/IDEMPOTENT` Tool 可提前进入同一有界执行器，最终 Decision 必须以稳定 Tool Call ID 精确匹配才能复用；不匹配、取消或超时会中断 Future。`MUTATING` 明确不做流内 eager，继续执行 AR-4 的 journal/ledger 顺序。当前产品是单端点 Provider，一个共享 HttpClient 即为完整 client 集合；动态多端点 cache 不提前引入。
 
 ### AR-8：挂起、恢复与父子执行
 
@@ -389,6 +391,17 @@ WorkspaceEvent 仍是恢复事实，PushEvent 只是过程投影；外部 SSE/We
 - 剩余边界：当前摘要器是确定性 Skeleton，不是模型摘要器；摘要直接读取 PostgreSQL，未增加 Redis 热投影；同步 Chat Completions 没有 chunk，因此“仅首输出前重试”由非 2xx 无输出响应保证。真实流式首 chunk、断线、背压和跨实例 Push 属于 AR-7；业务内容安审由独立 Adapter 承担。
 - 下一步：AR-7A 先定义 provider-neutral `ChatChunk` 和已输出/未输出重试边界，再实现有界 Push 订阅及跨实例中继。
 - 关联文档/ADR/契约：[`docs/agent-runtime.md`](../../docs/agent-runtime.md)、[ADR-004](../../docs/adr/ADR-004-ark-leto-inspired-agent-runtime.md)、[ADR-006](../../docs/adr/ADR-006-agent-reliability-fencing-outbox-shadow.md)、[`agent-context-compaction-v1.schema.json`](../../contracts/events/agent-context-compaction-v1.schema.json)、[`agent-context-event-v1.schema.json`](../../contracts/events/agent-context-event-v1.schema.json)、`V13__agent_context_compactions.sql`。
+
+### 2026-09-16：完成 AR-7 流式模型、实时 Push 与安全 Eager Tool
+
+- 阶段：AR-7（已完成）；AR-8 调整为下一步。
+- 本轮范围：实现 provider-neutral 流式协议、OpenAI-compatible SSE、完整过程 Push、Session 订阅/重连/背压、跨实例 relay、安全 Tool eager 与 Provider 请求韧性。
+- 实现事实与关键入口：新增 `ChatChunk/ChatStreamAssembler/LlmStreamException`；`DefaultAgentLoop` 发布 LLM/content/reasoning/tool/checkpoint/control/terminal 过程事件；`DefaultPushEventStream` 提供有界 history、subscriber queue、Session 容量和 replay gap；`RedisPushEventRelay` 用 Lua 原子分配 sequence 并 Pub/Sub，source ID 防回环；Agent Server 暴露 `POST /v1/agent/search:stream`，`Last-Event-ID` 只订阅不执行；OpenAI Adapter 传播 request/run/trace、校验 model override、记录端点版本及 cached/reasoning usage。完整参数且 Schema/策略通过的 `READ_ONLY/IDEMPOTENT` Tool 可以 eager，稳定 call ID 与最终 Decision 匹配后复用同一 Future；`MUTATING` 保持 journal/ledger 后执行。
+- 失败/取消/恢复语义：首个可见 chunk 前最多传输重试一次，预输出尝试的元数据不外泄；空流、首 chunk 超时、输出前失败和输出后中断使用稳定错误码；可见输出后绝不 retry/repair；流中取消保留原原因。慢消费者溢出断开，history 淘汰发送 `REPLAY_GAP`，Redis 故障只降级跨实例 Push而不改变 Runtime 终态。eager 不匹配、取消或超时会中断，写 Tool 不越过副作用账本。
+- 验证命令与结果：JDK 21 下 `mvn -q test` 全仓 26 个 Reactor 模块通过；Agent Runtime 81 个、Agent Orchestration Context 28 个、Agent Server 1 个测试无失败。固定测试覆盖文本/reasoning/细分 usage、Tool Call 分片、首包超时、空流、预输出重试无重复、输出后断流不重试、流中取消、Schema gate、eager 结果复用、Push listener 隔离、replay gap、慢消费者、Session 硬上限、跨实例防回环和重连不重复执行；`git diff --check` 通过。
+- 剩余边界：当前传输为 SSE，不含 WebSocket；Push 是瞬态有界投影，不是持久审计流；Redis 短暂不可用时跨实例实时订阅会降级；单端点 Provider 尚不需要会话粘性或动态 client cache；完整 OpenTelemetry exporter、多模态 Provider 转换属于后续独立集成。
+- 下一步：AR-8A 先实现类型化 WaitState、挂起/恢复事件、超时器、Checkpoint 和 Internal Ingress；HITL/Async 与 Handoff/子 Agent 分别独立验收。
+- 关联文档/ADR/契约：[`docs/agent-runtime.md`](../../docs/agent-runtime.md)、[ADR-011](../../docs/adr/ADR-011-agent-streaming-push-and-eager-tool-safety.md)、[`agent-push-frame-v1.schema.json`](../../contracts/events/agent-push-frame-v1.schema.json)、[`contracts/openapi/seekflux-v1.yaml`](../../contracts/openapi/seekflux-v1.yaml)。
 
 ---
 

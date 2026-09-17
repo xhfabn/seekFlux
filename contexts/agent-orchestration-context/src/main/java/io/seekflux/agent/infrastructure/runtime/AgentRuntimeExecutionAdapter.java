@@ -16,7 +16,7 @@ import io.seekflux.platform.agentruntime.domain.model.run.AgentRunResult;
 import io.seekflux.platform.agentruntime.domain.model.run.AgentRunTrace;
 import io.seekflux.platform.agentruntime.domain.model.run.AgentTerminalState;
 import io.seekflux.platform.agentruntime.domain.model.session.SessionStatePatch;
-import io.seekflux.platform.agentruntime.infrastructure.event.DefaultPushEventPublisher;
+import io.seekflux.platform.agentruntime.application.spi.capability.event.PushEventPublisher;
 import io.seekflux.platform.agentruntime.application.command.FeatureRequest;
 import io.seekflux.platform.agentruntime.application.spi.capability.llm.LlmClient;
 import io.seekflux.platform.agentruntime.application.api.Router;
@@ -60,16 +60,27 @@ public final class AgentRuntimeExecutionAdapter implements AgentExecutionPort {
 
     @Override
     public AgentSearchResult execute(AgentExecutionRequest request) {
+        return execute(request, PushEventPublisher.NOOP);
+    }
+
+    @Override
+    public AgentSearchResult execute(
+            AgentExecutionRequest request, PushEventPublisher publisher) {
         long startedNanos = System.nanoTime();
         try {
-            return executeMeasured(request, startedNanos);
+            return executeMeasured(
+                    request, startedNanos,
+                    publisher == null ? PushEventPublisher.NOOP : publisher);
         } catch (RuntimeException error) {
             metrics.failed(request.agentId(), error, System.nanoTime() - startedNanos);
             throw error;
         }
     }
 
-    private AgentSearchResult executeMeasured(AgentExecutionRequest request, long startedNanos) {
+    private AgentSearchResult executeMeasured(
+            AgentExecutionRequest request,
+            long startedNanos,
+            PushEventPublisher publisher) {
         AgentDefinition definition = definitions.get(request.agentId());
         if (definition == null) {
             throw new IllegalArgumentException("unknown agent definition: " + request.agentId());
@@ -102,7 +113,7 @@ public final class AgentRuntimeExecutionAdapter implements AgentExecutionPort {
                 request.ingressMode());
         RouterResult routed = router.execute(
                 new FeatureRequest(definition, runRequest, llmClient),
-                new DefaultPushEventPublisher());
+                publisher);
         if (routed.status() == RouterResult.Status.BUSY) {
             throw new AgentSessionBusyException();
         }
@@ -228,6 +239,8 @@ public final class AgentRuntimeExecutionAdapter implements AgentExecutionPort {
                 usage.outputTokens(),
                 usage.totalTokens(),
                 usage.costMicros(),
+                usage.cachedInputTokens(),
+                usage.reasoningTokens(),
                 usage.measured(),
                 trace.steps().stream().map(AgentRuntimeExecutionAdapter::stepView).toList());
     }

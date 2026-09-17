@@ -140,6 +140,10 @@ class DefaultContextEngineTest {
         assertTrue(context.contains("猫咪"));
         assertFalse(context.contains("search_direct@schema-v1"));
         assertTrue(assembled.estimatedTokens() > withoutSchemas.estimatedTokens());
+        assertEquals(List.of("search_filtered"),
+                assembled.tools().stream().map(tool -> tool.name()).toList());
+        assertEquals("object", assembled.tools().getFirst().inputSchema().get("type"));
+        assertTrue(withoutSchemas.tools().isEmpty());
     }
 
     @Test

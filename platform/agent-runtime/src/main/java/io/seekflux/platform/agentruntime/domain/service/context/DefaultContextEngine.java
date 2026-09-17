@@ -6,6 +6,7 @@ import io.seekflux.platform.agentruntime.application.spi.capability.context.Cont
 import io.seekflux.platform.agentruntime.application.spi.capability.context.ContextEventRecorder;
 import io.seekflux.platform.agentruntime.application.spi.capability.llm.model.AssembledContext;
 import io.seekflux.platform.agentruntime.application.spi.capability.llm.model.ContextMessage;
+import io.seekflux.platform.agentruntime.application.spi.capability.llm.model.ChatToolDefinition;
 import io.seekflux.platform.agentruntime.application.spi.capability.prompt.PromptResolver;
 import io.seekflux.platform.agentruntime.domain.model.context.CompactionSummary;
 import io.seekflux.platform.agentruntime.domain.model.context.ContextAssemblyMode;
@@ -285,7 +286,8 @@ public final class DefaultContextEngine implements ContextEngine {
                 policy.budget(mode),
                 summary != null,
                 cutoff,
-                mode);
+                mode,
+                chatTools(runtimeContext));
     }
 
     private static List<HistoryTurn> historyTurns(AgentSession session, long afterPosition) {
@@ -446,6 +448,63 @@ public final class DefaultContextEngine implements ContextEngine {
                     .toList();
         }
         return runtimeContext.definition().allowedTools().stream().sorted().toList();
+    }
+
+    private List<ChatToolDefinition> chatTools(RuntimeContext runtimeContext) {
+        if (tools == null) {
+            return List.of();
+        }
+        return effectiveTools(runtimeContext).stream().map(name -> {
+            var schema = tools.require(name).schema();
+            Map<String, Object> properties = new java.util.LinkedHashMap<>();
+            List<String> required = new ArrayList<>();
+            schema.parameters().entrySet().stream()
+                    .sorted(Map.Entry.comparingByKey())
+                    .forEach(entry -> {
+                        var parameter = entry.getValue();
+                        Map<String, Object> property = new java.util.LinkedHashMap<>();
+                        switch (parameter.type()) {
+                            case STRING -> property.put("type", "string");
+                            case INTEGER -> property.put("type", "integer");
+                            case BOOLEAN -> property.put("type", "boolean");
+                            case STRING_LIST -> {
+                                property.put("type", "array");
+                                property.put("items", Map.of("type", "string"));
+                            }
+                        }
+                        if (parameter.maxLength() != null) {
+                            if (parameter.type()
+                                    == io.seekflux.platform.agentruntime.domain.model.tool
+                                            .AgentToolParameter.Type.STRING_LIST) {
+                                property.put("items", Map.of(
+                                        "type", "string",
+                                        "maxLength", parameter.maxLength()));
+                            } else {
+                                property.put("maxLength", parameter.maxLength());
+                            }
+                        }
+                        if (parameter.maxItems() != null) {
+                            property.put("maxItems", parameter.maxItems());
+                        }
+                        if (parameter.minimum() != null) {
+                            property.put("minimum", parameter.minimum());
+                        }
+                        if (parameter.maximum() != null) {
+                            property.put("maximum", parameter.maximum());
+                        }
+                        properties.put(entry.getKey(), Map.copyOf(property));
+                        if (parameter.required()) {
+                            required.add(entry.getKey());
+                        }
+                    });
+            Map<String, Object> inputSchema = new java.util.LinkedHashMap<>();
+            inputSchema.put("type", "object");
+            inputSchema.put("properties", Map.copyOf(properties));
+            inputSchema.put("required", List.copyOf(required));
+            inputSchema.put("additionalProperties", false);
+            return new ChatToolDefinition(
+                    name, "SeekFlux Tool schema " + schema.version(), inputSchema);
+        }).toList();
     }
 
     static int estimateUnicodeTokens(String text) {

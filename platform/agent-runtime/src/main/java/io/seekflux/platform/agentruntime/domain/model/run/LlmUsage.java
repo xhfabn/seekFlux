@@ -5,12 +5,24 @@ public record LlmUsage(
         long outputTokens,
         long totalTokens,
         long costMicros,
-        boolean measured) {
+        boolean measured,
+        long cachedInputTokens,
+        long reasoningTokens) {
 
-    public static final LlmUsage UNMEASURED = new LlmUsage(0, 0, 0, 0, false);
+    public static final LlmUsage UNMEASURED = new LlmUsage(0, 0, 0, 0, false, 0, 0);
+
+    public LlmUsage(
+            long inputTokens,
+            long outputTokens,
+            long totalTokens,
+            long costMicros,
+            boolean measured) {
+        this(inputTokens, outputTokens, totalTokens, costMicros, measured, 0, 0);
+    }
 
     public LlmUsage {
-        if (inputTokens < 0 || outputTokens < 0 || totalTokens < 0 || costMicros < 0) {
+        if (inputTokens < 0 || outputTokens < 0 || totalTokens < 0 || costMicros < 0
+                || cachedInputTokens < 0 || reasoningTokens < 0) {
             throw new IllegalArgumentException("LLM usage values must not be negative");
         }
     }
@@ -21,6 +33,8 @@ public record LlmUsage(
                 outputTokens + other.outputTokens,
                 totalTokens + other.totalTokens,
                 costMicros + other.costMicros,
-                measured || other.measured);
+                measured || other.measured,
+                cachedInputTokens + other.cachedInputTokens,
+                reasoningTokens + other.reasoningTokens);
     }
 }

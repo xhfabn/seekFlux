@@ -33,6 +33,42 @@ paths:
           $ref: "#/components/responses/AgentConflict"
         "503":
           $ref: "#/components/responses/AgentUnavailable"
+  /v1/agent/search:stream:
+    post:
+      operationId: streamAgentSearch
+      summary: Execute or reconnect to an Agent Search SSE stream
+      description: >-
+        Without Last-Event-ID this starts one execution and emits ordered AgentPushFrame
+        events followed by the final result event. With Last-Event-ID it only reconnects
+        to the existing session stream and never starts a duplicate execution. A control
+        event with code REPLAY_GAP means the requested sequence is older than retained history.
+      tags: [Agent]
+      parameters:
+        - name: Last-Event-ID
+          in: header
+          required: false
+          schema: {type: integer, format: int64, minimum: 0}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AgentSearchRequest"
+      responses:
+        "200":
+          description: Ordered SSE process projection; event id is the session sequence.
+          content:
+            text/event-stream:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/AgentPushFrame"
+                  - $ref: "#/components/schemas/AgentSearchResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/AgentConflict"
+        "503":
+          $ref: "#/components/responses/AgentUnavailable"
   /v1/agent/sessions/{sessionId}:cancel:
     post:
       operationId: cancelAgentSession
@@ -595,6 +631,23 @@ components:
       properties:
         enabled: {type: boolean}
         sampleRate: {type: number, format: double, minimum: 0, maximum: 1}
+    AgentPushFrame:
+      type: object
+      required: [sessionId, requestId, sequence, sourceId, event, publishedAt]
+      properties:
+        sessionId: {type: string, minLength: 1, maxLength: 128}
+        requestId: {type: string, maxLength: 128}
+        sequence: {type: integer, format: int64, minimum: 0}
+        sourceId: {type: string, minLength: 1}
+        publishedAt: {type: string, format: date-time}
+        event:
+          type: object
+          description: >-
+            One of SegmentStarted, LoopStarted, LlmTurnStarted, ContentDelta,
+            ReasoningDelta, ToolCallDelta, LlmTurnCompleted, ToolStarted,
+            ToolCompleted, CheckpointSaved, MessageQueued, Steered, Control,
+            RuntimeError, or LoopCompleted. The event shape is versioned by
+            contracts/events/agent-push-frame-v1.schema.json.
     AgentTrace:
       type: object
       required:
@@ -613,6 +666,8 @@ components:
         - outputTokens
         - totalTokens
         - costMicros
+        - cachedInputTokens
+        - reasoningTokens
         - usageMeasured
         - steps
       properties:
@@ -645,6 +700,16 @@ components:
           format: int64
           minimum: 0
           description: Provider cost in micro-US-dollars using the configured versioned price inputs.
+        cachedInputTokens:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Provider-reported prompt tokens served from a cache when available.
+        reasoningTokens:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Provider-reported reasoning tokens when available.
         usageMeasured:
           type: boolean
           description: True only when the provider response included token usage.

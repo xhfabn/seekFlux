@@ -22,6 +22,8 @@ public record AgentTraceView(
         long outputTokens,
         long totalTokens,
         long costMicros,
+        long cachedInputTokens,
+        long reasoningTokens,
         boolean usageMeasured,
         List<StepView> steps) {
 
