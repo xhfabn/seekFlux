@@ -253,8 +253,42 @@ public final class DefaultContextEngine implements ContextEngine {
                 new ContextMessage("system", stablePrompt)));
         layers.add(layer(ContextLayer.Type.AGENT_INSTRUCTIONS, true,
                 new ContextMessage("system", agentInstructions(decisionContext))));
+        var capabilities = capabilities(runtimeContext, decisionContext);
+        List<String> ephemeralInstructions = capabilities.activeSkills().stream()
+                .filter(capabilities.ephemeralSkillIds()::contains)
+                .sorted()
+                .map(capabilities.visibleSkills()::get)
+                .filter(java.util.Objects::nonNull)
+                .filter(skill -> skill.type()
+                        == io.seekflux.platform.agentruntime.domain.model.capability.SkillDefinition.Type.PROMPT)
+                .map(skill -> skill.skillId() + "@" + skill.version() + ":\n" + skill.instruction())
+                .toList();
+        if (!ephemeralInstructions.isEmpty()) {
+            layers.add(layer(ContextLayer.Type.EPHEMERAL_SKILL_INSTRUCTIONS, true,
+                    new ContextMessage("system", "ephemeral_skills:\n"
+                            + String.join("\n", ephemeralInstructions))));
+        }
+        List<String> persistentInstructions = capabilities.activeSkills().stream()
+                .filter(skill -> !capabilities.ephemeralSkillIds().contains(skill))
+                .sorted()
+                .map(capabilities.visibleSkills()::get)
+                .filter(java.util.Objects::nonNull)
+                .filter(skill -> skill.type()
+                        == io.seekflux.platform.agentruntime.domain.model.capability.SkillDefinition.Type.PROMPT)
+                .map(skill -> skill.skillId() + "@" + skill.version() + ":\n" + skill.instruction())
+                .toList();
+        if (!persistentInstructions.isEmpty()) {
+            layers.add(layer(ContextLayer.Type.ACTIVE_SKILL_INSTRUCTIONS, true,
+                    new ContextMessage("system", "active_skills:\n"
+                            + String.join("\n", persistentInstructions))));
+        }
+        if (!capabilities.lazySkillSummaries().isEmpty()) {
+            layers.add(layer(ContextLayer.Type.SKILL_CATALOG, true,
+                    new ContextMessage("system", "available_lazy_skills:\n- "
+                            + String.join("\n- ", capabilities.lazySkillSummaries()))));
+        }
         layers.add(layer(ContextLayer.Type.DYNAMIC_CAPABILITIES, true,
-                new ContextMessage("system", dynamicCapabilities(runtimeContext))));
+                new ContextMessage("system", dynamicCapabilities(runtimeContext, decisionContext))));
         if (!session.workspaceState().isEmpty()) {
             layers.add(layer(ContextLayer.Type.WORKSPACE_STATE, true,
                     new ContextMessage("system", "workspace_state:" + session.workspaceState())));
@@ -287,7 +321,7 @@ public final class DefaultContextEngine implements ContextEngine {
                 summary != null,
                 cutoff,
                 mode,
-                chatTools(runtimeContext));
+                chatTools(runtimeContext, decisionContext));
     }
 
     private static List<HistoryTurn> historyTurns(AgentSession session, long afterPosition) {
@@ -424,9 +458,10 @@ public final class DefaultContextEngine implements ContextEngine {
         return value.toString();
     }
 
-    private String dynamicCapabilities(RuntimeContext runtimeContext) {
+    private String dynamicCapabilities(
+            RuntimeContext runtimeContext, AgentDecisionContext decisionContext) {
         StringBuilder value = new StringBuilder("allowed_tools:\n");
-        for (String name : effectiveTools(runtimeContext)) {
+        for (String name : effectiveTools(runtimeContext, decisionContext)) {
             value.append("- ").append(name);
             if (tools != null) {
                 var schema = tools.require(name).schema();
@@ -438,23 +473,18 @@ public final class DefaultContextEngine implements ContextEngine {
         return value.toString();
     }
 
-    private static List<String> effectiveTools(RuntimeContext runtimeContext) {
-        Object configured = runtimeContext.request().attributes().get("allowedTools");
-        if (configured instanceof List<?> values) {
-            return values.stream()
-                    .filter(String.class::isInstance)
-                    .map(String.class::cast)
-                    .sorted()
-                    .toList();
-        }
-        return runtimeContext.definition().allowedTools().stream().sorted().toList();
+    private static List<String> effectiveTools(
+            RuntimeContext runtimeContext, AgentDecisionContext decisionContext) {
+        return capabilities(runtimeContext, decisionContext).effectiveTools().stream()
+                .sorted().toList();
     }
 
-    private List<ChatToolDefinition> chatTools(RuntimeContext runtimeContext) {
+    private List<ChatToolDefinition> chatTools(
+            RuntimeContext runtimeContext, AgentDecisionContext decisionContext) {
         if (tools == null) {
             return List.of();
         }
-        return effectiveTools(runtimeContext).stream().map(name -> {
+        return effectiveTools(runtimeContext, decisionContext).stream().map(name -> {
             var schema = tools.require(name).schema();
             Map<String, Object> properties = new java.util.LinkedHashMap<>();
             List<String> required = new ArrayList<>();
@@ -505,6 +535,12 @@ public final class DefaultContextEngine implements ContextEngine {
             return new ChatToolDefinition(
                     name, "SeekFlux Tool schema " + schema.version(), inputSchema);
         }).toList();
+    }
+
+    private static io.seekflux.platform.agentruntime.domain.model.capability.CapabilitySnapshot capabilities(
+            RuntimeContext runtimeContext, AgentDecisionContext decisionContext) {
+        return decisionContext.capabilities() == null
+                ? runtimeContext.capabilities() : decisionContext.capabilities();
     }
 
     static int estimateUnicodeTokens(String text) {

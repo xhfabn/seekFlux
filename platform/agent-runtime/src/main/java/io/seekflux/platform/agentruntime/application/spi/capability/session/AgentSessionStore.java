@@ -10,6 +10,9 @@ import io.seekflux.platform.agentruntime.domain.model.session.QueuedMessageBatch
 import java.time.Instant;
 import java.util.Map;
 import java.util.Optional;
+import io.seekflux.platform.agentruntime.domain.model.capability.CapabilityChange;
+import io.seekflux.platform.agentruntime.domain.model.capability.CapabilityUpdateResult;
+import io.seekflux.platform.agentruntime.domain.model.capability.CapabilityActivationState;
 
 public interface AgentSessionStore {
 
@@ -38,4 +41,13 @@ public interface AgentSessionStore {
     }
 
     void appendOutcome(String sessionId, AgentRunResult result, long fencingToken, Instant eventTime);
+
+    default CapabilityUpdateResult updateCapabilities(
+            String sessionId,
+            CapabilityChange change,
+            CapabilityActivationState updatedState,
+            String actor,
+            Instant eventTime) {
+        throw new UnsupportedOperationException("Session capability activation is not configured");
+    }
 }

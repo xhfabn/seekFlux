@@ -7,12 +7,30 @@ import io.seekflux.platform.agentruntime.domain.model.message.AgentMessage;
 import io.seekflux.platform.agentruntime.domain.model.run.AgentTerminalState;
 import io.seekflux.platform.agentruntime.domain.model.wait.WaitResolution;
 import io.seekflux.platform.agentruntime.domain.model.wait.WaitState;
+import io.seekflux.platform.agentruntime.domain.model.capability.CapabilityActivationState;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 class AgentSessionTest {
+
+    @Test
+    void replaysVersionedCapabilityActivationIndependentlyFromWorkspaceState() {
+        Instant now = Instant.parse("2026-09-17T00:00:00Z");
+        AgentSession session = AgentSession.replay("session-1", List.of(
+                new WorkspaceEvent.SessionCreated(1, now, "search-assistant", "v2"),
+                new WorkspaceEvent.CapabilitiesChanged(
+                        2, now, 1, "operation-1", "user-1", 0,
+                        new CapabilityActivationState(
+                                1, java.util.Set.of("search-broad"),
+                                java.util.Set.of("search-broad-tools")))));
+
+        assertEquals(1, session.capabilityState().version());
+        assertEquals(java.util.Set.of("search-broad"), session.capabilityState().activeSkills());
+        assertEquals(true, session.hasCapabilityOperation("operation-1"));
+        assertEquals(0, session.stateVersion());
+    }
 
     @Test
     void replaysVersionedWorkspaceStateSeparatelyFromExecutionStatus() {

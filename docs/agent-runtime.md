@@ -6,7 +6,7 @@
 
 SeekFlux 没有依赖 Ark-Leto 二进制或源码。当前实现参考《Ark-Leto 框架内核 与 Agentspark 主链路 原理详解》中的主链路、会话事件和执行权思想，自行实现内部 Runtime。类名相似只代表设计映射，不代表复制或集成了未提供的框架。
 
-Phase 1 已证明业务无关、有界、可追踪、能稳定回退的运行内核；Phase 2 完成 Query Mode、多轮约束、动态并行 Tool、OpenAI-compatible Provider Adapter 和复杂 Query Eval；Phase 3 已补齐 fencing、失主接管、跨实例取消、事务 Outbox、故障注入、Shadow 与成本计量边界。后续 AR-1～AR-8B 已进一步完成原因化取消、完整消息历史、精确恢复、`MUTATING` Tool 副作用账本、持久 Steer Queue/Drain、上下文预算/压缩、400/413 与 OutputGuard、真实模型流、实时 Push、跨实例重连、安全 Eager Tool，以及持久等待、HITL 和异步恢复。
+Phase 1 已证明业务无关、有界、可追踪、能稳定回退的运行内核；Phase 2 完成 Query Mode、多轮约束、动态并行 Tool、OpenAI-compatible Provider Adapter 和复杂 Query Eval；Phase 3 已补齐 fencing、失主接管、跨实例取消、事务 Outbox、故障注入、Shadow 与成本计量边界。后续 AR-1～AR-9A 已进一步完成原因化取消、完整消息历史、精确恢复、`MUTATING` Tool 副作用账本、持久 Steer Queue/Drain、上下文预算/压缩、400/413 与 OutputGuard、真实模型流、实时 Push、跨实例重连、安全 Eager Tool、持久等待/HITL/异步恢复，以及 Skill/ToolGroup 的作用域、版本冻结和动态路由。
 
 ## 2. 模块职责
 
@@ -47,6 +47,7 @@ platform/agent-runtime/.../agentruntime/
 │   │   ├── run/               # Run 结果、事件、Trace、终态和 usage
 │   │   ├── session/           # Session、WorkspaceEvent、状态补丁与提交结果
 │   │   ├── tool/              # Tool Schema、参数、调用、结果和观察
+│   │   ├── capability/        # Skill、ToolGroup、激活状态和冻结快照
 │   │   ├── sideeffect/        # 写 Tool 账本、状态与对账结论
 │   │   ├── feature/           # Feature 与 Runtime 执行上下文
 │   │   └── execution/         # 取消令牌等执行期领域状态
@@ -57,6 +58,7 @@ platform/agent-runtime/.../agentruntime/
 │   │   ├── loop/              # 有限步 Agent Loop
 │   │   ├── feature/           # Feature Pipeline
 │   │   ├── context/           # 上下文组装
+│   │   ├── capability/        # 能力作用域解析、权限收缩和恢复校验
 │   │   ├── tool/              # Tool 注册与选择
 │   │   └── shadow/            # Shadow 控制
 │   └── exception/             # 会话冲突、执行 fencing 等领域异常
@@ -155,7 +157,8 @@ FeatureNode 不依赖 Spring 扫描顺序，装配层明确传入列表，Pipeli
 | ---: | --- | --- |
 | 100 | SessionLoad | 现有 Session 投影 |
 | 200 | AgentResolve | AgentDef、LlmClient 和冻结版本上下文 |
-| 300 | ParamInit | 规范化运行参数 |
+| 250 | CapabilityResolve | Session + request 能力解析与不可变快照 |
+| 300 | ParamInit | 规范化运行参数并装入能力快照 |
 | 400 | ResumeEval | 当前是否具备继续执行条件 |
 
 持久数据与请求瞬态数据分别放在 `FeatureContext` 和 `RuntimeContext`，避免把线程、连接或临时 Publisher 序列化进 Session。
@@ -166,7 +169,7 @@ FeatureNode 不依赖 Spring 扫描顺序，装配层明确传入列表，Pipeli
 
 | 类型 | 存储/生命周期 | 用途 |
 | --- | --- | --- |
-| `WorkspaceEvent` | PostgreSQL 追加式事实源 | 重建 Session：Created、StatePatched、User/Assistant/ToolResult、RunCompleted/Cancelled/Failed |
+| `WorkspaceEvent` | PostgreSQL 追加式事实源 | 重建 Session：Created、StatePatched、CapabilitiesChanged、User/Assistant/ToolResult、Wait、Run 终态 |
 | `AgentRunEvent` | PostgreSQL 独立运行表 | 诊断每次 Decision、Tool 和终态，关联版本及 Search Trace ID |
 | `PushEvent` | 有界内存 history + Redis Pub/Sub relay；不持久化 | 客户端过程投影；SSE 按 Session sequence 增量消费和断线重连 |
 
@@ -250,14 +253,38 @@ Fork 明确返回 `FORK_PROMOTION_UNSUPPORTED`。完整决策见
 [ADR-012](adr/ADR-012-agent-durable-wait-and-resume.md)，事件契约见
 [`agent-wait-lifecycle-v1.schema.json`](../contracts/events/agent-wait-lifecycle-v1.schema.json)。
 
+### 6.5 Skill、ToolGroup 与能力快照
+
+`CapabilityCatalog` 保存版本化 `SkillDefinition` 和 `ToolGroupDefinition`；`AgentDefinition.skillRefs`
+只声明可引用范围，`allowedTools` 始终是不可扩大的最大权限。FeaturePipeline 在每次 execution 开始
+时用 Session 激活投影和 `CapabilityRequest` 生成 `CapabilitySnapshot`，冻结 Catalog hash、Skill /
+Group / Tool Schema 版本、active/ephemeral 集合、请求限制与最终 Tool 集。快照及其内容指纹进入
+Checkpoint、Trace 和 Context，因此一次 execution 内不会因配置变化而混用定义；恢复时缺少同一
+Catalog 或 Tool Schema 版本会失败关闭。
+
+Session 激活由 `PUT /v1/agent/sessions/{sessionId}/capabilities` 修改，并以带 actor、operationId、
+baseVersion 和完整 delta 的 `CAPABILITIES_CHANGED` Workspace 事实投影。数据库在 Session 行锁下
+仲裁严格幂等和版本冲突；执行中或持久等待的 Session 不可修改，IDLE/上一轮 COMPLETED 是安全
+边界。请求级 ephemeral Skill 必须声明 `REQUEST`
+来源并满足数量/内容上限，同名时完整 shadow 全局版本，但不会进入 Session 投影；Queue drain 会
+在安全边界按最新 Session 状态和被提升请求重新解析。
+
+有效 Tool 每个模型轮都从冻结快照读取。普通组受激活集和请求限制约束，未归组 Tool 保持 AgentDef
+默认可见，`alwaysActive` 控制组不被业务缩减隐藏。内置 `switch_tool_groups` 只接受 Catalog 中的
+group，并在当前 Tool batch 结束后更新快照，因此只影响下一模型轮；实际调用仍需经过注册表、
+Schema、执行策略和副作用安全检查。Context 分别渲染 ephemeral、active 和 lazy Skill，能力事件
+通过 RunEvent、Push 和低基数 Micrometer 指标观察。完整决策见
+[ADR-013](adr/ADR-013-agent-capability-snapshot-and-routing.md)，持久事件契约见
+[`agent-capability-lifecycle-v1.schema.json`](../contracts/events/agent-capability-lifecycle-v1.schema.json)。
+
 ## 7. Search Agent
 
 当前提供两个 AgentDef：
 
 | Agent | 版本 | 最大步数 | Tool |
 | --- | --- | ---: | --- |
-| `search-assistant` | `search-assistant-v2` | 4 | `search_direct@v1`、`search_filtered@v1` |
-| `search-precise` | `search-precise-v2` | 3 | `search_direct@v1`、`search_filtered@v1` |
+| `search-assistant` | `search-assistant-v2` | 4 | `search_direct@v1`、`search_filtered@v1`、`switch_tool_groups@v1` |
+| `search-precise` | `search-precise-v2` | 3 | `search_direct@v1`、`search_filtered@v1`、`switch_tool_groups@v1` |
 
 二者复用同一 Runtime。默认 `DeterministicSearchLlmClient@deterministic-complex-search-decision-v2` 无需 API Key，可以稳定验证“并行 Search Tool → 观察结果 → 选择候选集 → 完成”。Context Infrastructure 中的 `OpenAiCompatibleLlmClient` 实现 Runtime 的 `LlmClient` SPI，负责真实 Chat Completions 兼容协议、结构化 Decision、usage 解析和配置价格换算；协议测试不等同于真实模型质量或付费成本评测，确定性 Provider 的 Trace 会明确 `usageMeasured=false`。
 
@@ -283,6 +310,8 @@ Agent Server 默认端口为 `8083`，避免与可选 Flink UI 的 `8082` 冲突
 POST /v1/agent/search
 POST /v1/agent/sessions/{sessionId}:cancel
 POST /v1/agent/sessions/{sessionId}/waits/{waitId}:resolve
+GET  /v1/agent/sessions/{sessionId}/capabilities
+PUT  /v1/agent/sessions/{sessionId}/capabilities
 GET  /v1/agent/runtime/shadow
 PUT  /v1/agent/runtime/shadow
 ```
@@ -300,6 +329,6 @@ python3 evals/run_agent_reliability_eval.py
 
 固定 `direct-search-v1` 六 Query 基线上，强制 Agent 与 Direct 的 `Recall@5/MRR@5/nDCG@5` 均为 `1.0`，证明基础复用没有回归。`complex-search-v1` 的六条关键词陷阱 Query 中，Direct `MRR@1/Recall@1=0.0`，Agent `MRR@1/Recall@1=1.0`；Tool 选择、任务完成、简单 Direct 路由和多轮版本测试全部通过。
 
-`agent-reliability-v1` 固定评测证明单写者、fencing 单调、重复请求无额外 Tool 事件、事务 Outbox、幂等审计、Shadow 主结果隔离和快速关闭；12 次样本可用性 `1.0`，P95 `226.402 ms`，Fallback `0.0`。旧 owner、跨实例取消、停机取消、模型/Tool 在途取消、取消后禁止下一轮、OpenAI 调用中断、模型/Tool 故障和 Bulkhead 另有自动化测试。AR-3 增加 PRE/POST/终态 Checkpoint、模型后、Tool 提交/结果和未知写 Tool 的固定崩溃测试；AR-4 增加请求前、外部成功未确认、账本成功未推进 Session 和重复恢复测试；AR-5 增加 STEER/QUEUE、容量、FIFO 批量提升、最后意图、幂等、崩溃恢复和 drain 失权测试；AR-6 增加长上下文完整轮次、摘要 no-gap、ASYNC single-flight、400/413 有界重试、OutputGuard 和 repair 取消测试；AR-8A/8B 增加审批只执行一次、Async 不重派、决议类型、幂等/冲突、timeout/callback、等待中取消和投影恢复测试。隔离 PostgreSQL 17 已顺序执行 V1～V14，并确认 wait 约束与索引。
+`agent-reliability-v1` 固定评测证明单写者、fencing 单调、重复请求无额外 Tool 事件、事务 Outbox、幂等审计、Shadow 主结果隔离和快速关闭；12 次样本可用性 `1.0`，P95 `226.402 ms`，Fallback `0.0`。旧 owner、跨实例取消、停机取消、模型/Tool 在途取消、取消后禁止下一轮、OpenAI 调用中断、模型/Tool 故障和 Bulkhead 另有自动化测试。AR-3 增加 PRE/POST/终态 Checkpoint、模型后、Tool 提交/结果和未知写 Tool 的固定崩溃测试；AR-4 增加请求前、外部成功未确认、账本成功未推进 Session 和重复恢复测试；AR-5 增加 STEER/QUEUE、容量、FIFO 批量提升、最后意图、幂等、崩溃恢复和 drain 失权测试；AR-6 增加长上下文完整轮次、摘要 no-gap、ASYNC single-flight、400/413 有界重试、OutputGuard 和 repair 取消测试；AR-8A/8B 增加审批只执行一次、Async 不重派、决议类型、幂等/冲突、timeout/callback、等待中取消和投影恢复测试；AR-9A 增加 auto-activate 持久化、ephemeral shadow、越权拒绝、下一轮切组、真实 Search ToolGroup、快照自校验、Context 分层和低基数指标测试。2026-09-18 全仓 204 个测试通过；隔离 PostgreSQL 17 已顺序执行 V1～V15，并确认 capability version 约束、operation 唯一索引和 wait 约束。
 
-对照 Ark-Leto 后仍未完成的是产品化 Handoff/子 Agent/Fork、MCP/Skill/Graph 和完整 OTel；AR-8C 当前只有通用协议，不计为能力完成。当前压缩器是确定性 Skeleton，不包含模型摘要器或 Redis 热投影。写 Tool 已有持久账本与 reconciliation 协议，但每个真实写 Tool 仍必须依据其外部系统能力实现状态查询或补偿，框架不能把不支持查询/幂等的外部接口变安全。真实付费 Provider 基线也需要部署方端点与密钥；当前报告不伪造 Token/成本。完整取舍见 [ADR-006](adr/ADR-006-agent-reliability-fencing-outbox-shadow.md) 和 [ADR-012](adr/ADR-012-agent-durable-wait-and-resume.md)。
+对照 Ark-Leto 后仍未完成的是产品化 Handoff/子 Agent/Fork、MCP、Chained/Graph 和完整 OTel；AR-8C 当前只有通用协议，不计为能力完成。Capability Catalog 当前静态装配，在线发布和旧版本制品仓库仍由未来配置平台负责。当前压缩器是确定性 Skeleton，不包含模型摘要器或 Redis 热投影。写 Tool 已有持久账本与 reconciliation 协议，但每个真实写 Tool 仍必须依据其外部系统能力实现状态查询或补偿，框架不能把不支持查询/幂等的外部接口变安全。真实付费 Provider 基线也需要部署方端点与密钥；当前报告不伪造 Token/成本。完整取舍见 [ADR-006](adr/ADR-006-agent-reliability-fencing-outbox-shadow.md)、[ADR-012](adr/ADR-012-agent-durable-wait-and-resume.md) 和 [ADR-013](adr/ADR-013-agent-capability-snapshot-and-routing.md)。

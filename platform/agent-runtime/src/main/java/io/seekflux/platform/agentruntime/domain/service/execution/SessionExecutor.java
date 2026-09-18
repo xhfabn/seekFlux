@@ -31,6 +31,7 @@ import io.seekflux.platform.agentruntime.domain.service.recovery.RecoveryPoint;
 import io.seekflux.platform.agentruntime.domain.model.wait.WaitResolution;
 import io.seekflux.platform.agentruntime.domain.model.wait.WaitResolutionResult;
 import io.seekflux.platform.agentruntime.domain.model.wait.WaitResumeResult;
+import io.seekflux.platform.agentruntime.domain.service.capability.CapabilityResolver;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -59,6 +60,7 @@ public final class SessionExecutor implements AutoCloseable {
     private final AgentRecoveryStore recoveryStore;
     private final RecoveryFaultInjector recoveryFaultInjector;
     private final SteerQueuePolicy steerQueuePolicy;
+    private final CapabilityResolver capabilityResolver;
     private final Map<String, CancellationToken> cancellationTokens = new ConcurrentHashMap<>();
     private final Object activeMonitor = new Object();
     private int activeRuns;
@@ -73,7 +75,8 @@ public final class SessionExecutor implements AutoCloseable {
         this(authorityStore, sessions, loop, renewalScheduler, clock,
                 CancellationSignalStore.NOOP, Duration.ZERO, Duration.ofSeconds(5),
                 AgentRecoveryStore.NOOP, RecoveryFaultInjector.NONE,
-                new SteerQueuePolicy(SteerQueuePolicy.DEFAULT_MAX_DEPTH));
+                new SteerQueuePolicy(SteerQueuePolicy.DEFAULT_MAX_DEPTH),
+                CapabilityResolver.legacy());
     }
 
     public SessionExecutor(
@@ -88,7 +91,8 @@ public final class SessionExecutor implements AutoCloseable {
         this(authorityStore, sessions, loop, renewalScheduler, clock, cancellationSignals,
                 remoteCancelPollInterval, shutdownGracePeriod,
                 AgentRecoveryStore.NOOP, RecoveryFaultInjector.NONE,
-                new SteerQueuePolicy(SteerQueuePolicy.DEFAULT_MAX_DEPTH));
+                new SteerQueuePolicy(SteerQueuePolicy.DEFAULT_MAX_DEPTH),
+                CapabilityResolver.legacy());
     }
 
     public SessionExecutor(
@@ -105,7 +109,8 @@ public final class SessionExecutor implements AutoCloseable {
         this(authorityStore, sessions, loop, renewalScheduler, clock, cancellationSignals,
                 remoteCancelPollInterval, shutdownGracePeriod, recoveryStore,
                 recoveryFaultInjector,
-                new SteerQueuePolicy(SteerQueuePolicy.DEFAULT_MAX_DEPTH));
+                new SteerQueuePolicy(SteerQueuePolicy.DEFAULT_MAX_DEPTH),
+                CapabilityResolver.legacy());
     }
 
     public SessionExecutor(
@@ -120,6 +125,24 @@ public final class SessionExecutor implements AutoCloseable {
             AgentRecoveryStore recoveryStore,
             RecoveryFaultInjector recoveryFaultInjector,
             SteerQueuePolicy steerQueuePolicy) {
+        this(authorityStore, sessions, loop, renewalScheduler, clock, cancellationSignals,
+                remoteCancelPollInterval, shutdownGracePeriod, recoveryStore,
+                recoveryFaultInjector, steerQueuePolicy, CapabilityResolver.legacy());
+    }
+
+    public SessionExecutor(
+            ExecutionAuthorityStore authorityStore,
+            AgentSessionStore sessions,
+            AgentLoop loop,
+            ScheduledExecutorService renewalScheduler,
+            Clock clock,
+            CancellationSignalStore cancellationSignals,
+            Duration remoteCancelPollInterval,
+            Duration shutdownGracePeriod,
+            AgentRecoveryStore recoveryStore,
+            RecoveryFaultInjector recoveryFaultInjector,
+            SteerQueuePolicy steerQueuePolicy,
+            CapabilityResolver capabilityResolver) {
         this.authorityStore = authorityStore;
         this.sessions = sessions;
         this.loop = loop;
@@ -134,6 +157,8 @@ public final class SessionExecutor implements AutoCloseable {
         this.steerQueuePolicy = steerQueuePolicy == null
                 ? new SteerQueuePolicy(SteerQueuePolicy.DEFAULT_MAX_DEPTH)
                 : steerQueuePolicy;
+        this.capabilityResolver = capabilityResolver == null
+                ? CapabilityResolver.legacy() : capabilityResolver;
     }
 
     public java.util.Optional<ExecutionAuthority> tryAcquireExecution(String sessionId) {
@@ -425,7 +450,11 @@ public final class SessionExecutor implements AutoCloseable {
             }
 
             RuntimeContext drainContext = baseContext.forQueuedRequest(
-                    request, batch.last().persistentFeatures());
+                    request,
+                    batch.last().persistentFeatures(),
+                    capabilityResolver.resolve(
+                            baseContext.definition(), fresh.capabilityState(),
+                            request.capabilities()));
             CancellationToken drainToken = new CancellationToken(
                     sessionId,
                     batch.signalCutoff(),

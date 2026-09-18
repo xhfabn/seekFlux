@@ -13,6 +13,7 @@ import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import io.seekflux.search.port.in.SearchResultPage;
 
 public final class DeterministicSearchLlmClient implements LlmClient {
@@ -68,7 +69,7 @@ public final class DeterministicSearchLlmClient implements LlmClient {
         }
 
         Map<String, Object> direct = arguments(goal.query(), constraints, constraints.requiredTags());
-        List<String> allowedTools = stringList(attributes.get("allowedTools"));
+        Set<String> allowedTools = decision.capabilities().effectiveTools();
         if (!allowedTools.contains(SearchFilteredTool.NAME)) {
             return new AgentDecision.CallTool(SearchDirectTool.NAME, direct);
         }

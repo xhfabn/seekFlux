@@ -56,4 +56,8 @@ public final class AgentToolRegistry {
         }
         return Map.copyOf(versions);
     }
+
+    public java.util.Set<String> names() {
+        return tools.keySet();
+    }
 }

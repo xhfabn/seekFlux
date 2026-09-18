@@ -5,6 +5,7 @@ import io.seekflux.platform.agentruntime.domain.model.message.AgentMessage;
 import io.seekflux.platform.agentruntime.domain.model.run.AgentTerminalState;
 import io.seekflux.platform.agentruntime.domain.model.wait.WaitResolution;
 import io.seekflux.platform.agentruntime.domain.model.wait.WaitState;
+import io.seekflux.platform.agentruntime.domain.model.capability.CapabilityActivationState;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Map;
@@ -104,6 +105,31 @@ public sealed interface WorkspaceEvent {
 
         public StatePatched {
             state = state == null ? Map.of() : Map.copyOf(state);
+        }
+    }
+
+    record CapabilitiesChanged(
+            long position,
+            Instant eventTime,
+            int schemaVersion,
+            String operationId,
+            String actor,
+            long baseVersion,
+            CapabilityActivationState state) implements WorkspaceEvent {
+
+        public CapabilitiesChanged {
+            if (schemaVersion < 1) {
+                throw new IllegalArgumentException("capability event schema version must be positive");
+            }
+            if (operationId == null || operationId.isBlank()) {
+                throw new IllegalArgumentException("capability operation id must not be blank");
+            }
+            if (actor == null || actor.isBlank()) {
+                throw new IllegalArgumentException("capability actor must not be blank");
+            }
+            if (state == null || state.version() != baseVersion + 1) {
+                throw new IllegalArgumentException("capability event versions must be contiguous");
+            }
         }
     }
 

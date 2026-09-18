@@ -11,6 +11,7 @@ public record AgentDefinition(
         String promptVersion,
         String decisionProviderVersion,
         Set<String> allowedTools,
+        Set<String> skillRefs,
         int maxSteps,
         int maxToolCalls,
         Duration timeout,
@@ -23,6 +24,7 @@ public record AgentDefinition(
         promptVersion = requireText(promptVersion, "prompt version");
         decisionProviderVersion = requireText(decisionProviderVersion, "decision provider version");
         allowedTools = Set.copyOf(Objects.requireNonNull(allowedTools, "allowed tools must not be null"));
+        skillRefs = skillRefs == null ? Set.of() : Set.copyOf(skillRefs);
         if (allowedTools.isEmpty()) {
             throw new IllegalArgumentException("an agent must allow at least one tool");
         }
@@ -36,6 +38,21 @@ public record AgentDefinition(
         if (timeout.isNegative() || timeout.isZero() || timeout.compareTo(Duration.ofSeconds(30)) > 0) {
             throw new IllegalArgumentException("agent timeout must be between 1 nanosecond and 30 seconds");
         }
+    }
+
+    public AgentDefinition(
+            String id,
+            String version,
+            String plannerVersion,
+            String promptVersion,
+            String decisionProviderVersion,
+            Set<String> allowedTools,
+            int maxSteps,
+            int maxToolCalls,
+            Duration timeout,
+            boolean fallbackEnabled) {
+        this(id, version, plannerVersion, promptVersion, decisionProviderVersion,
+                allowedTools, Set.of(), maxSteps, maxToolCalls, timeout, fallbackEnabled);
     }
 
     private static String requireText(String value, String name) {

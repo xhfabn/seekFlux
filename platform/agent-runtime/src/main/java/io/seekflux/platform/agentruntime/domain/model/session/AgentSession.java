@@ -2,6 +2,7 @@ package io.seekflux.platform.agentruntime.domain.model.session;
 
 import io.seekflux.platform.agentruntime.domain.model.run.AgentTerminalState;
 import io.seekflux.platform.agentruntime.domain.model.wait.WaitState;
+import io.seekflux.platform.agentruntime.domain.model.capability.CapabilityActivationState;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -91,6 +92,7 @@ public record AgentSession(
                     workspaceState = patched.state();
                     yield status;
                 }
+                case WorkspaceEvent.CapabilitiesChanged ignored -> status;
                 case WorkspaceEvent.WaitSuspended suspended -> {
                     WaitState wait = suspended.waitState();
                     if (pendingWaits.putIfAbsent(wait.waitId(), wait) != null) {
@@ -132,6 +134,26 @@ public record AgentSession(
                 workspaceState,
                 status,
                 ordered);
+    }
+
+    public CapabilityActivationState capabilityState() {
+        CapabilityActivationState state = CapabilityActivationState.EMPTY;
+        for (WorkspaceEvent event : events) {
+            if (event instanceof WorkspaceEvent.CapabilitiesChanged changed) {
+                if (changed.baseVersion() != state.version()) {
+                    throw new IllegalStateException("capability activation versions must be contiguous");
+                }
+                state = changed.state();
+            }
+        }
+        return state;
+    }
+
+    public boolean hasCapabilityOperation(String operationId) {
+        return operationId != null && events.stream()
+                .filter(WorkspaceEvent.CapabilitiesChanged.class::isInstance)
+                .map(WorkspaceEvent.CapabilitiesChanged.class::cast)
+                .anyMatch(event -> event.operationId().equals(operationId));
     }
 
     public Optional<WaitState> pendingWait() {

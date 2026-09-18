@@ -72,7 +72,8 @@ public final class DefaultAgentLoop implements AgentLoop {
                 },
                 cancellationToken,
                 recovery,
-                isolatedPublisher);
+                isolatedPublisher,
+                context.capabilities());
         result.trace().steps().stream()
                 .filter(step -> "CALL_TOOL".equals(step.action()))
                 .forEach(step -> isolatedPublisher.publish(new PushEvent.ToolCompleted(

@@ -19,6 +19,11 @@ import io.seekflux.platform.agentruntime.domain.model.session.QueuedMessageBatch
 import io.seekflux.platform.agentruntime.domain.model.session.WorkspaceEvent;
 import io.seekflux.platform.agentruntime.domain.model.wait.WaitResolution;
 import io.seekflux.platform.agentruntime.domain.model.wait.WaitState;
+import io.seekflux.platform.agentruntime.domain.model.capability.CapabilityActivationState;
+import io.seekflux.platform.agentruntime.domain.model.capability.CapabilityChange;
+import io.seekflux.platform.agentruntime.domain.model.capability.CapabilityUpdateResult;
+import io.seekflux.platform.agentruntime.application.command.CapabilityRequest;
+import io.seekflux.platform.agentruntime.domain.model.capability.SkillDefinition;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.Instant;
@@ -96,6 +101,120 @@ public class JdbcAgentSessionStore implements AgentSessionStore {
             throw new IllegalStateException("existing session belongs to a different agent definition");
         }
         return session;
+    }
+
+    @Override
+    @Transactional
+    public CapabilityUpdateResult updateCapabilities(
+            String sessionId,
+            CapabilityChange change,
+            CapabilityActivationState updatedState,
+            String actor,
+            Instant eventTime) {
+        Optional<CapabilityHead> optionalHead = jdbcClient.sql("""
+                        SELECT event_position, capability_version, status
+                        FROM agent.sessions
+                        WHERE session_id = :sessionId
+                        FOR UPDATE
+                        """)
+                .param("sessionId", sessionId)
+                .query((row, rowNumber) -> new CapabilityHead(
+                        row.getLong("event_position"),
+                        row.getLong("capability_version"),
+                        row.getString("status")))
+                .optional();
+        if (optionalHead.isEmpty()) {
+            return new CapabilityUpdateResult(
+                    CapabilityUpdateResult.Status.NOT_FOUND, CapabilityActivationState.EMPTY);
+        }
+        CapabilityActivationState current = currentCapabilities(sessionId);
+        Optional<String> duplicatePayload = jdbcClient.sql("""
+                        SELECT payload::text
+                        FROM agent.workspace_events
+                        WHERE session_id = :sessionId
+                          AND event_type = 'CAPABILITIES_CHANGED'
+                          AND payload ->> 'operationId' = :operationId
+                        """)
+                .param("sessionId", sessionId)
+                .param("operationId", change.operationId())
+                .query(String.class)
+                .optional();
+        if (duplicatePayload.isPresent()) {
+            Map<String, Object> payload = fromJson(duplicatePayload.get());
+            CapabilityActivationState original = objectMapper.convertValue(
+                    requiredMap(payload, "state"), CapabilityActivationState.class);
+            boolean sameChange = number(payload, "baseVersion") == change.baseVersion()
+                    && (!payload.containsKey("activateSkills")
+                    || stringSet(payload.get("activateSkills")).equals(change.activateSkills())
+                    && stringSet(payload.get("deactivateSkills")).equals(change.deactivateSkills())
+                    && stringSet(payload.get("activateToolGroups")).equals(change.activateToolGroups())
+                    && stringSet(payload.get("deactivateToolGroups")).equals(change.deactivateToolGroups()));
+            return new CapabilityUpdateResult(
+                    sameChange
+                            ? CapabilityUpdateResult.Status.DUPLICATE
+                            : CapabilityUpdateResult.Status.CONFLICT,
+                    sameChange ? original : current);
+        }
+        CapabilityHead head = optionalHead.get();
+        if ("EXECUTING".equals(head.status()) || "SUSPENDED".equals(head.status())) {
+            return new CapabilityUpdateResult(CapabilityUpdateResult.Status.BUSY, current);
+        }
+        if (head.capabilityVersion() != change.baseVersion()
+                || current.version() != change.baseVersion()) {
+            return new CapabilityUpdateResult(CapabilityUpdateResult.Status.CONFLICT, current);
+        }
+        CapabilityActivationState updated = updatedState;
+        if (updated == null || updated.version() != change.baseVersion() + 1) {
+            throw new IllegalArgumentException("updated capability state does not match the change");
+        }
+        long position = head.eventPosition() + 1;
+        int rows = jdbcClient.sql("""
+                        UPDATE agent.sessions
+                        SET event_position = :position,
+                            version = version + 1,
+                            capability_version = :capabilityVersion,
+                            updated_at = :eventTime
+                        WHERE session_id = :sessionId
+                          AND capability_version = :baseVersion
+                        """)
+                .param("position", position)
+                .param("capabilityVersion", updated.version())
+                .param("eventTime", databaseTime(eventTime))
+                .param("sessionId", sessionId)
+                .param("baseVersion", change.baseVersion())
+                .update();
+        if (rows != 1) {
+            return new CapabilityUpdateResult(CapabilityUpdateResult.Status.CONFLICT, current);
+        }
+        insertWorkspaceEvent(
+                eventId("capability:" + sessionId + ":" + change.operationId()),
+                sessionId,
+                position,
+                "CAPABILITIES_CHANGED",
+                change.schemaVersion(),
+                null,
+                null,
+                null,
+                null,
+                eventTime,
+                capabilityEventPayload(change, updated, actor));
+        return new CapabilityUpdateResult(CapabilityUpdateResult.Status.UPDATED, updated);
+    }
+
+    private Map<String, Object> capabilityEventPayload(
+            CapabilityChange change,
+            CapabilityActivationState updated,
+            String actor) {
+        Map<String, Object> payload = new java.util.LinkedHashMap<>();
+        payload.put("operationId", change.operationId());
+        payload.put("actor", actor);
+        payload.put("baseVersion", change.baseVersion());
+        payload.put("activateSkills", change.activateSkills());
+        payload.put("deactivateSkills", change.deactivateSkills());
+        payload.put("activateToolGroups", change.activateToolGroups());
+        payload.put("deactivateToolGroups", change.deactivateToolGroups());
+        payload.put("state", objectMapper.convertValue(updated, MAP_TYPE));
+        return Map.copyOf(payload);
     }
 
     @Override
@@ -780,6 +899,15 @@ public class JdbcAgentSessionStore implements AgentSessionStore {
                     number(payload, "baseVersion"),
                     number(payload, "stateVersion"),
                     map(payload, "state"));
+            case "CAPABILITIES_CHANGED" -> new WorkspaceEvent.CapabilitiesChanged(
+                    position,
+                    eventTime,
+                    schemaVersion,
+                    string(payload, "operationId"),
+                    string(payload, "actor"),
+                    number(payload, "baseVersion"),
+                    objectMapper.convertValue(requiredMap(payload, "state"),
+                            CapabilityActivationState.class));
             case "WAIT_SUSPENDED" -> new WorkspaceEvent.WaitSuspended(
                     position,
                     eventTime,
@@ -901,6 +1029,9 @@ public class JdbcAgentSessionStore implements AgentSessionStore {
                     "baseVersion", request.statePatch().baseVersion(),
                     "state", request.statePatch().state()));
         }
+        if (!CapabilityRequest.NONE.equals(request.capabilities())) {
+            payload.put("capabilities", encodeCapabilityRequest(request.capabilities()));
+        }
         return Map.copyOf(payload);
     }
 
@@ -919,6 +1050,8 @@ public class JdbcAgentSessionStore implements AgentSessionStore {
                 ? null
                 : new SessionStatePatch(number(patch, "baseVersion"), map(patch, "state"));
         String ingress = string(payload, "ingressMode");
+        CapabilityRequest capabilities = decodeCapabilityRequest(
+                nullableMap(payload, "capabilities"));
         return new AgentRunRequest(
                 requestId,
                 string(payload, "sessionId") == null ? "" : string(payload, "sessionId"),
@@ -928,7 +1061,75 @@ public class JdbcAgentSessionStore implements AgentSessionStore {
                 statePatch,
                 ingress == null
                         ? io.seekflux.platform.agentruntime.application.command.AgentIngressMode.STEER
-                        : io.seekflux.platform.agentruntime.application.command.AgentIngressMode.valueOf(ingress));
+                        : io.seekflux.platform.agentruntime.application.command.AgentIngressMode.valueOf(ingress),
+                capabilities);
+    }
+
+    private static Map<String, Object> encodeCapabilityRequest(CapabilityRequest request) {
+        Map<String, Object> encoded = new java.util.LinkedHashMap<>();
+        encoded.put("schemaVersion", request.schemaVersion());
+        encoded.put("activateToolGroups", request.activateToolGroups());
+        encoded.put("deactivateToolGroups", request.deactivateToolGroups());
+        encoded.put("toolRestrictionEnabled", request.toolRestrictionEnabled());
+        encoded.put("requestedTools", request.requestedTools());
+        encoded.put("ephemeralSkills", request.ephemeralSkills().stream().map(skill -> Map.of(
+                "schemaVersion", skill.schemaVersion(),
+                "skillId", skill.skillId(),
+                "version", skill.version(),
+                "source", skill.source().name(),
+                "type", skill.type().name(),
+                "instruction", skill.instruction(),
+                "summary", skill.summary(),
+                "requiredTools", skill.requiredTools(),
+                "toolGroups", skill.toolGroups(),
+                "autoActivate", skill.autoActivate())).toList());
+        return Map.copyOf(encoded);
+    }
+
+    private static CapabilityRequest decodeCapabilityRequest(Map<String, Object> encoded) {
+        if (encoded == null) {
+            return CapabilityRequest.NONE;
+        }
+        Object rawSkills = encoded.get("ephemeralSkills");
+        List<SkillDefinition> skills = rawSkills instanceof List<?> values
+                ? values.stream().map(value -> {
+                    if (!(value instanceof Map<?, ?> map)) {
+                        throw new IllegalStateException("ephemeral Skill is not an object");
+                    }
+                    Map<String, Object> skill = new java.util.LinkedHashMap<>();
+                    map.forEach((key, item) -> skill.put(String.valueOf(key), item));
+                    Object schemaVersion = skill.get("schemaVersion");
+                    Object source = skill.get("source");
+                    return new SkillDefinition(
+                            schemaVersion instanceof Number number ? number.intValue() : 1,
+                            string(skill, "skillId"),
+                            string(skill, "version"),
+                            source == null
+                                    ? SkillDefinition.Source.REQUEST
+                                    : SkillDefinition.Source.valueOf(String.valueOf(source)),
+                            SkillDefinition.Type.valueOf(string(skill, "type")),
+                            string(skill, "instruction"),
+                            string(skill, "summary"),
+                            stringSet(skill.get("requiredTools")),
+                            stringSet(skill.get("toolGroups")),
+                            Boolean.TRUE.equals(skill.get("autoActivate")));
+                }).toList()
+                : List.of();
+        return new CapabilityRequest(
+                Math.toIntExact(number(encoded, "schemaVersion")),
+                skills,
+                stringSet(encoded.get("activateToolGroups")),
+                stringSet(encoded.get("deactivateToolGroups")),
+                Boolean.TRUE.equals(encoded.get("toolRestrictionEnabled")),
+                stringSet(encoded.get("requestedTools")));
+    }
+
+    private static java.util.Set<String> stringSet(Object raw) {
+        if (!(raw instanceof java.util.Collection<?> values)) {
+            return java.util.Set.of();
+        }
+        return values.stream().map(String::valueOf)
+                .collect(java.util.stream.Collectors.toUnmodifiableSet());
     }
 
     private static Map<String, Object> nullableMap(Map<String, Object> payload, String key) {
@@ -944,6 +1145,32 @@ public class JdbcAgentSessionStore implements AgentSessionStore {
         return Map.copyOf(result);
     }
 
+    private CapabilityActivationState currentCapabilities(String sessionId) {
+        return jdbcClient.sql("""
+                        SELECT payload::text
+                        FROM agent.workspace_events
+                        WHERE session_id = :sessionId
+                          AND event_type = 'CAPABILITIES_CHANGED'
+                        ORDER BY event_position DESC
+                        LIMIT 1
+                        """)
+                .param("sessionId", sessionId)
+                .query(String.class)
+                .optional()
+                .map(this::fromJson)
+                .map(payload -> objectMapper.convertValue(
+                        requiredMap(payload, "state"), CapabilityActivationState.class))
+                .orElse(CapabilityActivationState.EMPTY);
+    }
+
+    private static Map<String, Object> requiredMap(Map<String, Object> payload, String key) {
+        Map<String, Object> value = nullableMap(payload, key);
+        if (value == null) {
+            throw new IllegalStateException("workspace event field is missing: " + key);
+        }
+        return value;
+    }
+
     private static OffsetDateTime databaseTime(Instant value) {
         return value.atOffset(ZoneOffset.UTC);
     }
@@ -952,5 +1179,8 @@ public class JdbcAgentSessionStore implements AgentSessionStore {
     }
 
     private record SessionHead(long eventPosition, long stateVersion, long fencingToken) {
+    }
+
+    private record CapabilityHead(long eventPosition, long capabilityVersion, String status) {
     }
 }

@@ -19,6 +19,7 @@ public record AgentRunEvent(
         RUN_STARTED,
         DECISION_MADE,
         TOOL_COMPLETED,
+        CAPABILITIES_CHANGED,
         RUN_COMPLETED
     }
 

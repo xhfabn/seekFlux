@@ -42,6 +42,8 @@ import io.seekflux.platform.agentruntime.domain.model.wait.WaitState;
 import io.seekflux.platform.agentruntime.domain.model.wait.WaitRequest;
 import io.seekflux.platform.agentruntime.domain.service.execution.AgentCallGuard;
 import io.seekflux.platform.agentruntime.domain.service.recovery.AgentRecoveryExecution;
+import io.seekflux.platform.agentruntime.domain.model.capability.CapabilitySnapshot;
+import io.seekflux.platform.agentruntime.domain.service.capability.CapabilityResolver;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -79,6 +81,7 @@ public final class AgentRuntime {
     private final AgentCallGuard callGuard;
     private final ToolExecutionPolicy toolPolicy;
     private final ToolExecutionObserver toolObserver;
+    private final CapabilityResolver capabilityResolver;
 
     public AgentRuntime(
             AgentToolRegistry tools,
@@ -97,7 +100,8 @@ public final class AgentRuntime {
             Clock clock,
             AgentCallGuard callGuard) {
         this(tools, toolExecutor, executor, recorder, clock, callGuard,
-                ToolExecutionPolicy.ALLOW_ALL, ToolExecutionObserver.NOOP);
+                ToolExecutionPolicy.ALLOW_ALL, ToolExecutionObserver.NOOP,
+                CapabilityResolver.legacy());
     }
 
     public AgentRuntime(
@@ -109,6 +113,20 @@ public final class AgentRuntime {
             AgentCallGuard callGuard,
             ToolExecutionPolicy toolPolicy,
             ToolExecutionObserver toolObserver) {
+        this(tools, toolExecutor, executor, recorder, clock, callGuard, toolPolicy,
+                toolObserver, CapabilityResolver.legacy());
+    }
+
+    public AgentRuntime(
+            AgentToolRegistry tools,
+            AgentToolExecutor toolExecutor,
+            ExecutorService executor,
+            AgentRunRecorder recorder,
+            Clock clock,
+            AgentCallGuard callGuard,
+            ToolExecutionPolicy toolPolicy,
+            ToolExecutionObserver toolObserver,
+            CapabilityResolver capabilityResolver) {
         this.tools = Objects.requireNonNull(tools, "tool registry must not be null");
         this.toolExecutor = Objects.requireNonNull(toolExecutor, "tool executor must not be null");
         this.executor = Objects.requireNonNull(executor, "agent executor must not be null");
@@ -117,6 +135,8 @@ public final class AgentRuntime {
         this.callGuard = Objects.requireNonNull(callGuard, "call guard must not be null");
         this.toolPolicy = Objects.requireNonNull(toolPolicy, "Tool policy must not be null");
         this.toolObserver = Objects.requireNonNull(toolObserver, "Tool observer must not be null");
+        this.capabilityResolver = Objects.requireNonNull(
+                capabilityResolver, "capability resolver must not be null");
     }
 
     public AgentRunResult run(
@@ -141,7 +161,7 @@ public final class AgentRuntime {
             CancellationToken cancellationToken,
             AgentRecoveryExecution recovery) {
         return run(definition, request, planner, cancellationToken, recovery,
-                PushEventPublisher.NOOP);
+                PushEventPublisher.NOOP, legacyCapabilities(definition, request));
     }
 
     public AgentRunResult run(
@@ -151,6 +171,18 @@ public final class AgentRuntime {
             CancellationToken cancellationToken,
             AgentRecoveryExecution recovery,
             PushEventPublisher publisher) {
+        return run(definition, request, planner, cancellationToken, recovery, publisher,
+                legacyCapabilities(definition, request));
+    }
+
+    public AgentRunResult run(
+            AgentDefinition definition,
+            AgentRunRequest request,
+            AgentPlanner planner,
+            CancellationToken cancellationToken,
+            AgentRecoveryExecution recovery,
+            PushEventPublisher publisher,
+            CapabilitySnapshot initialCapabilities) {
         Objects.requireNonNull(definition, "agent definition must not be null");
         Objects.requireNonNull(request, "agent run request must not be null");
         Objects.requireNonNull(planner, "agent planner must not be null");
@@ -187,23 +219,22 @@ public final class AgentRuntime {
                 ? definition.timeout().toMillis()
                 : restored.remainingBudgetMillis();
         long deadlineNanos = saturatingAdd(startedNanos, Duration.ofMillis(budgetMillis).toNanos());
-        Set<String> effectiveTools = effectiveTools(definition, request);
-        if (tools.containsMutating(effectiveTools) && !recovery.sideEffectLedgerEnabled()) {
+        CapabilitySnapshot capabilities = initialCapabilities == null
+                ? legacyCapabilities(definition, request) : initialCapabilities;
+        AgentRunTrace.DefinitionSnapshot snapshot = definitionSnapshot(definition, capabilities);
+        if (restored != null) {
+            validateCheckpoint(restored, request, definition);
+            capabilityResolver.validateRestorable(restored.definition().capabilities());
+            snapshot = restored.definition();
+            capabilities = snapshot.capabilities();
+            if (!tools.versionsFor(capabilities.effectiveTools())
+                    .equals(snapshot.toolSchemaVersions())) {
+                throw new IllegalStateException("checkpoint Tool Schema versions are unavailable");
+            }
+        }
+        if (tools.containsMutating(capabilities.effectiveTools()) && !recovery.sideEffectLedgerEnabled()) {
             throw new IllegalStateException(
                     "MUTATING Tool requires a configured side-effect ledger");
-        }
-        AgentRunTrace.DefinitionSnapshot snapshot = new AgentRunTrace.DefinitionSnapshot(
-                definition.id(),
-                definition.version(),
-                definition.plannerVersion(),
-                definition.promptVersion(),
-                definition.decisionProviderVersion(),
-                definition.maxSteps(),
-                definition.maxToolCalls(),
-                definition.timeout().toMillis(),
-                tools.versionsFor(effectiveTools));
-        if (restored != null) {
-            validateCheckpoint(restored, request, snapshot);
         }
         RunState run = new RunState(
                 runId, request, snapshot, startedAt, startedNanos, deadlineNanos,
@@ -258,6 +289,7 @@ public final class AgentRuntime {
                 return finishFailure(run, definition, "AGENT_DEADLINE_EXCEEDED", null);
             }
 
+            Set<String> effectiveTools = run.capabilities().effectiveTools();
             RuntimeCheckpoint preTurnCheckpoint = run.savePreTurn(
                     step,
                     toolCalls,
@@ -278,7 +310,8 @@ public final class AgentRuntime {
                         run::recordUsage,
                         content -> run.recordAssistantContent(currentStep, content),
                         run.runId,
-                        eager);
+                        eager,
+                        run.capabilities());
                 decision = invoke(
                         () -> callGuard.execute(AgentCallGuard.CallType.MODEL, () -> planner.decide(context)),
                         deadlineNanos,
@@ -550,6 +583,27 @@ public final class AgentRuntime {
                 int callIndex = indexOfCall(prepared, observation.toolCallId());
                 run.recordJournalResult(journalEntries.get(callIndex).withStatus(
                         journalStatus, observation, clock.instant()));
+            }
+            List<AgentToolObservation> switches = completed.stream()
+                    .filter(observation -> observation.result().success())
+                    .filter(observation -> observation.result().toolGroupSwitch() != null)
+                    .toList();
+            if (switches.size() > 1) {
+                return finishFailure(
+                        run, definition, "MULTIPLE_TOOL_GROUP_SWITCH_UNSUPPORTED", null);
+            }
+            if (!switches.isEmpty()) {
+                try {
+                    run.switchToolGroups(switches.getFirst().result()
+                            .toolGroupSwitch().activeGroups());
+                } catch (IllegalArgumentException invalidSwitch) {
+                    return finishFailure(run, definition, "TOOL_GROUP_SWITCH_INVALID", null);
+                }
+                if (tools.containsMutating(run.capabilities().effectiveTools())
+                        && !recovery.sideEffectLedgerEnabled()) {
+                    return finishFailure(
+                            run, definition, "MUTATING_TOOL_LEDGER_REQUIRED", null);
+                }
             }
             if (completed.stream().noneMatch(observation -> observation.result().success())) {
                 AgentToolResult first = completed.getFirst().result();
@@ -909,12 +963,30 @@ public final class AgentRuntime {
             run.record(AgentRunEvent.Type.TOOL_COMPLETED, toolPayload(step, observation));
         }
         String recoveredFailure = null;
-        if (batchFailure != null && batchFailure.cancellationCause == null) {
+        List<AgentToolObservation> recoveredSwitches = journalEntries.stream()
+                .map(entry -> entry.status().terminal()
+                        ? entry.observation() : newlyCompleted.get(entry.toolCallId()))
+                .filter(Objects::nonNull)
+                .filter(observation -> observation.result().success())
+                .filter(observation -> observation.result().toolGroupSwitch() != null)
+                .toList();
+        if (recoveredSwitches.size() > 1) {
+            recoveredFailure = "MULTIPLE_TOOL_GROUP_SWITCH_UNSUPPORTED";
+        } else if (!recoveredSwitches.isEmpty()) {
+            try {
+                run.switchToolGroups(recoveredSwitches.getFirst().result()
+                        .toolGroupSwitch().activeGroups());
+            } catch (IllegalArgumentException invalidSwitch) {
+                recoveredFailure = "TOOL_GROUP_SWITCH_INVALID";
+            }
+        }
+        if (recoveredFailure == null
+                && batchFailure != null && batchFailure.cancellationCause == null) {
             recoveredFailure = batchFailure.code;
-        } else if (recoveredTimeout) {
+        } else if (recoveredFailure == null && recoveredTimeout) {
             recoveredFailure = firstFailure == null
                     ? "AGENT_DEADLINE_EXCEEDED" : firstFailure;
-        } else if (!anySucceeded && recoveredCancellation == null) {
+        } else if (recoveredFailure == null && !anySucceeded && recoveredCancellation == null) {
             recoveredFailure = firstFailure == null ? "TOOL_RECOVERY_FAILED" : firstFailure;
         }
         CancellationCause cancellation = batchFailure != null
@@ -994,13 +1066,21 @@ public final class AgentRuntime {
     private static void validateCheckpoint(
             RuntimeCheckpoint checkpoint,
             AgentRunRequest request,
-            AgentRunTrace.DefinitionSnapshot definition) {
+            AgentDefinition definition) {
         if (!checkpoint.sessionId().equals(request.sessionId())
                 || !checkpoint.requestId().equals(request.requestId())
                 || !checkpoint.turnId().equals(request.turnId())) {
             throw new IllegalStateException("checkpoint identity does not match the execution request");
         }
-        if (!checkpoint.definition().equals(definition)) {
+        AgentRunTrace.DefinitionSnapshot frozen = checkpoint.definition();
+        if (!frozen.id().equals(definition.id())
+                || !frozen.version().equals(definition.version())
+                || !frozen.plannerVersion().equals(definition.plannerVersion())
+                || !frozen.promptVersion().equals(definition.promptVersion())
+                || !frozen.decisionProviderVersion().equals(definition.decisionProviderVersion())
+                || frozen.maxSteps() != definition.maxSteps()
+                || frozen.maxToolCalls() != definition.maxToolCalls()
+                || frozen.timeoutMillis() != definition.timeout().toMillis()) {
             throw new IllegalStateException("checkpoint frozen definition no longer matches");
         }
     }
@@ -1384,10 +1464,11 @@ public final class AgentRuntime {
         return ((AgentDecision.CallTools) decision).calls();
     }
 
-    private static Set<String> effectiveTools(AgentDefinition definition, AgentRunRequest request) {
+    private static CapabilitySnapshot legacyCapabilities(
+            AgentDefinition definition, AgentRunRequest request) {
         Object configured = request.attributes().get("allowedTools");
         if (!(configured instanceof List<?> values)) {
-            return definition.allowedTools();
+            return CapabilitySnapshot.legacy(definition.allowedTools());
         }
         Set<String> requested = values.stream()
                 .filter(String.class::isInstance)
@@ -1396,7 +1477,22 @@ public final class AgentRuntime {
         if (requested.isEmpty() || !definition.allowedTools().containsAll(requested)) {
             throw new IllegalArgumentException("request contains an invalid dynamic tool set");
         }
-        return requested;
+        return CapabilitySnapshot.legacy(requested);
+    }
+
+    private AgentRunTrace.DefinitionSnapshot definitionSnapshot(
+            AgentDefinition definition, CapabilitySnapshot capabilities) {
+        return new AgentRunTrace.DefinitionSnapshot(
+                definition.id(),
+                definition.version(),
+                definition.plannerVersion(),
+                definition.promptVersion(),
+                definition.decisionProviderVersion(),
+                definition.maxSteps(),
+                definition.maxToolCalls(),
+                definition.timeout().toMillis(),
+                tools.versionsFor(capabilities.effectiveTools()),
+                capabilities);
     }
 
     private <T> T invoke(
@@ -1710,7 +1806,7 @@ public final class AgentRuntime {
     private final class RunState {
         private final String runId;
         private final AgentRunRequest request;
-        private final AgentRunTrace.DefinitionSnapshot snapshot;
+        private AgentRunTrace.DefinitionSnapshot snapshot;
         private final Instant startedAt;
         private final long startedNanos;
         private final long deadlineNanos;
@@ -1779,6 +1875,27 @@ public final class AgentRuntime {
 
         private void recordUsage(io.seekflux.platform.agentruntime.domain.model.run.LlmUsage usage) {
             llmUsage = llmUsage.plus(usage);
+        }
+
+        private CapabilitySnapshot capabilities() {
+            return snapshot.capabilities();
+        }
+
+        private void switchToolGroups(Set<String> activeGroups) {
+            CapabilitySnapshot updated = capabilities().switchToolGroups(activeGroups);
+            snapshot = new AgentRunTrace.DefinitionSnapshot(
+                    snapshot.id(), snapshot.version(), snapshot.plannerVersion(),
+                    snapshot.promptVersion(), snapshot.decisionProviderVersion(),
+                    snapshot.maxSteps(), snapshot.maxToolCalls(), snapshot.timeoutMillis(),
+                    tools.versionsFor(updated.effectiveTools()), updated);
+            capabilityResolver.recordToolGroupSwitch(snapshot.id(), updated);
+            record(AgentRunEvent.Type.CAPABILITIES_CHANGED, Map.of(
+                    "catalogVersion", updated.catalogVersion(),
+                    "activeToolGroups", updated.activeToolGroups(),
+                    "effectiveTools", updated.effectiveTools()));
+            publish(new PushEvent.CapabilitiesChanged(
+                    runId, clock.instant(), updated.catalogVersion(),
+                    updated.activeToolGroups(), updated.effectiveTools()));
         }
 
         private void recordAssistantContent(int step, AgentAssistantContent content) {

@@ -127,6 +127,52 @@ paths:
           $ref: "#/components/responses/NotFound"
         "409":
           $ref: "#/components/responses/AgentConflict"
+  /v1/agent/sessions/{sessionId}/capabilities:
+    get:
+      operationId: getAgentSessionCapabilities
+      summary: Read the versioned persistent Skill and ToolGroup activation projection
+      tags: [Agent]
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema: {type: string, minLength: 1, maxLength: 128}
+      responses:
+        "200":
+          description: Current persistent capability activation
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AgentCapabilityActivation"}
+        "404": {$ref: "#/components/responses/NotFound"}
+    put:
+      operationId: updateAgentSessionCapabilities
+      summary: Idempotently activate or deactivate Session Skills and ToolGroups
+      description: >-
+        Only an idle or completed Session can be changed. operationId makes retries idempotent,
+        while baseVersion prevents lost updates. The activation can only reduce or select within
+        the AgentDef capability boundary.
+      tags: [Agent]
+      parameters:
+        - $ref: "#/components/parameters/UserIdHeader"
+        - name: sessionId
+          in: path
+          required: true
+          schema: {type: string, minLength: 1, maxLength: 128}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/AgentCapabilityUpdateRequest"}
+      responses:
+        "200":
+          description: Updated activation, or the result of an identical prior operation
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AgentCapabilityActivation"}
+        "404": {$ref: "#/components/responses/NotFound"}
+        "409": {$ref: "#/components/responses/AgentConflict"}
+        "422":
+          description: The requested Skill or ToolGroup is outside the AgentDef/catalog boundary
   /v1/agent/runtime/shadow:
     get:
       operationId: getAgentShadowSettings
@@ -682,7 +728,7 @@ components:
           description: >-
             One of SegmentStarted, LoopStarted, LlmTurnStarted, ContentDelta,
             ReasoningDelta, ToolCallDelta, LlmTurnCompleted, ToolStarted,
-            ToolCompleted, CheckpointSaved, MessageQueued, Steered, Control,
+            ToolCompleted, CheckpointSaved, CapabilitiesChanged, MessageQueued, Steered, Control,
             RuntimeError, or LoopCompleted. The event shape is versioned by
             contracts/events/agent-push-frame-v1.schema.json.
     AgentTrace:
@@ -695,6 +741,13 @@ components:
         - promptVersion
         - decisionProviderVersion
         - toolSchemaVersions
+        - capabilityCatalogVersion
+        - capabilityFingerprint
+        - skillVersions
+        - toolGroupVersions
+        - activeSkills
+        - activeToolGroups
+        - effectiveTools
         - startedAt
         - tookMillis
         - terminalState
@@ -717,6 +770,23 @@ components:
         toolSchemaVersions:
           type: object
           additionalProperties: {type: string}
+        capabilityCatalogVersion: {type: string}
+        capabilityFingerprint: {type: string}
+        skillVersions:
+          type: object
+          additionalProperties: {type: string}
+        toolGroupVersions:
+          type: object
+          additionalProperties: {type: string}
+        activeSkills:
+          type: array
+          items: {type: string}
+        activeToolGroups:
+          type: array
+          items: {type: string}
+        effectiveTools:
+          type: array
+          items: {type: string}
         startedAt: {type: string, format: date-time}
         tookMillis: {type: integer, format: int64, minimum: 0}
         terminalState:
@@ -865,6 +935,47 @@ components:
           type: object
           additionalProperties: true
         errorCode: {type: [string, "null"]}
+    AgentCapabilityActivation:
+      type: object
+      additionalProperties: false
+      required: [version, activeSkills, activeToolGroups]
+      properties:
+        version: {type: integer, format: int64, minimum: 0}
+        activeSkills:
+          type: array
+          uniqueItems: true
+          items: {type: string, maxLength: 128}
+        activeToolGroups:
+          type: array
+          uniqueItems: true
+          items: {type: string, maxLength: 128}
+    AgentCapabilityUpdateRequest:
+      type: object
+      additionalProperties: false
+      required: [operationId, baseVersion]
+      properties:
+        operationId: {type: string, minLength: 1, maxLength: 128}
+        baseVersion: {type: integer, format: int64, minimum: 0}
+        activateSkills:
+          type: array
+          maxItems: 64
+          uniqueItems: true
+          items: {type: string, minLength: 1, maxLength: 128}
+        deactivateSkills:
+          type: array
+          maxItems: 64
+          uniqueItems: true
+          items: {type: string, minLength: 1, maxLength: 128}
+        activateToolGroups:
+          type: array
+          maxItems: 64
+          uniqueItems: true
+          items: {type: string, minLength: 1, maxLength: 128}
+        deactivateToolGroups:
+          type: array
+          maxItems: 64
+          uniqueItems: true
+          items: {type: string, minLength: 1, maxLength: 128}
     UpdateUserInterestProfileRequest:
       type: object
       required: [topics]

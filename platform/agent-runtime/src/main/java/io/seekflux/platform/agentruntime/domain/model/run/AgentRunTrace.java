@@ -3,6 +3,7 @@ package io.seekflux.platform.agentruntime.domain.model.run;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
+import io.seekflux.platform.agentruntime.domain.model.capability.CapabilitySnapshot;
 
 public record AgentRunTrace(
         String agentRunId,
@@ -75,10 +76,29 @@ public record AgentRunTrace(
             int maxSteps,
             int maxToolCalls,
             long timeoutMillis,
-            Map<String, String> toolSchemaVersions) {
+            Map<String, String> toolSchemaVersions,
+            CapabilitySnapshot capabilities) {
+
+        public DefinitionSnapshot(
+                String id,
+                String version,
+                String plannerVersion,
+                String promptVersion,
+                String decisionProviderVersion,
+                int maxSteps,
+                int maxToolCalls,
+                long timeoutMillis,
+                Map<String, String> toolSchemaVersions) {
+            this(id, version, plannerVersion, promptVersion, decisionProviderVersion,
+                    maxSteps, maxToolCalls, timeoutMillis, toolSchemaVersions,
+                    CapabilitySnapshot.legacy(toolSchemaVersions == null
+                            ? java.util.Set.of() : toolSchemaVersions.keySet()));
+        }
 
         public DefinitionSnapshot {
-            toolSchemaVersions = Map.copyOf(toolSchemaVersions);
+            toolSchemaVersions = toolSchemaVersions == null ? Map.of() : Map.copyOf(toolSchemaVersions);
+            capabilities = capabilities == null
+                    ? CapabilitySnapshot.legacy(toolSchemaVersions.keySet()) : capabilities;
         }
     }
 

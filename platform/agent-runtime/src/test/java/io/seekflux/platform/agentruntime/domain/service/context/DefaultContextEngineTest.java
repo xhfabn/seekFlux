@@ -28,6 +28,12 @@ import io.seekflux.platform.agentruntime.domain.model.context.ContextAssemblyMod
 import io.seekflux.platform.agentruntime.domain.model.context.ContextCompactionMode;
 import io.seekflux.platform.agentruntime.domain.model.context.ContextEvent;
 import io.seekflux.platform.agentruntime.domain.model.context.ContextWindowPolicy;
+import io.seekflux.platform.agentruntime.application.command.CapabilityRequest;
+import io.seekflux.platform.agentruntime.domain.model.capability.CapabilityActivationState;
+import io.seekflux.platform.agentruntime.domain.model.capability.CapabilityCatalog;
+import io.seekflux.platform.agentruntime.domain.model.capability.SkillDefinition;
+import io.seekflux.platform.agentruntime.domain.model.capability.ToolGroupDefinition;
+import io.seekflux.platform.agentruntime.domain.service.capability.CapabilityResolver;
 import java.time.Duration;
 import java.time.Clock;
 import java.time.Instant;
@@ -40,6 +46,57 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 class DefaultContextEngineTest {
+
+    @Test
+    void rendersFrozenSkillLayersAndUsesTheSameEffectiveToolSetAsTheRuntime() {
+        AgentTool direct = tool("search_direct");
+        AgentTool filtered = tool("search_filtered");
+        AgentToolRegistry registry = new AgentToolRegistry(List.of(direct, filtered));
+        CapabilityCatalog catalog = CapabilityCatalog.of(
+                "catalog-v1",
+                List.of(
+                        new SkillDefinition(
+                                "active", "active-v1", SkillDefinition.Type.PROMPT,
+                                "active instruction", "active", Set.of("search_direct"),
+                                Set.of("broad"), true),
+                        new SkillDefinition(
+                                "lazy", "lazy-v1", SkillDefinition.Type.LAZY,
+                                "lazy instruction", "lazy summary", Set.of("search_filtered"),
+                                Set.of("precise"), false)),
+                List.of(
+                        new ToolGroupDefinition(
+                                "broad", "broad-v1", "broad", Set.of("search_direct"), false),
+                        new ToolGroupDefinition(
+                                "precise", "precise-v1", "precise", Set.of("search_filtered"), false)),
+                Set.of("broad"));
+        AgentDefinition definition = new AgentDefinition(
+                "search-assistant", "v2", "planner-v1", "prompt-v2", "provider-v1",
+                Set.of("search_direct", "search_filtered"), Set.of("active", "lazy"),
+                3, 2, Duration.ofSeconds(1), true);
+        AgentRunRequest request = new AgentRunRequest(
+                "request-1", "session-1", "turn-1", "query", Map.of());
+        var snapshot = new CapabilityResolver(catalog).resolve(
+                definition, CapabilityActivationState.EMPTY, CapabilityRequest.NONE);
+        RuntimeContext runtime = new RuntimeContext(definition, request, null, Map.of(), snapshot);
+        AgentSession session = AgentSession.replay("session-1", List.of(
+                new WorkspaceEvent.SessionCreated(1, Instant.EPOCH, "search-assistant", "v2")));
+        DefaultContextEngine engine = new DefaultContextEngine(
+                new MapPromptResolver(Map.of("prompt-v2", "stable prompt")), registry);
+
+        AssembledContext assembled = engine.assemble(
+                session,
+                runtime,
+                new AgentDecisionContext(
+                        request, 1, Duration.ofSeconds(1), List.of(), ignored -> { },
+                        ignored -> { }, "run", null, snapshot));
+
+        assertTrue(assembled.messages().stream()
+                .anyMatch(message -> message.content().contains("active instruction")));
+        assertTrue(assembled.messages().stream()
+                .anyMatch(message -> message.content().contains("lazy summary")));
+        assertEquals(List.of("search_direct"),
+                assembled.tools().stream().map(tool -> tool.name()).toList());
+    }
 
     @Test
     void rebuildsOrderedMultiTurnHistoryFromWorkspaceMessagesWithoutReplayingReasoning() {

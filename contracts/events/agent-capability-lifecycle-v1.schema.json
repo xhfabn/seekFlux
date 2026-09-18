@@ -1,0 +1,58 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://seekflux.io/contracts/events/agent-capability-lifecycle-v1.schema.json",
+  "title": "Agent persistent capability activation v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "eventType",
+    "schemaVersion",
+    "operationId",
+    "actor",
+    "baseVersion",
+    "activateSkills",
+    "deactivateSkills",
+    "activateToolGroups",
+    "deactivateToolGroups",
+    "state"
+  ],
+  "properties": {
+    "eventType": {"const": "CAPABILITIES_CHANGED"},
+    "schemaVersion": {"const": 1},
+    "operationId": {"type": "string", "minLength": 1, "maxLength": 128},
+    "actor": {"type": "string", "minLength": 1, "maxLength": 128},
+    "baseVersion": {"type": "integer", "minimum": 0},
+    "activateSkills": {"$ref": "#/$defs/capabilityIds"},
+    "deactivateSkills": {"$ref": "#/$defs/capabilityIds"},
+    "activateToolGroups": {"$ref": "#/$defs/capabilityIds"},
+    "deactivateToolGroups": {"$ref": "#/$defs/capabilityIds"},
+    "state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "activeSkills", "activeToolGroups"],
+      "properties": {
+        "version": {"type": "integer", "minimum": 1},
+        "activeSkills": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 128}
+        },
+        "activeToolGroups": {
+          "type": "array",
+          "maxItems": 64,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 128}
+        }
+      }
+    }
+  },
+  "$defs": {
+    "capabilityIds": {
+      "type": "array",
+      "maxItems": 64,
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1, "maxLength": 128}
+    }
+  }
+}

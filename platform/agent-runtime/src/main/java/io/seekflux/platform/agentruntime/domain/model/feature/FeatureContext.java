@@ -2,6 +2,7 @@ package io.seekflux.platform.agentruntime.domain.model.feature;
 
 import io.seekflux.platform.agentruntime.application.command.FeatureRequest;
 import io.seekflux.platform.agentruntime.domain.model.session.AgentSession;
+import io.seekflux.platform.agentruntime.domain.model.capability.CapabilitySnapshot;
 import java.util.HashMap;
 import java.util.Map;
 
@@ -12,6 +13,7 @@ public final class FeatureContext {
     private final Map<String, Object> transientAttributes = new HashMap<>();
     private AgentSession session;
     private RuntimeContext runtimeContext;
+    private CapabilitySnapshot capabilitySnapshot;
     private String resumeAction;
 
     public FeatureContext(FeatureRequest request) {
@@ -36,6 +38,14 @@ public final class FeatureContext {
 
     public void runtimeContext(RuntimeContext runtimeContext) {
         this.runtimeContext = runtimeContext;
+    }
+
+    public CapabilitySnapshot capabilitySnapshot() {
+        return capabilitySnapshot;
+    }
+
+    public void capabilitySnapshot(CapabilitySnapshot capabilitySnapshot) {
+        this.capabilitySnapshot = capabilitySnapshot;
     }
 
     public String resumeAction() {

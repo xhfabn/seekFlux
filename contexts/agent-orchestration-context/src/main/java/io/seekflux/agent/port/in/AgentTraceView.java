@@ -12,6 +12,13 @@ public record AgentTraceView(
         String promptVersion,
         String decisionProviderVersion,
         Map<String, String> toolSchemaVersions,
+        String capabilityCatalogVersion,
+        String capabilityFingerprint,
+        Map<String, String> skillVersions,
+        Map<String, String> toolGroupVersions,
+        List<String> activeSkills,
+        List<String> activeToolGroups,
+        List<String> effectiveTools,
         Instant startedAt,
         long tookMillis,
         String terminalState,
@@ -29,6 +36,11 @@ public record AgentTraceView(
 
     public AgentTraceView {
         toolSchemaVersions = toolSchemaVersions == null ? Map.of() : Map.copyOf(toolSchemaVersions);
+        skillVersions = skillVersions == null ? Map.of() : Map.copyOf(skillVersions);
+        toolGroupVersions = toolGroupVersions == null ? Map.of() : Map.copyOf(toolGroupVersions);
+        activeSkills = activeSkills == null ? List.of() : List.copyOf(activeSkills);
+        activeToolGroups = activeToolGroups == null ? List.of() : List.copyOf(activeToolGroups);
+        effectiveTools = effectiveTools == null ? List.of() : List.copyOf(effectiveTools);
         steps = steps == null ? List.of() : List.copyOf(steps);
     }
 

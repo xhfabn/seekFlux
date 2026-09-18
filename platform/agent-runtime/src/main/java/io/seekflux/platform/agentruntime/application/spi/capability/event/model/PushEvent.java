@@ -4,6 +4,7 @@ import io.seekflux.platform.agentruntime.domain.model.run.AgentTerminalState;
 import io.seekflux.platform.agentruntime.domain.model.wait.WaitResolution;
 import io.seekflux.platform.agentruntime.domain.model.wait.WaitState;
 import java.time.Instant;
+import java.util.Set;
 
 public sealed interface PushEvent {
 
@@ -147,5 +148,18 @@ public sealed interface PushEvent {
             String agentRunId,
             Instant eventTime,
             WaitResolution resolution) implements PushEvent {
+    }
+
+    record CapabilitiesChanged(
+            String agentRunId,
+            Instant eventTime,
+            String catalogVersion,
+            Set<String> activeToolGroups,
+            Set<String> effectiveTools) implements PushEvent {
+
+        public CapabilitiesChanged {
+            activeToolGroups = activeToolGroups == null ? Set.of() : Set.copyOf(activeToolGroups);
+            effectiveTools = effectiveTools == null ? Set.of() : Set.copyOf(effectiveTools);
+        }
     }
 }

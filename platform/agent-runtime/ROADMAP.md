@@ -1,6 +1,6 @@
 # Agent Runtime 演进路线与交付记录
 
-> 文档状态：**AR-1～AR-8B 已完成**；**AR-8C Handoff/子 Agent/Fork 后置可选**；下一步为 **AR-9 动态能力与编排引擎**。
+> 文档状态：**AR-1～AR-9A 已完成**；当前没有必须继续的 Agent Runtime 阶段；**AR-8C、AR-9B 与 AR-9C 后置可选**。
 >
 > 本文只记录 `platform/agent-runtime` 后续演进的实施顺序、完成门槛和交付证据。写进计划不代表已经实现；只有代码、自动化测试以及必要的真实验收或固定评测共同证明后，阶段状态才能改为“已完成”。
 
@@ -17,7 +17,7 @@
 
 - [全局学习路线](../../docs/learning/README.md)：全仓唯一的当前 Step 与总体进度入口；
 - [Agent Runtime 内核设计](../../docs/agent-runtime.md)：已经实现的 Runtime 结构与运行语义；
-- [ADR-004](../../docs/adr/ADR-004-ark-leto-inspired-agent-runtime.md)、[ADR-006](../../docs/adr/ADR-006-agent-reliability-fencing-outbox-shadow.md)、[ADR-011](../../docs/adr/ADR-011-agent-streaming-push-and-eager-tool-safety.md) 与 [ADR-012](../../docs/adr/ADR-012-agent-durable-wait-and-resume.md)：长期架构决定和 Ark-Leto 差距矩阵；
+- [ADR-004](../../docs/adr/ADR-004-ark-leto-inspired-agent-runtime.md)、[ADR-006](../../docs/adr/ADR-006-agent-reliability-fencing-outbox-shadow.md)、[ADR-011](../../docs/adr/ADR-011-agent-streaming-push-and-eager-tool-safety.md)、[ADR-012](../../docs/adr/ADR-012-agent-durable-wait-and-resume.md) 与 [ADR-013](../../docs/adr/ADR-013-agent-capability-snapshot-and-routing.md)：长期架构决定和 Ark-Leto 差距矩阵；
 - [Ark-Leto 框架内核与 Agentspark 主链路原理详解](<../../Ark-Leto 框架内核 与 Agentspark 主链路 原理详解.md>)：目标能力的参考材料，不是 SeekFlux 当前实现证明。
 
 状态只使用：`已完成`、`下一步`、`未开始`、`后置可选`。阶段文档或接口草图不能作为完成证据。
@@ -46,7 +46,9 @@
 - 已有真实模型 SSE、Session 单调 Push sequence、有界 replay/背压、Redis 跨实例 relay 和 Last-Event-ID 重连；
 - 类型化持久等待、HITL、Async/Waitpoint、超时扫描和幂等恢复已经实现；Handoff/子 Agent
   仅有通用协调协议，真实 launcher、持久父子关系、取消级联和 Fork promotion 尚未实现；
-  MCP 和 Graph 尚未实现。
+- 类型化 Skill/ToolGroup Catalog、Session 持久激活、请求级 ephemeral shadow、冻结
+  CapabilitySnapshot、下一模型轮切组以及 Context/Trace/Push/Metrics 已实现；
+- MCP、Chained 和 Graph 尚未实现。
 
 ## 3. 实施顺序与依赖
 
@@ -79,7 +81,9 @@ flowchart TD
 | AR-8A | 类型化等待、挂起与恢复基础 | 已完成 | 大 | AR-3、AR-7 |
 | AR-8B | HITL、Async、Waitpoint 与超时/取消竞态 | 已完成 | 大 | AR-4、AR-8A |
 | AR-8C | Handoff、子 Agent 与 Fork promotion | 后置可选 | 大 | AR-8A、真实产品用例 |
-| AR-9 | Skill/ToolGroup、MCP、Chained/Graph | 下一步 | 多个独立大阶段 | AR-2/3/4/7，按子阶段区分 |
+| AR-9A | Skill/ToolGroup 与版本路由 | 已完成 | 大 | AR-2/3/6/7 |
+| AR-9B | MCP Tool 来源与连接治理 | 后置可选 | 大 | AR-4、AR-9A、真实 MCP 用例 |
+| AR-9C | Chained 与 Graph 引擎 | 后置可选 | 多个独立大阶段 | AR-3/4/7，真实编排用例 |
 
 这里的工作量只表示相对复杂度，不是工期承诺。表格中的“主要前置”表示技术依赖，不等于实际交付顺序：AR-5 技术上只依赖 AR-1/AR-2，但仍可按产品优先级排在 AR-4 之后。AR-8 和 AR-9 必须继续拆成独立子阶段，不能用一个“大功能完成”状态掩盖其中的缺口。
 
@@ -267,6 +271,61 @@ WorkspaceEvent 仍是恢复事实，PushEvent 只是过程投影；外部 SSE/We
 - **AR-8B HITL/Async/Waitpoint（已完成）**：need-approval、人工结论、异步任务回调、合法决议类型、超时/取消幂等和恢复后 ToolResult 渲染补偿；
 - **AR-8C Handoff/子 Agent/Fork（后置可选）**：已有通用 launcher SPI、深度/预算/身份传播、Child/Handoff Wait 与结果回填协调器；真实父子/源目标 Session 关系、父取消级联、产品 launcher 和 fork/promote 幂等尚未开始，Fork 显式失败关闭。
 
+#### AR-8C 详细实施计划（后置可选）
+
+AR-8C 只在出现至少一个真实产品用例后立项，例如“搜索 Agent 委派研究 Agent 并等待结果”、“当前会话移交给客服 Agent”或“在分支 Session 上试跑后提升完整 turn”。通用 SPI 和可构造的 Wait 不是开始该阶段的证据。
+
+先固定三类语义，不共用一个模糊的“启动另一个 Agent”接口：
+
+| 类型 | 控制权 | 源 Session 状态 | 结果如何返回 | 默认取消方向 |
+| --- | --- | --- | --- | --- |
+| Child Agent / `as_tool` | 父 Agent 保留主导权 | 等待或在明确的并行窗口继续 | 投影为原 Tool Call 的 ToolResult | 父取消级联到未终态子执行；子失败不反向取消父 |
+| Handoff | 将当前任务处理权移交给目标 Agent | 挂起，不再调用新的模型/Tool | 目标完成后恢复源 Session，或按产品契约直接收敛 | 源取消尝试取消未终态目标，但不撤销已发生的外部副作用 |
+| Fork / Promote | 源与分支独立执行 | 源 Session 继续存在 | 只能以完整 turn 原子提升，不拷贝半轮事件 | 双向默认不级联；只由显式 promotion/cancel 命令改变 |
+
+实施拆分：
+
+1. **AR-8C1 持久父子关系与预算树**
+   - 建立不可变 `executionLinkId`，关联 parent/child Session、Request、Run、Wait、Tool Call 和关系类型；
+   - 持久化关系状态、乐观版本、创建/终态时间、发起人和幂等 operationId，不从两个 Session 的文本消息反推关系；
+   - 子执行必须得到父剩余 Deadline、Token/成本、Tool Call 数、并发数和最大深度的真子集；每个用户/Session 的活跃子执行总数有硬上限；
+   - 委派身份、租户和权限只能缩减，不允许子 Agent 通过自报身份扩权。
+2. **AR-8C2 真实 Child Agent launcher**
+   - 选择一个真实产品 Child Agent，明确输入/输出 Schema、允许的 AgentDef/Skill/Tool、超时和降级语义；
+   - launch 与 parent suspend 必须通过同一个幂等 operationId 协调；重复派发只能返回同一 child，不能重复创建；
+   - child 的 Completed/Waiting/Cancelled/Failed 结果转换为稳定的父 ToolResult，原 callId 不变；大结果使用持久引用，不无界写入 Workspace 事件。
+3. **AR-8C3 Handoff 移交协议**
+   - 定义 `REQUESTED → ACCEPTED/REJECTED → ACTIVE → COMPLETED/CANCELLED/FAILED` 的持久状态机，只有目标接受后才视为控制权已移交；
+   - 源 Session 在 Handoff Wait 期间不得再发起新模型/Tool，目标回填仍复用 Internal Ingress、authority 和 fencing；
+   - 拒绝、目标不可用、启动超时、执行超时和目标部分产生输出后失败使用不同的错误码与降级策略。
+4. **AR-8C4 取消、超时与终态竞态**
+   - 父取消通过持久关系查找未终态后代并逐层传播，有深度/数量上限；传播失败可重试且可观测；
+   - child completion、parent cancel、wait timeout 和执行权转移由持久 first-writer-wins 仲裁，晚到结果只记审计，不重写父终态；
+   - 已进入外部系统的 `MUTATING` 子 Tool 继续由 AR-4 账本对账，“取消子 Agent”不等于撤销副作用。
+5. **AR-8C5 Fork 基线与原子 Promotion**
+   - Fork 以源 Session 某个明确 position 的完整投影作为独立基线，不复制或共享源事件流；基线携带 AgentDef/Prompt/Skill/Tool Schema/Context 版本；
+   - 分支与源自创建后独立获得 execution authority、Checkpoint 和副作用账本，禁止共用内存 RuntimeContext；
+   - Promotion 只接受完整、连续、已终态的 turn，校验源 basePosition 未发生冲突后，用 operationId 一次性追加自包含的 `ForkTurnPromoted`；
+   - promotion 重试幂等，不允许部分消息提升、位置重排、覆盖源 Session 已发生的新 turn，也不重放分支中已发生的外部副作用。
+
+数据与契约交付物：
+
+- 新增父子/移交/Fork 关系的持久模型和 migration，关系事件与 Workspace 消息事件分责；
+- 为 launch、accept/reject、child completion、cascade cancel、fork、promote 定义幂等 API/事件 Schema；
+- Push 增加 parent/child/handoff/fork 过程投影，但持久关系仍是恢复事实；
+- Trace 携带 relationId、parentRunId、depth、budget allocation 和稳定 outcome；Metrics 不使用 Session/Run/relation ID 作标签。
+
+验收矩阵：
+
+- 成功路径：child 结果回填、handoff 接受并恢复、fork 与完整 turn promotion；
+- 幂等：launch/callback/cancel/promote 重复提交不重复创建子执行、不重复追加消息、不重复副作用；
+- 崩溃：覆盖“关系已写/子未派发”、“子已完成/父未恢复”、“promotion 事件提交前后”等固定故障点；
+- 竞态：parent cancel vs child complete、handoff timeout vs target accept、source new turn vs promotion 都有唯一可重放结果；
+- 安全：身份/权限不扩大，子执行无法越过 AgentDef/Tool/租户限制，所有跨 Session 操作受 authority/fencing 或对等 CAS 保护；
+- 资源：证明深度、总后代数、并发数、等待时长、Token/成本和结果大小均有硬上限。
+
+AR-8C 只能按 `AR-8C1 → AR-8C2 → AR-8C3 → AR-8C4 → AR-8C5` 逐片验收；Child 完成不代表 Handoff 或 Fork 完成。Fork 在 AR-8C5 前继续显式返回 `FORK_PROMOTION_UNSUPPORTED`，不用内存复制伪装支持。
+
 不同等待类型必须明确 pending 状态丢失时是 fail-fast 还是容错恢复，不能统一吞掉。挂起前 Checkpoint 失败、重复回调、回调与超时竞态、父取消和子完成竞态均需固定测试。
 
 完成门槛不能共用。每个子阶段都要有独立产品用例、契约、故障模型、测试和验收证据；没有真实需求的子阶段保持“后置可选”。
@@ -283,13 +342,117 @@ Checkpoint 重建。长期取舍见 [ADR-012](../../docs/adr/ADR-012-agent-durab
 
 ### AR-9：动态能力与编排引擎
 
-该阶段不应继续膨胀 `DefaultAgentLoop`，按三类扩展分别设计：
+该阶段是 Agent Runtime 主链路完成后的平台扩展，不是当前 Search Agent 上线的阻断项。不继续膨胀 `DefaultAgentLoop`：Skill/ToolGroup 是能力解析层，MCP 是 Tool 来源 Adapter，Chained 是 Loop 级编排，Graph 是独立节点引擎。
 
-- **AR-9A Skill/ToolGroup/版本路由**：区分全局配置、Session 持久激活和请求级 ephemeral 注入；配置版本在一次执行内冻结；工具组动态切换后下一轮重算可见 Tool，注册级权限过滤与执行级拦截保持双防线；
-- **AR-9B MCP**：协议适配为普通 Tool，但增加 server/source 命名空间、连接生命周期、懒连接/重连、来源级批量注销、鉴权、超时和故障隔离；远端声明不能绕过本地 Schema、权限和副作用策略；
-- **AR-9C Chained/Graph**：Chained 是 Loop 级编排，Graph 是节点/拓扑执行引擎，两者与默认 ReAct Loop 解耦；分别定义预算、路由、并行、Checkpoint、节点事件和确定性重放。
+子阶段状态与顺序：
 
-完成门槛不能共用。MCP 连通不等于能力安全，Graph 能跑 DAG 不等于可恢复；每个子阶段都必须由真实产品用例、自动化测试和故障验收独立证明。
+| 子阶段 | 交付目标 | 状态 | 启动条件 |
+| --- | --- | --- | --- |
+| AR-9A | Skill/ToolGroup/版本路由 | 已完成 | 一个 Agent 的 Tool 数量或指令集已需按任务动态缩减 |
+| AR-9B | MCP Tool 来源与连接治理 | 后置可选 | 出现明确 MCP server、责任人、凭据方式和 Tool 安全分类 |
+| AR-9C1 | Chained Loop | 后置可选 | 出现可证明单 ReAct Loop 不足的 plan → execute → summarize 用例 |
+| AR-9C2 | Graph 内存执行引擎 | 后置可选 | 出现需拓扑、分支/聚合和受控并行的非会话工作流 |
+| AR-9C3 | Graph 持久恢复与副作用安全 | 后置可选 | AR-9C2 已有真实使用，且业务需要跨进程恢复 |
+
+AR-9A 已完成；AR-9B/9C 只保留扩展点，不提前引入 MCP SDK、Graph DSL 或空实现。
+
+#### AR-9A Skill / ToolGroup / 版本路由（已完成）
+
+目标：在不改变 AgentDef 最大权限边界的前提下，按 Session 和当前请求缩减指令与 Tool Schema，并让动态切换可持久、可恢复、可审计。
+
+先定义三层动态性：
+
+| 层级 | 作用域 | 可持久 | 可扩大 AgentDef 权限 | 热更生效边界 |
+| --- | --- | --- | --- | --- |
+| 全局 Skill/ToolGroup Catalog | AgentDef 可引用的版本化能力 | 配置事实 | 否 | 新执行；恢复继续使用冻结快照 |
+| Session 激活投影 | 跨 turn 的已激活 Skill/工具组 | 是，使用 Workspace 事件投影 | 否 | 在下一个安全模型 turn 重算 |
+| Request ephemeral Skill/override | 当次 execution | 不进入 Session 激活投影 | 否 | 请求开始时冻结，终态后销毁 |
+
+实施拆分：
+
+1. **AR-9A1 类型化能力契约**
+   - `SkillDefinition` 至少包含 skillId、version、类型（prompt/lazy 等）、instruction/reference、requiredTools、toolGroups、autoActivate 和内容摘要；
+   - `ToolGroupDefinition` 包含 groupId、version、description、toolIds、alwaysActive；`CapabilityCatalog` 有唯一 configVersion 和内容 hash；
+   - 加载时拒绝重复 ID、缺失 Tool、循环引用、AgentDef 未授权 Tool 和不可序列化配置；运行时不用 Map/string key 猜契约。
+2. **AR-9A2 能力解析与版本冻结**
+   - execution 开始时生成不可变 `CapabilitySnapshot`，记录 catalog/Skill/ToolGroup/Tool Schema/AgentDef/Prompt 版本及 hash，进入 Trace 和 Checkpoint；
+   - 恢复时优先按冻结版本继续；版本不再可用时显式 `CAPABILITY_SNAPSHOT_UNAVAILABLE`，不静默套用新配置；
+   - Catalog 热更仅影响新 execution；同一 execution 可改变激活集，但不改变其引用的 Skill/Group 定义版本。
+3. **AR-9A3 Session 持久激活**
+   - 新增版本化 `SkillActivated/SkillDeactivated/ToolGroupsChanged` Workspace 事实，用 operationId 幂等、position 有序投影；
+   - 只有明确 Control/API 或受策略保护的内置 Tool 可修改持久激活；普通模型文本不能直接改状态；
+   - 无效 Skill/Group、版本冲突、越权 Tool 和正在执行/等待的 Session 返回稳定拒绝，不产生半份事件；当前 `COMPLETED` 表示上一轮已收敛、仍可开始下一 turn，因此是允许修改的安全边界。
+4. **AR-9A4 ephemeral Skill 与 shadow 隔离**
+   - ephemeral Skill 必须有请求级 ID/version/schema、大小上限和来源，只能引用 AgentDef 已允许的 Tool；
+   - 同 ID 的 ephemeral Skill 显式 shadow 全局 Skill，同时从 auto-activate 和 requiredTools 解析中移除被遮蔽全局版本，防止指令或 Tool 泄漏；
+   - 不含密钥的规范化 ephemeral 快照可进入当次 Checkpoint 以便崩溃恢复，但不进入 Session 投影；含 secret/不可序列化值时在首个副作用前拒绝可恢复执行。
+5. **AR-9A5 动态 ToolGroup 与可见 Tool 重算**
+   - 每个模型 turn 的有效 Tool 按固定顺序计算：`AgentDef allowedTools ∪ 已激活 Skill requiredTools`，再经 ToolGroup 过滤、本地注册表/Schema 校验、权限过滤和执行策略；任何一层都不能扩大 AgentDef 上界；
+   - 未归组 Tool 与 `alwaysActive` 组的可见规则显式固定；内置 `switch_tool_groups` 只接受 Catalog 中合法 group；
+   - 切组只影响下一个模型 turn，不撤回已 dispatch 的 Tool，也不允许 eager call 利用旧可见集跨越安全边界；
+   - Tool 实际执行前再用当前 permission/policy 校验；已暴露给模型不等于必然允许执行。
+6. **AR-9A6 Context 与观测**
+   - Context Layer 分开 ephemeral instruction、active Skill instruction 和 lazy Skill catalog，按冻结版本组装；Tool Schema token 仍进入 AR-6 预算；
+   - 记录 Skill 可见/激活/遮蔽原因、Tool 被 group/permission/registry 过滤的原因、snapshot version 和切组结果；
+   - Metrics 只用 agent/capabilityVersion/reason/outcome 等受控枚举，不使用用户注入的 Skill ID 或指令文本作标签。
+
+AR-9A 完成门槛：使用一个真实 Agent 和至少两个 ToolGroup 证明 Session 激活跨 turn 保留、ephemeral 不污染后续请求、同名 shadow 不泄漏全局 Tool、切组后下一 turn 的 Tool Schema 真实改变；热更/崩溃恢复继续使用冻结版本，缺版本明确失败；模型伪造 Tool 名、越权 Skill、失效 group 和执行前权限变更都被两道防线拦截。同步交付 migration、事件/API Schema、旧 Session 重放兼容、固定故障测试和真实产品验收。
+
+完成说明：上述切片已经由 `CapabilityResolver`、`CapabilitySnapshot`、
+`CAPABILITIES_CHANGED` Workspace 投影、`SwitchToolGroupsTool`、V15、Control API 和 Search
+Agent 三组 ToolGroup 装配实现。冻结快照完整进入 Checkpoint/Trace；Queue drain 使用最新 Session
+投影和被提升请求重新解析；旧 Checkpoint 走 legacy 快照兼容。Catalog/Tool Schema 缺版本时恢复
+失败关闭，不会套用新定义。长期边界与配置制品责任见 [ADR-013](../../docs/adr/ADR-013-agent-capability-snapshot-and-routing.md)。
+
+#### AR-9B MCP（后置可选）
+
+目标：将 MCP server 发现的能力适配为普通 `AgentTool`，让 Loop 无感知，但不信任远端名称、Schema、副作用声明或输出。
+
+实施拆分：
+
+1. **AR-9B1 Server 配置与连接生命周期**：定义 serverId/configVersion/transport/endpoint/credentialRef/超时/并发/健康策略；凭据只保存引用，不进 Workspace、Checkpoint、Trace 或日志；先为一种产品需要的 transport 交付，不同时铺开所有传输。
+2. **AR-9B2 发现、命名与注销**：使用 `{serverId}__{remoteToolName}` 或等价确定性命名空间，`source=mcp:{serverId}`；名称冲突默认拒绝而非静默覆盖；连接失效按 source 原子摘除可见定义，不影响其他 server/本地 Tool。
+3. **AR-9B3 本地信任边界**：远端 Schema 解析为受限本地 Schema，设置字段深度/数量/大小上限；Tool 的 effect、allowlist、租户/用户权限、是否需审批由本地配置决定，远端不能自证 `READ_ONLY`。
+4. **AR-9B4 Proxy 执行与故障隔离**：懒连接、有界建连/请求超时、每 server bulkhead、熔断/重连和输出大小上限；取消传到 transport；server 断线不拖垮本地 Tool 或其他 server。
+5. **AR-9B5 恢复与副作用**：CapabilitySnapshot 冻结 server config version、远端 Tool Schema hash 和本地策略版本；连接恢复后 Schema 改变只影响新 execution；未知状态的 `MUTATING` MCP Tool 进入 AR-4 ledger/reconciler，不因重连自动重放。
+6. **AR-9B6 可观测与运维**：健康、发现版本、在途请求、重连、schema rejection、policy denial 和调用结果可查；日志脱敏，Metrics 仅使用受控 serverId/tool/outcome，远端错误文本不作标签。
+
+AR-9B 完成门槛：一个真实 MCP server 和一个可控 fake server 共同验证发现、调用、取消、断线、重连、批量注销、Schema 热更、命名冲突、租户隔离、恶意超大输出和未知写结果；MCP 连通或能列出 Tool 不构成完成。
+
+#### AR-9C Chained / Graph（后置可选）
+
+Chained 与 Graph 是两个引擎，不共用“AR-9C 已完成”。默认 ReAct Loop 保持不变，Router 根据冻结 AgentDef 的 `loopType` 显式选择，不在运行中猜测切换。
+
+**AR-9C1 Chained Loop**
+
+1. 定义版本化 `ChainedAgentDefinition`，包含有序 leaf agents、入口、总预算、单 leaf 预算、路由/退出策略和允许的数据传递 Schema；
+2. 实现 `Stay/Advance/JumpTo/Exit` 有限路由决策，限制 maxTotalSteps、单 leaf 重入次数和 jump 次数，禁止不可证明收敛的隐式循环；
+3. 跨 leaf 数据传递使用有大小上限、可序列化的类型化 attribute bag，敏感或请求级值显式标记不持久；
+4. 每个 leaf 复用现有 Context、Tool policy、Checkpoint、Wait、Push 和副作用账本，但有独立 segment/turn 因果标识；子预算总和不得超过 chain 剩余预算；
+5. 终态只能是 Completed/Waiting/Cancelled/Failed 或内部 `ExitWithLabel`；对外前将 label 映射为稳定产品 Outcome，不泄漏表达式或类名。
+
+AR-9C1 完成门槛：真实 plan → execute → summarize 链路证明路由、预算、等待/恢复、取消、leaf 失败降级和热更版本冻结；固定测试覆盖 jump 循环、总步数耗尽、中间挂起、崩溃后不重跑已完成 leaf 和写 Tool 不重复。
+
+**AR-9C2 Graph 内存执行引擎**
+
+1. 建立与 AgentLoop 无依赖或单向依赖的 Graph Domain，版本化 GraphDef 包含 nodeId、operator type、输入/输出 Schema、edge、route 和资源限制；
+2. 加载时验证唯一 node、无环、边端点、Schema 兼容、必达终点和可控 fan-out；路由表达式只访问 allowlist 变量/函数，不能执行任意代码；
+3. 先实现真实用例需要的最小 operator 集，例如 MAP、BRANCH、FAN_OUT、FAN_IN、REDUCE；不为对齐参考框架一次性复制全部 DSL；
+4. 调度使用有界执行器、Graph/node 共同 Deadline、最大活跃节点、fan-out 宽度、队列大小和中间结果大小限制；
+5. 并行结果按 node/edge/index 稳定排序后聚合，不用线程完成顺序决定输出；Push 包含 graph start/end、superstep boundary 和 node start/end，但不作恢复事实。
+
+AR-9C2 完成门槛：一个非会话的真实 DAG 用例通过固定输入证明拓扑、分支、有界并行、确定聚合、取消和部分失败策略。该阶段只能宣称“内存 Graph 执行已完成”，不宣称跨进程恢复。
+
+**AR-9C3 Graph 持久恢复与副作用安全**
+
+1. 持久 GraphRun、冻结 GraphDef/code/config version、node attempt、输入/输出引用、路由决定、已完成边和剩余预算；
+2. 以 superstep/node 安全边界 Checkpoint，接管后从持久调度状态继续，不根据 Push 或日志推测；
+3. READ_ONLY/IDEMPOTENT 节点可按稳定 nodeAttemptId 恢复；MUTATING 节点必须进入 AR-4 ledger/reconciler，UNKNOWN 时不自动重放；
+4. GraphDef 或 operator code 的冻结版本缺失时 fail-fast；新版本只接收新 GraphRun，不在恢复中静默迁移。
+
+AR-9C3 完成门槛：固定故障点覆盖节点启动前后、输出持久前后、fan-in 前后、写节点外部已成功但本地未确认，并证明接管不丢节点、不重复聚合、不盲目重放副作用。
+
+AR-9 的完成门槛不能共用：AR-9A、9B、9C1、9C2、9C3 各自只在其代码、契约、自动化测试、故障注入和真实产品验收都成立后标记“已完成”。Skill 能解析不等于 MCP 安全，MCP 能连通不等于写 Tool 可恢复，Chained 能串行不等于 Graph，Graph 能跑 DAG 不等于可持久恢复。
 
 ## 5. 每轮交付后的更新规则
 
@@ -428,6 +591,26 @@ Checkpoint 重建。长期取舍见 [ADR-012](../../docs/adr/ADR-012-agent-durab
 - 下一步：AR-9A 先定义 Skill/ToolGroup 的全局、Session 持久和请求级 ephemeral 激活边界及版本冻结；AR-8C 等出现真实产品父子执行用例后再立项。
 - 关联文档/ADR/契约：[`docs/agent-runtime.md`](../../docs/agent-runtime.md)、[ADR-012](../../docs/adr/ADR-012-agent-durable-wait-and-resume.md)、[`agent-wait-lifecycle-v1.schema.json`](../../contracts/events/agent-wait-lifecycle-v1.schema.json)、[`contracts/openapi/seekflux-v1.yaml`](../../contracts/openapi/seekflux-v1.yaml)、`V14__agent_wait_states.sql`。
 
+### 2026-09-17：细化 AR-8C 与 AR-9 后续扩展计划
+
+- 阶段：AR-8C、AR-9B、AR-9C 保持后置可选；AR-9A 保持下一步。
+- 本轮范围：只补充路线、实施边界和验收门槛，不修改 Runtime 代码、契约、数据库或自动化测试，不把计划冒充为已实现能力。
+- 主要调整：AR-8C 拆为持久父子关系、真实 Child launcher、Handoff 移交、取消/竞态和 Fork promotion；AR-9A 拆为类型契约、版本冻结、Session 激活、ephemeral shadow、ToolGroup 重算和 Context/观测；AR-9B 单独覆盖 MCP 信任边界与连接治理；AR-9C 进一步分为 Chained、内存 Graph 和可恢复 Graph。
+- 失败/取消/恢复语义：计划明确了父子取消方向、终态竞态线性化、MCP 写 Tool 未知状态、Graph 节点安全恢复和版本缺失 fail-fast；这些均为待实现门槛，不是当前能力。
+- 验证：核对 Markdown 标题、相对链接目标、状态用词和 `git diff --check`；本轮无代码测试需要执行。
+- 剩余边界：未选定 AR-8C/9B/9C 真实产品用例，不创建 migration、API/事件契约、SDK 依赖或引擎骨架。
+- 下一步：若继续 Agent Runtime 扩展，只开始 AR-9A1“类型化能力契约”，先用真实 Search Agent 的 ToolGroup 缩减用例验证；其他子阶段继续后置可选。
+
+### 2026-09-18：完成 AR-9A Skill/ToolGroup 与版本路由
+
+- 阶段：AR-9A（已完成）；AR-8C、AR-9B、AR-9C 保持后置可选，当前没有必须继续的 Agent Runtime 阶段。
+- 本轮范围：交付类型化 Skill/ToolGroup Catalog、三层激活作用域、不可变能力快照、Session 持久激活、请求级 ephemeral shadow、下一模型轮 ToolGroup 切换、Context 分层与低基数观测。
+- 实现事实与关键入口：`CapabilityResolver` 在 FeaturePipeline 的 Agent 解析后冻结 `CapabilitySnapshot`，其 catalog/hash/fingerprint、Skill/Group/Tool Schema 版本进入 Checkpoint 和 Trace；`AgentDefinition.skillRefs` 与 `CapabilityRequest` 分别声明最大引用边界和请求级缩减。`WorkspaceEvent.CapabilitiesChanged`、`AgentSessionStore.updateCapabilities`、`AgentCapabilityController` 和 V15 提供带 `operationId/baseVersion/actor` 的 Session 持久 Control；同 ID 同内容返回原结果，同 ID 不同内容冲突。请求级 Skill 必须是 `REQUEST` 来源，同名时完整 shadow 全局定义且不进入 Session 投影。`SwitchToolGroupsTool` 属于 always-active 控制组，成功结果只改变下一模型轮；Search Agent 真实装配宽搜、精确搜索和控制三组。Context 独立渲染 ephemeral/active/lazy 层，Trace/OpenAPI、RunEvent、PushEvent 和 Micrometer 公开受控版本、结果与数量。
+- 失败/取消/恢复语义：Catalog 加载拒绝重复 ID、未知 Tool/Group 和 AgentDef 越权；请求限制与 ephemeral Skill 不能扩大 allowedTools。模型伪造 Tool 先被快照暴露集拒绝，实际执行仍经过注册表、Schema 和 ToolExecutionPolicy；失效 group 返回稳定失败。切组不影响已 dispatch/eager Tool。恢复复用 Checkpoint 中的冻结定义与激活集，当前 Runtime 缺少对应 catalog hash 时返回 `CAPABILITY_SNAPSHOT_UNAVAILABLE`，Tool Schema 版本不一致也失败关闭。EXECUTING/SUSPENDED Session 不接受新的持久激活，上一轮 `COMPLETED` 是下一 turn 前可修改的安全边界；Queue drain 在安全边界重新解析最新投影。
+- 验证命令与结果：JDK 21 下 `mvn -q test` 全仓 62 个测试报告、204 个测试全部通过，无失败、错误或跳过；定向测试覆盖 auto-activate 首次持久化、跨 turn 投影、ephemeral shadow/越权、always-active 控制 Tool、真实 Search Agent 两个业务组、下一轮切组与指纹变化、损坏快照的派生 Tool/Group 自校验、Context 分层、Queue JSON 往返、API 版本更新、低基数指标和旧快照兼容。隔离 PostgreSQL 17 按自然版本顺序执行 V1～V15，确认 `capability_version` 非负约束和 `agent_capability_operation_unique` 生效；JSON Schema 解析和 `git diff --check` 通过。
+- 剩余边界：Catalog 当前由宿主静态装配，没有在线配置编辑器、分布式发布或旧版本制品仓库；跨部署恢复旧 execution 时，运维必须保留其 Catalog，否则按设计失败关闭。ephemeral instruction 只允许有界、可序列化内容，调用方不得携带凭据。通用 API 记录已认证 actor，但租户授权仍由宿主接入层负责。MCP Tool 来源、真实 Handoff/子 Agent/Fork、Chained/Graph 均未因本阶段自动完成。
+- 下一步：Agent Runtime 当前无必做阶段；仅在出现明确产品用例与责任边界后，从 AR-8C、AR-9B 或 AR-9C 中选择一个独立立项，不能把它们合并宣称完成。
+- 关联文档/ADR/契约：[`docs/agent-runtime.md`](../../docs/agent-runtime.md)、[ADR-013](../../docs/adr/ADR-013-agent-capability-snapshot-and-routing.md)、[`agent-capability-lifecycle-v1.schema.json`](../../contracts/events/agent-capability-lifecycle-v1.schema.json)、[`contracts/openapi/seekflux-v1.yaml`](../../contracts/openapi/seekflux-v1.yaml)、`V15__agent_capability_activations.sql`。
 ---
 
 维护原则：本文会随着代码事实持续调整阶段内部设计，但不会通过改文档提前宣布能力完成。历史交付记录保留当时证据；若后续设计发生变化，新增记录说明原因并链接对应 ADR，而不是静默改写历史。

@@ -18,6 +18,9 @@ public record ContextLayer(
     public enum Type {
         STABLE_PREFIX,
         AGENT_INSTRUCTIONS,
+        EPHEMERAL_SKILL_INSTRUCTIONS,
+        ACTIVE_SKILL_INSTRUCTIONS,
+        SKILL_CATALOG,
         DYNAMIC_CAPABILITIES,
         WORKSPACE_STATE,
         COMPACTION_SUMMARY,

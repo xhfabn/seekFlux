@@ -6,6 +6,7 @@ import io.seekflux.platform.agentruntime.application.spi.business.feature.Featur
 import io.seekflux.platform.agentruntime.domain.model.session.AgentSession;
 import io.seekflux.platform.agentruntime.domain.model.session.AgentSessionStatus;
 import io.seekflux.platform.agentruntime.application.spi.capability.session.AgentSessionStore;
+import io.seekflux.platform.agentruntime.domain.service.capability.CapabilityResolver;
 import java.time.Clock;
 
 public final class BuiltInFeatureNodes {
@@ -88,7 +89,34 @@ public final class BuiltInFeatureNodes {
                     context.request().definition(),
                     context.request().runRequest(),
                     context.request().llmClient(),
-                    context.persistentAttributes()));
+                    context.persistentAttributes(),
+                    context.capabilitySnapshot()));
+        }
+    }
+
+    public static final class CapabilityResolve implements FeatureNode {
+        private final CapabilityResolver resolver;
+
+        public CapabilityResolve(CapabilityResolver resolver) {
+            this.resolver = resolver;
+        }
+
+        @Override
+        public String name() {
+            return "capability-resolve";
+        }
+
+        @Override
+        public int order() {
+            return 250;
+        }
+
+        @Override
+        public void process(FeatureContext context) {
+            context.capabilitySnapshot(resolver.resolve(
+                    context.request().definition(),
+                    context.session().capabilityState(),
+                    context.request().runRequest().capabilities()));
         }
     }
 

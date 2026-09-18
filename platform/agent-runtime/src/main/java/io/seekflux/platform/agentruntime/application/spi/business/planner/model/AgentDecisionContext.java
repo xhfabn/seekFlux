@@ -7,6 +7,7 @@ import io.seekflux.platform.agentruntime.domain.model.tool.AgentToolObservation;
 import java.time.Duration;
 import java.util.List;
 import java.util.function.Consumer;
+import io.seekflux.platform.agentruntime.domain.model.capability.CapabilitySnapshot;
 
 public record AgentDecisionContext(
         AgentRunRequest request,
@@ -16,7 +17,21 @@ public record AgentDecisionContext(
         Consumer<LlmUsage> usageRecorder,
         Consumer<AgentAssistantContent> assistantContentRecorder,
         String agentRunId,
-        EagerToolDispatcher eagerToolDispatcher) {
+        EagerToolDispatcher eagerToolDispatcher,
+        CapabilitySnapshot capabilities) {
+
+    public AgentDecisionContext(
+            AgentRunRequest request,
+            int step,
+            Duration remaining,
+            List<AgentToolObservation> observations,
+            Consumer<LlmUsage> usageRecorder,
+            Consumer<AgentAssistantContent> assistantContentRecorder,
+            String agentRunId,
+            EagerToolDispatcher eagerToolDispatcher) {
+        this(request, step, remaining, observations, usageRecorder, assistantContentRecorder,
+                agentRunId, eagerToolDispatcher, null);
+    }
 
     public AgentDecisionContext(
             AgentRunRequest request,
@@ -24,7 +39,7 @@ public record AgentDecisionContext(
             Duration remaining,
             List<AgentToolObservation> observations) {
         this(request, step, remaining, observations, ignored -> { }, ignored -> { }, null,
-                EagerToolDispatcher.DISABLED);
+                EagerToolDispatcher.DISABLED, null);
     }
 
     public AgentDecisionContext(
@@ -34,7 +49,7 @@ public record AgentDecisionContext(
             List<AgentToolObservation> observations,
             Consumer<LlmUsage> usageRecorder) {
         this(request, step, remaining, observations, usageRecorder, ignored -> { }, null,
-                EagerToolDispatcher.DISABLED);
+                EagerToolDispatcher.DISABLED, null);
     }
 
     public AgentDecisionContext(
@@ -45,7 +60,7 @@ public record AgentDecisionContext(
             Consumer<LlmUsage> usageRecorder,
             Consumer<AgentAssistantContent> assistantContentRecorder) {
         this(request, step, remaining, observations,
-                usageRecorder, assistantContentRecorder, null, EagerToolDispatcher.DISABLED);
+                usageRecorder, assistantContentRecorder, null, EagerToolDispatcher.DISABLED, null);
     }
 
     public AgentDecisionContext(
@@ -57,7 +72,7 @@ public record AgentDecisionContext(
             Consumer<AgentAssistantContent> assistantContentRecorder,
             String agentRunId) {
         this(request, step, remaining, observations, usageRecorder,
-                assistantContentRecorder, agentRunId, EagerToolDispatcher.DISABLED);
+                assistantContentRecorder, agentRunId, EagerToolDispatcher.DISABLED, null);
     }
 
     public AgentDecisionContext {

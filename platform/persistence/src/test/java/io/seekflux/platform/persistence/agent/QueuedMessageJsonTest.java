@@ -7,6 +7,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.seekflux.platform.agentruntime.application.command.AgentIngressMode;
 import io.seekflux.platform.agentruntime.application.command.AgentRunRequest;
 import io.seekflux.platform.agentruntime.domain.model.session.SessionStatePatch;
+import io.seekflux.platform.agentruntime.application.command.CapabilityRequest;
+import io.seekflux.platform.agentruntime.domain.model.capability.SkillDefinition;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -26,7 +28,17 @@ class QueuedMessageJsonTest {
                 new SessionStatePatch(
                         7,
                         Map.of("query", "适合儿童", "requiredTags", List.of("亲子"))),
-                AgentIngressMode.STEER);
+                AgentIngressMode.STEER,
+                new CapabilityRequest(
+                        1,
+                        List.of(SkillDefinition.ephemeral(
+                                "search", "ephemeral-v1", SkillDefinition.Type.PROMPT,
+                                "only this request", "ephemeral", java.util.Set.of("search_direct"),
+                                java.util.Set.of("broad"), true)),
+                        java.util.Set.of("broad"),
+                        java.util.Set.of("precise"),
+                        true,
+                        java.util.Set.of("search_direct")));
         ObjectMapper mapper = new ObjectMapper();
         Map<String, Object> persistentFeatures = Map.of(
                 "identity", Map.of("userId", "user-2"),

@@ -18,6 +18,7 @@ import io.seekflux.platform.agentruntime.domain.model.run.AgentTerminalState;
 import io.seekflux.platform.agentruntime.domain.model.session.SessionStatePatch;
 import io.seekflux.platform.agentruntime.application.spi.capability.event.PushEventPublisher;
 import io.seekflux.platform.agentruntime.application.command.FeatureRequest;
+import io.seekflux.platform.agentruntime.application.command.CapabilityRequest;
 import io.seekflux.platform.agentruntime.application.spi.capability.llm.LlmClient;
 import io.seekflux.platform.agentruntime.application.api.Router;
 import io.seekflux.platform.agentruntime.application.api.model.RouterResult;
@@ -99,7 +100,6 @@ public final class AgentRuntimeExecutionAdapter implements AgentExecutionPort {
         attributes.put("goalVersion", request.goal().version());
         attributes.put("rewrittenQuery", request.plan().rewrittenQuery());
         attributes.put("derivedRequiredTags", request.plan().derivedRequiredTags());
-        attributes.put("allowedTools", request.exposedTools());
         attributes.put("routeReason", request.routeReason());
         AgentRunRequest runRequest = new AgentRunRequest(
                 request.requestId(),
@@ -110,7 +110,8 @@ public final class AgentRuntimeExecutionAdapter implements AgentExecutionPort {
                 new SessionStatePatch(
                         request.goalChange().baseVersion(),
                         request.goalChange().state()),
-                request.ingressMode());
+                request.ingressMode(),
+                CapabilityRequest.restrictTools(request.exposedTools()));
         RouterResult routed = router.execute(
                 new FeatureRequest(definition, runRequest, llmClient),
                 publisher);
@@ -233,6 +234,13 @@ public final class AgentRuntimeExecutionAdapter implements AgentExecutionPort {
                 definition.promptVersion(),
                 definition.decisionProviderVersion(),
                 definition.toolSchemaVersions(),
+                definition.capabilities().catalogVersion(),
+                definition.capabilities().fingerprint(),
+                definition.capabilities().skillVersions(),
+                definition.capabilities().toolGroupVersions(),
+                definition.capabilities().activeSkills().stream().sorted().toList(),
+                definition.capabilities().activeToolGroups().stream().sorted().toList(),
+                definition.capabilities().effectiveTools().stream().sorted().toList(),
                 trace.startedAt(),
                 trace.tookMillis(),
                 trace.terminalState().name(),

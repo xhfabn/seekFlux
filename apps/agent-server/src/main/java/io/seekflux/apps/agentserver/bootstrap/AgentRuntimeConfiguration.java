@@ -16,6 +16,7 @@ import io.seekflux.agent.infrastructure.observability.AgentExecutionMetrics;
 import io.seekflux.agent.infrastructure.observability.MicrometerAgentExecutionMetrics;
 import io.seekflux.agent.infrastructure.observability.MicrometerToolExecutionObserver;
 import io.seekflux.agent.infrastructure.observability.MicrometerContextEventRecorder;
+import io.seekflux.agent.infrastructure.observability.MicrometerCapabilityEventRecorder;
 import io.seekflux.agent.infrastructure.event.RedisPushEventRelay;
 import io.seekflux.agent.infrastructure.projection.RedisAgentSessionProjection;
 import io.seekflux.agent.infrastructure.runtime.AgentRuntimeExecutionAdapter;
@@ -34,6 +35,7 @@ import io.seekflux.platform.agentruntime.application.spi.capability.tool.ToolExe
 import io.seekflux.platform.agentruntime.application.spi.capability.tool.AgentToolExecutor;
 import io.seekflux.platform.agentruntime.domain.service.tool.AgentToolRegistry;
 import io.seekflux.platform.agentruntime.infrastructure.tool.DefaultAgentToolExecutor;
+import io.seekflux.platform.agentruntime.infrastructure.tool.SwitchToolGroupsTool;
 import io.seekflux.platform.agentruntime.application.spi.business.context.ContextEngine;
 import io.seekflux.platform.agentruntime.domain.service.context.DefaultContextEngine;
 import io.seekflux.platform.agentruntime.infrastructure.prompt.MapPromptResolver;
@@ -72,6 +74,10 @@ import io.seekflux.platform.agentruntime.infrastructure.event.DefaultPushEventSt
 import io.seekflux.platform.agentruntime.application.spi.business.output.OutputGuardPolicy;
 import io.seekflux.platform.agentruntime.domain.model.context.ContextCompactionMode;
 import io.seekflux.platform.agentruntime.domain.model.context.ContextWindowPolicy;
+import io.seekflux.platform.agentruntime.domain.model.capability.CapabilityCatalog;
+import io.seekflux.platform.agentruntime.domain.model.capability.SkillDefinition;
+import io.seekflux.platform.agentruntime.domain.model.capability.ToolGroupDefinition;
+import io.seekflux.platform.agentruntime.domain.service.capability.CapabilityResolver;
 import io.seekflux.search.port.in.SearchUseCase;
 import java.time.Clock;
 import java.time.Duration;
@@ -237,11 +243,17 @@ class AgentRuntimeConfiguration {
         return new SearchFilteredTool(directSearchUseCase);
     }
 
+    @Bean
+    SwitchToolGroupsTool switchToolGroupsTool(CapabilityCatalog agentCapabilityCatalog) {
+        return new SwitchToolGroupsTool(agentCapabilityCatalog);
+    }
+
     @Bean(name = "seekFluxAgentTools")
     List<AgentTool> seekFluxAgentTools(
             SearchDirectTool searchDirectTool,
-            SearchFilteredTool searchFilteredTool) {
-        return List.of(searchDirectTool, searchFilteredTool);
+            SearchFilteredTool searchFilteredTool,
+            SwitchToolGroupsTool switchToolGroupsTool) {
+        return List.of(searchDirectTool, searchFilteredTool, switchToolGroupsTool);
     }
 
     @Bean
@@ -269,6 +281,56 @@ class AgentRuntimeConfiguration {
     @Bean
     AgentToolExecutor agentToolExecutor(AgentToolRegistry registry) {
         return new DefaultAgentToolExecutor(registry);
+    }
+
+    @Bean
+    CapabilityCatalog agentCapabilityCatalog() {
+        SkillDefinition broad = new SkillDefinition(
+                "search-broad",
+                "search-broad-v1",
+                SkillDefinition.Type.PROMPT,
+                "宽泛探索时优先使用 search_direct，保留 Direct Search 的原始排序与降级语义。",
+                "宽泛搜索能力",
+                Set.of(SearchDirectTool.NAME),
+                Set.of("search-broad-tools"),
+                true);
+        SkillDefinition precise = new SkillDefinition(
+                "search-precise",
+                "search-precise-v1",
+                SkillDefinition.Type.PROMPT,
+                "存在明确标签或结构化约束时使用 search_filtered，不得编造未提供的约束。",
+                "结构化精确搜索能力",
+                Set.of(SearchFilteredTool.NAME),
+                Set.of("search-precise-tools"),
+                true);
+        return CapabilityCatalog.of(
+                "seekflux-search-capabilities-v1",
+                List.of(broad, precise),
+                List.of(
+                        new ToolGroupDefinition(
+                                "search-broad-tools", "search-broad-tools-v1",
+                                "宽泛召回工具", Set.of(SearchDirectTool.NAME), false),
+                        new ToolGroupDefinition(
+                                "search-precise-tools", "search-precise-tools-v1",
+                                "结构化过滤工具", Set.of(SearchFilteredTool.NAME), false),
+                        new ToolGroupDefinition(
+                                "capability-control", "capability-control-v1",
+                                "只影响下一模型轮的能力切换控制工具",
+                                Set.of(SwitchToolGroupsTool.NAME), true)),
+                Set.of("search-broad-tools", "search-precise-tools"));
+    }
+
+    @Bean
+    CapabilityResolver agentCapabilityResolver(
+            CapabilityCatalog agentCapabilityCatalog,
+            AgentToolRegistry agentToolRegistry,
+            MeterRegistry meterRegistry,
+            Clock agentClock) {
+        agentCapabilityCatalog.validateAvailableTools(agentToolRegistry.names());
+        return new CapabilityResolver(
+                agentCapabilityCatalog,
+                new MicrometerCapabilityEventRecorder(meterRegistry),
+                agentClock);
     }
 
     @Bean
@@ -333,10 +395,11 @@ class AgentRuntimeConfiguration {
             AgentCallGuard agentCallGuard,
             ToolExecutionPolicy toolExecutionPolicy,
             ToolExecutionObserver toolExecutionObserver,
+            CapabilityResolver agentCapabilityResolver,
             Clock agentClock) {
         return new AgentRuntime(
                 tools, toolExecutor, executor, recorder, agentClock, agentCallGuard,
-                toolExecutionPolicy, toolExecutionObserver);
+                toolExecutionPolicy, toolExecutionObserver, agentCapabilityResolver);
     }
 
     @Bean
@@ -379,6 +442,7 @@ class AgentRuntimeConfiguration {
             @Value("${seekflux.agent.cancel.poll-interval-ms:100}") long cancelPollMillis,
             @Value("${seekflux.agent.shutdown-grace-ms:5000}") long shutdownGraceMillis,
             @Value("${seekflux.agent.steer.queue-max-depth:32}") int steerQueueMaxDepth,
+            CapabilityResolver agentCapabilityResolver,
             Clock agentClock) {
         return new SessionExecutor(
                 authorityStore,
@@ -391,7 +455,8 @@ class AgentRuntimeConfiguration {
                 Duration.ofMillis(shutdownGraceMillis),
                 agentRecoveryStore,
                 io.seekflux.platform.agentruntime.domain.service.recovery.RecoveryFaultInjector.NONE,
-                new SteerQueuePolicy(steerQueueMaxDepth));
+                new SteerQueuePolicy(steerQueueMaxDepth),
+                agentCapabilityResolver);
     }
 
     @Bean(name = "agentSessionLoadFeatureNode")
@@ -409,6 +474,11 @@ class AgentRuntimeConfiguration {
         return new BuiltInFeatureNodes.ParamInit();
     }
 
+    @Bean(name = "agentCapabilityResolveFeatureNode")
+    FeatureNode agentCapabilityResolveFeatureNode(CapabilityResolver agentCapabilityResolver) {
+        return new BuiltInFeatureNodes.CapabilityResolve(agentCapabilityResolver);
+    }
+
     @Bean(name = "agentResumeEvalFeatureNode")
     FeatureNode agentResumeEvalFeatureNode() {
         return new BuiltInFeatureNodes.ResumeEval();
@@ -418,9 +488,11 @@ class AgentRuntimeConfiguration {
     FeaturePipeline agentFeaturePipeline(
             @Qualifier("agentSessionLoadFeatureNode") FeatureNode sessionLoad,
             @Qualifier("agentResolveFeatureNode") FeatureNode agentResolve,
+            @Qualifier("agentCapabilityResolveFeatureNode") FeatureNode capabilityResolve,
             @Qualifier("agentParamInitFeatureNode") FeatureNode paramInit,
             @Qualifier("agentResumeEvalFeatureNode") FeatureNode resumeEval) {
-        return new DefaultFeaturePipeline(List.of(sessionLoad, agentResolve, paramInit, resumeEval));
+        return new DefaultFeaturePipeline(List.of(
+                sessionLoad, agentResolve, capabilityResolve, paramInit, resumeEval));
     }
 
     @Bean
@@ -618,7 +690,11 @@ class AgentRuntimeConfiguration {
                 "default-react-loop-v1",
                 promptVersion,
                 decisionProviderVersion,
-                Set.of(SearchDirectTool.NAME, SearchFilteredTool.NAME),
+                Set.of(
+                        SearchDirectTool.NAME,
+                        SearchFilteredTool.NAME,
+                        SwitchToolGroupsTool.NAME),
+                Set.of("search-broad", "search-precise"),
                 maxSteps,
                 2,
                 Duration.ofMillis(timeoutMillis),

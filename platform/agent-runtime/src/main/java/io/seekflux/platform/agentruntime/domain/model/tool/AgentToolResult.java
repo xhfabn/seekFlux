@@ -1,7 +1,9 @@
 package io.seekflux.platform.agentruntime.domain.model.tool;
 
 import java.util.Map;
+import java.util.Set;
 import io.seekflux.platform.agentruntime.domain.model.wait.WaitRequest;
+import io.seekflux.platform.agentruntime.domain.model.capability.ToolGroupSwitch;
 
 public record AgentToolResult(
         boolean success,
@@ -9,7 +11,8 @@ public record AgentToolResult(
         String errorCode,
         String linkedTraceId,
         Map<String, Object> externalReceipt,
-        WaitRequest waitRequest) {
+        WaitRequest waitRequest,
+        ToolGroupSwitch toolGroupSwitch) {
 
     public AgentToolResult {
         output = output == null ? Map.of() : Map.copyOf(output);
@@ -17,6 +20,9 @@ public record AgentToolResult(
         if (waitRequest != null && (success || errorCode != null)) {
             throw new IllegalArgumentException(
                     "a waiting Tool result is neither successful nor failed");
+        }
+        if (toolGroupSwitch != null && !success) {
+            throw new IllegalArgumentException("only a successful Tool result can switch ToolGroups");
         }
         if (success && errorCode != null) {
             throw new IllegalArgumentException("a successful tool result cannot contain an error code");
@@ -31,7 +37,7 @@ public record AgentToolResult(
             Map<String, Object> output,
             String errorCode,
             String linkedTraceId) {
-        this(success, output, errorCode, linkedTraceId, Map.of(), null);
+        this(success, output, errorCode, linkedTraceId, Map.of(), null, null);
     }
 
     public AgentToolResult(
@@ -40,32 +46,39 @@ public record AgentToolResult(
             String errorCode,
             String linkedTraceId,
             Map<String, Object> externalReceipt) {
-        this(success, output, errorCode, linkedTraceId, externalReceipt, null);
+        this(success, output, errorCode, linkedTraceId, externalReceipt, null, null);
     }
 
     public static AgentToolResult success(Map<String, Object> output, String linkedTraceId) {
-        return new AgentToolResult(true, output, null, linkedTraceId, Map.of(), null);
+        return new AgentToolResult(true, output, null, linkedTraceId, Map.of(), null, null);
     }
 
     public static AgentToolResult success(
             Map<String, Object> output,
             String linkedTraceId,
             Map<String, Object> externalReceipt) {
-        return new AgentToolResult(true, output, null, linkedTraceId, externalReceipt, null);
+        return new AgentToolResult(true, output, null, linkedTraceId, externalReceipt, null, null);
     }
 
     public static AgentToolResult failure(String errorCode) {
-        return new AgentToolResult(false, Map.of(), errorCode, null, Map.of(), null);
+        return new AgentToolResult(false, Map.of(), errorCode, null, Map.of(), null, null);
     }
 
     public static AgentToolResult failure(
             String errorCode,
             Map<String, Object> externalReceipt) {
-        return new AgentToolResult(false, Map.of(), errorCode, null, externalReceipt, null);
+        return new AgentToolResult(false, Map.of(), errorCode, null, externalReceipt, null, null);
     }
 
     public static AgentToolResult waiting(WaitRequest request) {
-        return new AgentToolResult(false, Map.of(), null, null, Map.of(), request);
+        return new AgentToolResult(false, Map.of(), null, null, Map.of(), request, null);
+    }
+
+    public static AgentToolResult switchToolGroups(
+            Map<String, Object> output, String linkedTraceId, Set<String> activeGroups) {
+        return new AgentToolResult(
+                true, output, null, linkedTraceId, Map.of(), null,
+                new ToolGroupSwitch(activeGroups));
     }
 
     public boolean waiting() {
