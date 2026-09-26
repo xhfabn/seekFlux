@@ -1,6 +1,6 @@
 # Agent Runtime 演进路线与交付记录
 
-> 文档状态：**AR-1～AR-9A 已完成**；当前没有必须继续的 Agent Runtime 阶段；**AR-8C、AR-9B 与 AR-9C 后置可选**。
+> 文档状态：**AR-1～AR-9B 中除 AR-8C 外已完成**；当前没有必须继续的 Agent Runtime 阶段；**AR-8C 与 AR-9C 后置可选**。
 >
 > 本文只记录 `platform/agent-runtime` 后续演进的实施顺序、完成门槛和交付证据。写进计划不代表已经实现；只有代码、自动化测试以及必要的真实验收或固定评测共同证明后，阶段状态才能改为“已完成”。
 
@@ -17,7 +17,7 @@
 
 - [全局学习路线](../../docs/learning/README.md)：全仓唯一的当前 Step 与总体进度入口；
 - [Agent Runtime 内核设计](../../docs/agent-runtime.md)：已经实现的 Runtime 结构与运行语义；
-- [ADR-004](../../docs/adr/ADR-004-ark-leto-inspired-agent-runtime.md)、[ADR-006](../../docs/adr/ADR-006-agent-reliability-fencing-outbox-shadow.md)、[ADR-011](../../docs/adr/ADR-011-agent-streaming-push-and-eager-tool-safety.md)、[ADR-012](../../docs/adr/ADR-012-agent-durable-wait-and-resume.md) 与 [ADR-013](../../docs/adr/ADR-013-agent-capability-snapshot-and-routing.md)：长期架构决定和 Ark-Leto 差距矩阵；
+- [ADR-004](../../docs/adr/ADR-004-ark-leto-inspired-agent-runtime.md)、[ADR-006](../../docs/adr/ADR-006-agent-reliability-fencing-outbox-shadow.md)、[ADR-011](../../docs/adr/ADR-011-agent-streaming-push-and-eager-tool-safety.md)、[ADR-012](../../docs/adr/ADR-012-agent-durable-wait-and-resume.md)、[ADR-013](../../docs/adr/ADR-013-agent-capability-snapshot-and-routing.md) 与 [ADR-014](../../docs/adr/ADR-014-mcp-tool-source-and-trust-boundary.md)：长期架构决定和 Ark-Leto 差距矩阵；
 - [Ark-Leto 框架内核与 Agentspark 主链路原理详解](<../../Ark-Leto 框架内核 与 Agentspark 主链路 原理详解.md>)：目标能力的参考材料，不是 SeekFlux 当前实现证明。
 
 状态只使用：`已完成`、`下一步`、`未开始`、`后置可选`。阶段文档或接口草图不能作为完成证据。
@@ -48,7 +48,9 @@
   仅有通用协调协议，真实 launcher、持久父子关系、取消级联和 Fork promotion 尚未实现；
 - 类型化 Skill/ToolGroup Catalog、Session 持久激活、请求级 ephemeral shadow、冻结
   CapabilitySnapshot、下一模型轮切组以及 Context/Trace/Push/Metrics 已实现；
-- MCP、Chained 和 Graph 尚未实现。
+- MCP Streamable HTTP Tool 来源、受限 Schema、本地策略、连接隔离、取消、版本冻结和写操作
+  UNKNOWN 对账边界已实现；Resources/Prompts/Sampling 不在当前范围；
+- Chained 和 Graph 尚未实现。
 
 ## 3. 实施顺序与依赖
 
@@ -82,7 +84,7 @@ flowchart TD
 | AR-8B | HITL、Async、Waitpoint 与超时/取消竞态 | 已完成 | 大 | AR-4、AR-8A |
 | AR-8C | Handoff、子 Agent 与 Fork promotion | 后置可选 | 大 | AR-8A、真实产品用例 |
 | AR-9A | Skill/ToolGroup 与版本路由 | 已完成 | 大 | AR-2/3/6/7 |
-| AR-9B | MCP Tool 来源与连接治理 | 后置可选 | 大 | AR-4、AR-9A、真实 MCP 用例 |
+| AR-9B | MCP Tool 来源与连接治理 | 已完成 | 大 | AR-4、AR-9A、真实 MCP 用例 |
 | AR-9C | Chained 与 Graph 引擎 | 后置可选 | 多个独立大阶段 | AR-3/4/7，真实编排用例 |
 
 这里的工作量只表示相对复杂度，不是工期承诺。表格中的“主要前置”表示技术依赖，不等于实际交付顺序：AR-5 技术上只依赖 AR-1/AR-2，但仍可按产品优先级排在 AR-4 之后。AR-8 和 AR-9 必须继续拆成独立子阶段，不能用一个“大功能完成”状态掩盖其中的缺口。
@@ -349,12 +351,12 @@ Checkpoint 重建。长期取舍见 [ADR-012](../../docs/adr/ADR-012-agent-durab
 | 子阶段 | 交付目标 | 状态 | 启动条件 |
 | --- | --- | --- | --- |
 | AR-9A | Skill/ToolGroup/版本路由 | 已完成 | 一个 Agent 的 Tool 数量或指令集已需按任务动态缩减 |
-| AR-9B | MCP Tool 来源与连接治理 | 后置可选 | 出现明确 MCP server、责任人、凭据方式和 Tool 安全分类 |
+| AR-9B | MCP Tool 来源与连接治理 | 已完成 | 已选择 Streamable HTTP Tool 子集、环境凭据引用和本地安全分类 |
 | AR-9C1 | Chained Loop | 后置可选 | 出现可证明单 ReAct Loop 不足的 plan → execute → summarize 用例 |
 | AR-9C2 | Graph 内存执行引擎 | 后置可选 | 出现需拓扑、分支/聚合和受控并行的非会话工作流 |
 | AR-9C3 | Graph 持久恢复与副作用安全 | 后置可选 | AR-9C2 已有真实使用，且业务需要跨进程恢复 |
 
-AR-9A 已完成；AR-9B/9C 只保留扩展点，不提前引入 MCP SDK、Graph DSL 或空实现。
+AR-9A/9B 已完成；AR-9C 只保留扩展计划，不提前引入 Graph DSL 或空引擎。
 
 #### AR-9A Skill / ToolGroup / 版本路由（已完成）
 
@@ -404,7 +406,7 @@ Agent 三组 ToolGroup 装配实现。冻结快照完整进入 Checkpoint/Trace�
 投影和被提升请求重新解析；旧 Checkpoint 走 legacy 快照兼容。Catalog/Tool Schema 缺版本时恢复
 失败关闭，不会套用新定义。长期边界与配置制品责任见 [ADR-013](../../docs/adr/ADR-013-agent-capability-snapshot-and-routing.md)。
 
-#### AR-9B MCP（后置可选）
+#### AR-9B MCP（已完成）
 
 目标：将 MCP server 发现的能力适配为普通 `AgentTool`，让 Loop 无感知，但不信任远端名称、Schema、副作用声明或输出。
 
@@ -418,6 +420,15 @@ Agent 三组 ToolGroup 装配实现。冻结快照完整进入 Checkpoint/Trace�
 6. **AR-9B6 可观测与运维**：健康、发现版本、在途请求、重连、schema rejection、policy denial 和调用结果可查；日志脱敏，Metrics 仅使用受控 serverId/tool/outcome，远端错误文本不作标签。
 
 AR-9B 完成门槛：一个真实 MCP server 和一个可控 fake server 共同验证发现、调用、取消、断线、重连、批量注销、Schema 热更、命名冲突、租户隔离、恶意超大输出和未知写结果；MCP 连通或能列出 Tool 不构成完成。
+
+完成说明：`StreamableHttpMcpClient` 已实现 MCP `2025-11-25` Tool 子集，协议级本机 server
+覆盖 initialize/session、SSE 发现、JSON 调用、取消通知和超大响应中止；受控 `McpClient` fake
+覆盖断线/懒重连、按 source 批量注销、Schema 热更、命名冲突、tenant/user allowlist、每 server
+bulkhead、熔断及无 status Tool 的写结果 UNKNOWN。`McpSchemaTranslator`、`McpProxyTool` 和
+`McpConnectionManager` 分别固定远端 Schema 信任边界、本地 effect/审批/对账规则和连接故障域；
+CapabilitySnapshot v2 与 RunDefinition 冻结实际注册集及 config/policy/schema hash，v1 快照继续兼容。
+默认配置关闭 MCP；每个第三方业务 server 的 effect、凭据、审批和对账仍须单独配置验收。长期决策见
+[ADR-014](../../docs/adr/ADR-014-mcp-tool-source-and-trust-boundary.md)。
 
 #### AR-9C Chained / Graph（后置可选）
 
@@ -611,6 +622,35 @@ AR-9 的完成门槛不能共用：AR-9A、9B、9C1、9C2、9C3 各自只在其�
 - 剩余边界：Catalog 当前由宿主静态装配，没有在线配置编辑器、分布式发布或旧版本制品仓库；跨部署恢复旧 execution 时，运维必须保留其 Catalog，否则按设计失败关闭。ephemeral instruction 只允许有界、可序列化内容，调用方不得携带凭据。通用 API 记录已认证 actor，但租户授权仍由宿主接入层负责。MCP Tool 来源、真实 Handoff/子 Agent/Fork、Chained/Graph 均未因本阶段自动完成。
 - 下一步：Agent Runtime 当前无必做阶段；仅在出现明确产品用例与责任边界后，从 AR-8C、AR-9B 或 AR-9C 中选择一个独立立项，不能把它们合并宣称完成。
 - 关联文档/ADR/契约：[`docs/agent-runtime.md`](../../docs/agent-runtime.md)、[ADR-013](../../docs/adr/ADR-013-agent-capability-snapshot-and-routing.md)、[`agent-capability-lifecycle-v1.schema.json`](../../contracts/events/agent-capability-lifecycle-v1.schema.json)、[`contracts/openapi/seekflux-v1.yaml`](../../contracts/openapi/seekflux-v1.yaml)、`V15__agent_capability_activations.sql`。
+
+### 2026-09-19：完成 AR-9B MCP Tool 来源与连接治理
+
+- 阶段：AR-9B（已完成）；AR-8C、AR-9C 保持后置可选，当前没有必须继续的 Agent Runtime 阶段。
+- 本轮范围：交付 MCP `2025-11-25` Streamable HTTP Tool 子集、server 配置/凭据引用、发现与
+  namespaced source 注册、受限 Schema、本地 effect/审批/身份策略、调用隔离、取消、版本冻结、
+  写 Tool 对账以及健康和低基数指标。
+- 实现事实与关键入口：`McpConnectionManager` 按 server 单飞发现、懒重连、bulkhead、熔断并原子
+  replace/unregister `mcp:{serverId}`；`StreamableHttpMcpClient` 支持 Session、JSON/SSE 响应、分页
+  list、call、cancel notification 和读取上限；`McpSchemaTranslator` 拒绝超深/超大/非白名单 Schema；
+  `McpProxyTool` 执行 tenant/user allowlist 和本地审批，mutating Tool 实现 AR-4 reconciler。
+  `AgentToolRegistry` 支持 source 热更和有限旧版本，CapabilitySnapshot v2 冻结 execution 开始时实际
+  注册集，RunDefinition 冻结 config/policy/remote/reconciliation Schema hash；v1 快照继续按旧指纹恢复。
+- 失败/取消/恢复语义：连接失败只摘除对应 source；跨来源冲突不覆盖；旧 execution 面对新 Schema
+  返回 `MCP_TOOL_VERSION_UNAVAILABLE`；请求超时/5xx 触发断线与有界熔断，饱和快速拒绝；本地取消
+  是权威终态并尽力通知 peer；凭据值和远端错误文本不进入事实或 Metrics；未知写结果绝不重放，
+  没有通过 Schema 校验的 status Tool 时持续 UNKNOWN。
+- 验证命令与结果：`mvn -q test` 全仓 67 个测试报告、224 个测试全部通过，无失败、错误或跳过；
+  其中 Agent Runtime 107 个、Agent Orchestration Context 44 个、Agent Server 8 个。协议级本机
+  Streamable HTTP server 覆盖 initialize/initialized、Session header、SSE `tools/list`、JSON
+  `tools/call`、取消通知和超大 body；受控 fake 覆盖断线/重连、批量注销、Schema 热更、名称冲突、
+  身份隔离、bulkhead、熔断和 UNKNOWN 写结果。JSON/YAML 解析、Markdown 链接和
+  `git diff --check` 通过；本阶段无新持久表，迁移仍为 V1～V15。
+- 剩余边界：当前只支持 Tool 子集和静态启动配置，没有 Resources/Prompts/Sampling/Elicitation、OAuth
+  协商、server push、在线配置发布或管理端强制 refresh API。默认配置关闭 MCP；接入任一第三方业务
+  server 仍需逐 Tool 确认责任人、effect、allowlist、审批和可靠幂等/状态查询，协议通过不替代业务验收。
+- 下一步：Agent Runtime 当前无必做阶段；仅在真实父子执行或图编排用例出现后，独立启动 AR-8C
+  或 AR-9C，不能把 MCP 完成状态外推为它们已完成。
+- 关联文档/ADR/契约：[`docs/agent-runtime.md`](../../docs/agent-runtime.md)、[ADR-014](../../docs/adr/ADR-014-mcp-tool-source-and-trust-boundary.md)、[`agent-mcp-lifecycle-v1.schema.json`](../../contracts/events/agent-mcp-lifecycle-v1.schema.json)、[`contracts/openapi/seekflux-v1.yaml`](../../contracts/openapi/seekflux-v1.yaml)。
 ---
 
 维护原则：本文会随着代码事实持续调整阶段内部设计，但不会通过改文档提前宣布能力完成。历史交付记录保留当时证据；若后续设计发生变化，新增记录说明原因并链接对应 ADR，而不是静默改写历史。

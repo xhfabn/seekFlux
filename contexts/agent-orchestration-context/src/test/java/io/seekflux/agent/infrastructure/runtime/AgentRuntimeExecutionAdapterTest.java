@@ -23,6 +23,7 @@ import io.seekflux.platform.agentruntime.application.spi.capability.llm.LlmClien
 import io.seekflux.platform.agentruntime.application.api.Router;
 import io.seekflux.platform.agentruntime.application.api.model.RouterResult;
 import io.seekflux.platform.agentruntime.application.command.AgentIngressMode;
+import io.seekflux.platform.agentruntime.application.command.FeatureRequest;
 import io.seekflux.search.port.in.SearchQuery;
 import io.seekflux.search.port.in.SearchResultPage;
 import io.seekflux.search.port.in.SearchTrace;
@@ -33,8 +34,42 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 class AgentRuntimeExecutionAdapterTest {
+
+    @Test
+    void addsConfiguredMcpToolsToTheRequestRestrictionBeforeCapabilityResolution() {
+        Router router = mock(Router.class);
+        SearchUseCase directSearch = mock(SearchUseCase.class);
+        RedisAgentSessionProjection projection = mock(RedisAgentSessionProjection.class);
+        LlmClient llm = mock(LlmClient.class);
+        AgentDefinition definition = new AgentDefinition(
+                "search-assistant", "v1", "loop-v1", "prompt-v1", "provider-v1",
+                Set.of("search_direct", "docs__lookup"), 3, 1,
+                Duration.ofSeconds(2), true);
+        when(router.execute(any(), any())).thenReturn(RouterResult.queued(1, false));
+        AgentRuntimeExecutionAdapter adapter = new AgentRuntimeExecutionAdapter(
+                router, Map.of(definition.id(), definition), Map.of(definition.id(), llm),
+                directSearch, projection,
+                io.seekflux.agent.infrastructure.observability.AgentExecutionMetrics.NOOP,
+                Set.of("docs__lookup"));
+        SearchGoal goal = new SearchGoal(
+                "杭州亲子露营", QueryConstraintSet.firstPage(5, List.of()));
+
+        adapter.execute(new AgentExecutionRequest(
+                "request-1", "session-1", "turn-1", definition.id(), "杭州亲子露营",
+                goal, new SearchPlan(
+                        "杭州亲子露营", "杭州 亲子 露营", List.of("杭州"), true,
+                        List.of("MULTI_SLOT_QUERY")),
+                "COMPLEX_QUERY", List.of("search_direct"),
+                new SearchGoalChange(0, goal.toState()), true, AgentIngressMode.STEER));
+
+        ArgumentCaptor<FeatureRequest> captured = ArgumentCaptor.forClass(FeatureRequest.class);
+        verify(router).execute(captured.capture(), any());
+        assertThat(captured.getValue().runRequest().capabilities().requestedTools())
+                .containsExactlyInAnyOrder("search_direct", "docs__lookup");
+    }
 
     @Test
     void mapsAnAcceptedSteerToAQueuedResponseWithoutProjectingATerminalResult() {

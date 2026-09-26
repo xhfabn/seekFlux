@@ -47,6 +47,7 @@ class AgentRuntimeCapabilityConfigurationTest {
                 Map.of(
                         "search-assistant", decisionClient,
                         "search-precise", decisionClient),
+                new AgentMcpProperties(false, java.util.List.of()),
                 2_500);
 
         var snapshot = new CapabilityResolver(catalog).resolve(

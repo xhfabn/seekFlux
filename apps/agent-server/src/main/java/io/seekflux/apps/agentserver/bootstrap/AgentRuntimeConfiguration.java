@@ -17,6 +17,12 @@ import io.seekflux.agent.infrastructure.observability.MicrometerAgentExecutionMe
 import io.seekflux.agent.infrastructure.observability.MicrometerToolExecutionObserver;
 import io.seekflux.agent.infrastructure.observability.MicrometerContextEventRecorder;
 import io.seekflux.agent.infrastructure.observability.MicrometerCapabilityEventRecorder;
+import io.seekflux.agent.infrastructure.observability.MicrometerMcpEventRecorder;
+import io.seekflux.agent.infrastructure.mcp.McpConnectionManager;
+import io.seekflux.agent.infrastructure.mcp.McpCredentialProvider;
+import io.seekflux.agent.infrastructure.mcp.McpProxyTool;
+import io.seekflux.agent.infrastructure.mcp.McpSchemaTranslator;
+import io.seekflux.agent.infrastructure.mcp.StreamableHttpMcpClientFactory;
 import io.seekflux.agent.infrastructure.event.RedisPushEventRelay;
 import io.seekflux.agent.infrastructure.projection.RedisAgentSessionProjection;
 import io.seekflux.agent.infrastructure.runtime.AgentRuntimeExecutionAdapter;
@@ -93,6 +99,9 @@ import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.boot.actuate.health.Health;
+import org.springframework.boot.actuate.health.HealthIndicator;
 import org.springframework.scheduling.annotation.EnableScheduling;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.connection.RedisConnectionFactory;
@@ -100,6 +109,7 @@ import io.micrometer.core.instrument.MeterRegistry;
 
 @Configuration
 @EnableScheduling
+@EnableConfigurationProperties(AgentMcpProperties.class)
 class AgentRuntimeConfiguration {
 
     @Bean
@@ -265,7 +275,57 @@ class AgentRuntimeConfiguration {
 
     @Bean
     AgentToolRegistrationPolicy agentToolRegistrationPolicy() {
-        return AgentToolRegistrationPolicy.SAFE_ONLY;
+        return tool -> tool.effect() != AgentTool.Effect.MUTATING
+                || tool instanceof McpProxyTool;
+    }
+
+    @Bean
+    McpCredentialProvider agentMcpCredentialProvider() {
+        return credentialRef -> {
+            if (credentialRef == null || credentialRef.isBlank()) {
+                return Map.of();
+            }
+            if (!credentialRef.startsWith("env:")) {
+                throw new IllegalArgumentException("unsupported MCP credential reference");
+            }
+            String environmentName = credentialRef.substring("env:".length());
+            if (!environmentName.matches("[A-Z][A-Z0-9_]{0,127}")) {
+                throw new IllegalArgumentException("invalid MCP credential environment reference");
+            }
+            String secret = System.getenv(environmentName);
+            if (secret == null || secret.isBlank()) {
+                throw new IllegalStateException("configured MCP credential is unavailable");
+            }
+            return Map.of("Authorization", "Bearer " + secret);
+        };
+    }
+
+    @Bean(initMethod = "start", destroyMethod = "close")
+    McpConnectionManager agentMcpConnectionManager(
+            AgentMcpProperties properties,
+            AgentToolRegistry registry,
+            ObjectMapper objectMapper,
+            McpCredentialProvider credentials,
+            MeterRegistry meterRegistry,
+            Clock agentClock) {
+        return new McpConnectionManager(
+                properties.runtimeConfigs(),
+                registry,
+                new StreamableHttpMcpClientFactory(objectMapper, credentials),
+                new McpSchemaTranslator(objectMapper),
+                new MicrometerMcpEventRecorder(meterRegistry),
+                agentClock);
+    }
+
+    @Bean
+    HealthIndicator agentMcpHealthIndicator(McpConnectionManager connections) {
+        return () -> {
+            Map<String, McpConnectionManager.ServerHealth> servers = connections.health();
+            boolean degraded = servers.values().stream().anyMatch(server ->
+                    server.status() != McpConnectionManager.Status.CONNECTED);
+            Health.Builder health = degraded ? Health.status("DEGRADED") : Health.up();
+            return health.withDetail("servers", servers).build();
+        };
     }
 
     @Bean
@@ -330,7 +390,8 @@ class AgentRuntimeConfiguration {
         return new CapabilityResolver(
                 agentCapabilityCatalog,
                 new MicrometerCapabilityEventRecorder(meterRegistry),
-                agentClock);
+                agentClock,
+                agentToolRegistry::names);
     }
 
     @Bean
@@ -550,6 +611,7 @@ class AgentRuntimeConfiguration {
     @Bean(name = "seekFluxAgentDefinitions")
     Map<String, AgentDefinition> seekFluxAgentDefinitions(
             @Qualifier("seekFluxAgentLlmClients") Map<String, LlmClient> llmClients,
+            AgentMcpProperties mcpProperties,
             @Value("${seekflux.agent.timeout-ms:2500}") long timeoutMillis) {
         AgentDefinition assistant = definition(
                 "search-assistant",
@@ -557,14 +619,16 @@ class AgentRuntimeConfiguration {
                 "search-agent-prompt-v2",
                 llmClients.get("search-assistant").version(),
                 4,
-                timeoutMillis);
+                timeoutMillis,
+                mcpProperties.configuredToolNames());
         AgentDefinition precise = definition(
                 "search-precise",
                 "search-precise-v2",
                 "search-precise-prompt-v2",
                 llmClients.get("search-precise").version(),
                 3,
-                timeoutMillis);
+                timeoutMillis,
+                mcpProperties.configuredToolNames());
         return Map.of(assistant.id(), assistant, precise.id(), precise);
     }
 
@@ -640,14 +704,16 @@ class AgentRuntimeConfiguration {
             @Qualifier("seekFluxAgentLlmClients") Map<String, LlmClient> llmClients,
             SearchUseCase directSearchUseCase,
             RedisAgentSessionProjection projection,
-            AgentExecutionMetrics agentExecutionMetrics) {
+            AgentExecutionMetrics agentExecutionMetrics,
+            AgentMcpProperties mcpProperties) {
         return new AgentRuntimeExecutionAdapter(
                 agentRouter,
                 definitions,
                 llmClients,
                 directSearchUseCase,
                 projection,
-                agentExecutionMetrics);
+                agentExecutionMetrics,
+                mcpProperties.configuredToolNames());
     }
 
     @Bean
@@ -683,17 +749,20 @@ class AgentRuntimeConfiguration {
             String promptVersion,
             String decisionProviderVersion,
             int maxSteps,
-            long timeoutMillis) {
+            long timeoutMillis,
+            Set<String> additionalTools) {
+        Set<String> allowedTools = new java.util.LinkedHashSet<>(Set.of(
+                SearchDirectTool.NAME,
+                SearchFilteredTool.NAME,
+                SwitchToolGroupsTool.NAME));
+        allowedTools.addAll(additionalTools == null ? Set.of() : additionalTools);
         return new AgentDefinition(
                 id,
                 version,
                 "default-react-loop-v1",
                 promptVersion,
                 decisionProviderVersion,
-                Set.of(
-                        SearchDirectTool.NAME,
-                        SearchFilteredTool.NAME,
-                        SwitchToolGroupsTool.NAME),
+                Set.copyOf(allowedTools),
                 Set.of("search-broad", "search-precise"),
                 maxSteps,
                 2,

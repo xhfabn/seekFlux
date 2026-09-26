@@ -19,18 +19,28 @@ public final class CapabilityResolver {
     private final CapabilityCatalog catalog;
     private final CapabilityEventRecorder events;
     private final Clock clock;
+    private final java.util.function.Supplier<Set<String>> registeredTools;
 
     public CapabilityResolver(CapabilityCatalog catalog) {
-        this(catalog, CapabilityEventRecorder.NOOP, Clock.systemUTC());
+        this(catalog, CapabilityEventRecorder.NOOP, Clock.systemUTC(), () -> null);
     }
 
     public CapabilityResolver(
             CapabilityCatalog catalog,
             CapabilityEventRecorder events,
             Clock clock) {
+        this(catalog, events, clock, () -> null);
+    }
+
+    public CapabilityResolver(
+            CapabilityCatalog catalog,
+            CapabilityEventRecorder events,
+            Clock clock,
+            java.util.function.Supplier<Set<String>> registeredTools) {
         this.catalog = catalog == null ? CapabilityCatalog.EMPTY : catalog;
         this.events = events == null ? CapabilityEventRecorder.NOOP : events;
         this.clock = clock == null ? Clock.systemUTC() : clock;
+        this.registeredTools = registeredTools == null ? () -> null : registeredTools;
     }
 
     public static CapabilityResolver legacy() {
@@ -125,6 +135,12 @@ public final class CapabilityResolver {
                 && !definition.allowedTools().containsAll(selection.requestedTools())) {
             throw new IllegalArgumentException("request contains a Tool outside AgentDef permissions");
         }
+        Set<String> available = registeredTools.get();
+        Set<String> frozenRegistered = available == null
+                ? definition.allowedTools()
+                : definition.allowedTools().stream()
+                        .filter(available::contains)
+                        .collect(java.util.stream.Collectors.toUnmodifiableSet());
         return CapabilitySnapshot.create(
                 catalog,
                 visible,
@@ -133,7 +149,8 @@ public final class CapabilityResolver {
                 activeGroups,
                 ephemeralIds,
                 selection.toolRestrictionEnabled(),
-                selection.requestedTools());
+                selection.requestedTools(),
+                frozenRegistered);
     }
 
     public void recordToolGroupSwitch(String agentId, CapabilitySnapshot snapshot) {

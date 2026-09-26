@@ -18,6 +18,7 @@ public record AgentTraceView(
         Map<String, String> toolGroupVersions,
         List<String> activeSkills,
         List<String> activeToolGroups,
+        List<String> registeredTools,
         List<String> effectiveTools,
         Instant startedAt,
         long tookMillis,
@@ -40,6 +41,7 @@ public record AgentTraceView(
         toolGroupVersions = toolGroupVersions == null ? Map.of() : Map.copyOf(toolGroupVersions);
         activeSkills = activeSkills == null ? List.of() : List.copyOf(activeSkills);
         activeToolGroups = activeToolGroups == null ? List.of() : List.copyOf(activeToolGroups);
+        registeredTools = registeredTools == null ? List.of() : List.copyOf(registeredTools);
         effectiveTools = effectiveTools == null ? List.of() : List.copyOf(effectiveTools);
         steps = steps == null ? List.of() : List.copyOf(steps);
     }

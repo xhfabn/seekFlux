@@ -74,7 +74,8 @@ class DefaultContextEngineTest {
                 Set.of("search_direct", "search_filtered"), Set.of("active", "lazy"),
                 3, 2, Duration.ofSeconds(1), true);
         AgentRunRequest request = new AgentRunRequest(
-                "request-1", "session-1", "turn-1", "query", Map.of());
+                "request-1", "session-1", "turn-1", "query",
+                Map.of("page", 1, "tenantId", "tenant-secret", "userId", "user-secret"));
         var snapshot = new CapabilityResolver(catalog).resolve(
                 definition, CapabilityActivationState.EMPTY, CapabilityRequest.NONE);
         RuntimeContext runtime = new RuntimeContext(definition, request, null, Map.of(), snapshot);
@@ -94,6 +95,11 @@ class DefaultContextEngineTest {
                 .anyMatch(message -> message.content().contains("active instruction")));
         assertTrue(assembled.messages().stream()
                 .anyMatch(message -> message.content().contains("lazy summary")));
+        assertTrue(assembled.messages().stream()
+                .anyMatch(message -> message.content().contains("page=1")));
+        assertFalse(assembled.messages().stream()
+                .anyMatch(message -> message.content().contains("tenant-secret")
+                        || message.content().contains("user-secret")));
         assertEquals(List.of("search_direct"),
                 assembled.tools().stream().map(tool -> tool.name()).toList());
     }

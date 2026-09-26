@@ -25,6 +25,7 @@ import io.seekflux.platform.agentruntime.application.api.model.RouterResult;
 import io.seekflux.search.port.in.SearchResultPage;
 import io.seekflux.search.port.in.SearchUseCase;
 import java.util.Map;
+import java.util.Set;
 
 public final class AgentRuntimeExecutionAdapter implements AgentExecutionPort {
 
@@ -34,6 +35,7 @@ public final class AgentRuntimeExecutionAdapter implements AgentExecutionPort {
     private final SearchUseCase directSearch;
     private final RedisAgentSessionProjection projection;
     private final AgentExecutionMetrics metrics;
+    private final Set<String> additionalExposedTools;
 
     public AgentRuntimeExecutionAdapter(
             Router router,
@@ -41,7 +43,8 @@ public final class AgentRuntimeExecutionAdapter implements AgentExecutionPort {
             Map<String, LlmClient> llmClients,
             SearchUseCase directSearch,
             RedisAgentSessionProjection projection) {
-        this(router, definitions, llmClients, directSearch, projection, AgentExecutionMetrics.NOOP);
+        this(router, definitions, llmClients, directSearch, projection,
+                AgentExecutionMetrics.NOOP, Set.of());
     }
 
     public AgentRuntimeExecutionAdapter(
@@ -51,12 +54,25 @@ public final class AgentRuntimeExecutionAdapter implements AgentExecutionPort {
             SearchUseCase directSearch,
             RedisAgentSessionProjection projection,
             AgentExecutionMetrics metrics) {
+        this(router, definitions, llmClients, directSearch, projection, metrics, Set.of());
+    }
+
+    public AgentRuntimeExecutionAdapter(
+            Router router,
+            Map<String, AgentDefinition> definitions,
+            Map<String, LlmClient> llmClients,
+            SearchUseCase directSearch,
+            RedisAgentSessionProjection projection,
+            AgentExecutionMetrics metrics,
+            Set<String> additionalExposedTools) {
         this.router = router;
         this.definitions = Map.copyOf(definitions);
         this.llmClients = Map.copyOf(llmClients);
         this.directSearch = directSearch;
         this.projection = projection;
         this.metrics = metrics;
+        this.additionalExposedTools = additionalExposedTools == null
+                ? Set.of() : Set.copyOf(additionalExposedTools);
     }
 
     @Override
@@ -101,6 +117,16 @@ public final class AgentRuntimeExecutionAdapter implements AgentExecutionPort {
         attributes.put("rewrittenQuery", request.plan().rewrittenQuery());
         attributes.put("derivedRequiredTags", request.plan().derivedRequiredTags());
         attributes.put("routeReason", request.routeReason());
+        if (request.tenantId() != null) {
+            attributes.put("tenantId", request.tenantId());
+        }
+        if (request.userId() != null) {
+            attributes.put("userId", request.userId());
+        }
+        Set<String> exposedTools = new java.util.LinkedHashSet<>(request.exposedTools());
+        additionalExposedTools.stream()
+                .filter(definition.allowedTools()::contains)
+                .forEach(exposedTools::add);
         AgentRunRequest runRequest = new AgentRunRequest(
                 request.requestId(),
                 request.sessionId(),
@@ -111,7 +137,7 @@ public final class AgentRuntimeExecutionAdapter implements AgentExecutionPort {
                         request.goalChange().baseVersion(),
                         request.goalChange().state()),
                 request.ingressMode(),
-                CapabilityRequest.restrictTools(request.exposedTools()));
+                CapabilityRequest.restrictTools(exposedTools));
         RouterResult routed = router.execute(
                 new FeatureRequest(definition, runRequest, llmClient),
                 publisher);
@@ -240,6 +266,7 @@ public final class AgentRuntimeExecutionAdapter implements AgentExecutionPort {
                 definition.capabilities().toolGroupVersions(),
                 definition.capabilities().activeSkills().stream().sorted().toList(),
                 definition.capabilities().activeToolGroups().stream().sorted().toList(),
+                definition.capabilities().registeredTools().stream().sorted().toList(),
                 definition.capabilities().effectiveTools().stream().sorted().toList(),
                 trace.startedAt(),
                 trace.tookMillis(),

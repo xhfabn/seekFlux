@@ -50,6 +50,12 @@ Step 6 的 Runtime 能处理复杂 Query 和多轮约束，但 Redis 租约本�
 
 因此，“阶段 7 完成”只表示多实例可靠性与平台治理切片完成，不表示参考文档列举的所有可选 Agent 形态都已经实现。
 
+## 后续演进
+
+- 2026-09-18：Skill/ToolGroup 与请求级 Capability Snapshot 已按 ADR-013 落地；上表保留 ADR-006 决策时点的原始状态。
+- 2026-09-19：MCP Tool Source、协议客户端、动态注册与信任边界已按 ADR-014 落地。
+- Chained/Graph Agent 与流式 Push 中继仍未实现，分别保留为 AR-9C 与 AR-8C 后置可选项。
+
 ## 后果
 
 - 旧 owner 即使继续运行也不能污染 Session 终态或 Outbox；Redis 故障时续租失败，主链按失主处理而不是冒险提交。

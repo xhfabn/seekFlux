@@ -6,6 +6,7 @@ import io.seekflux.platform.agentruntime.domain.model.run.LlmUsage;
 import io.seekflux.platform.agentruntime.domain.model.tool.AgentToolObservation;
 import java.time.Duration;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Consumer;
 import io.seekflux.platform.agentruntime.domain.model.capability.CapabilitySnapshot;
 
@@ -18,7 +19,22 @@ public record AgentDecisionContext(
         Consumer<AgentAssistantContent> assistantContentRecorder,
         String agentRunId,
         EagerToolDispatcher eagerToolDispatcher,
-        CapabilitySnapshot capabilities) {
+        CapabilitySnapshot capabilities,
+        Map<String, String> toolSchemaVersions) {
+
+    public AgentDecisionContext(
+            AgentRunRequest request,
+            int step,
+            Duration remaining,
+            List<AgentToolObservation> observations,
+            Consumer<LlmUsage> usageRecorder,
+            Consumer<AgentAssistantContent> assistantContentRecorder,
+            String agentRunId,
+            EagerToolDispatcher eagerToolDispatcher,
+            CapabilitySnapshot capabilities) {
+        this(request, step, remaining, observations, usageRecorder, assistantContentRecorder,
+                agentRunId, eagerToolDispatcher, capabilities, Map.of());
+    }
 
     public AgentDecisionContext(
             AgentRunRequest request,
@@ -82,6 +98,7 @@ public record AgentDecisionContext(
         agentRunId = agentRunId == null ? "" : agentRunId;
         eagerToolDispatcher = eagerToolDispatcher == null
                 ? EagerToolDispatcher.DISABLED : eagerToolDispatcher;
+        toolSchemaVersions = toolSchemaVersions == null ? Map.of() : Map.copyOf(toolSchemaVersions);
     }
 
     public void recordUsage(LlmUsage usage) {

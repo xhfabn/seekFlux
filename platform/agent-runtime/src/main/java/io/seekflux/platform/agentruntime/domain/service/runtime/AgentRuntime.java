@@ -227,12 +227,16 @@ public final class AgentRuntime {
             capabilityResolver.validateRestorable(restored.definition().capabilities());
             snapshot = restored.definition();
             capabilities = snapshot.capabilities();
-            if (!tools.versionsFor(capabilities.effectiveTools())
-                    .equals(snapshot.toolSchemaVersions())) {
-                throw new IllegalStateException("checkpoint Tool Schema versions are unavailable");
+            if (!snapshot.toolSchemaVersions().keySet().containsAll(capabilities.registeredTools())) {
+                throw new IllegalStateException("checkpoint Tool Schema versions are incomplete");
+            }
+            for (Map.Entry<String, String> frozen : snapshot.toolSchemaVersions().entrySet()) {
+                tools.require(frozen.getKey(), frozen.getValue());
             }
         }
-        if (tools.containsMutating(capabilities.effectiveTools()) && !recovery.sideEffectLedgerEnabled()) {
+        if (tools.containsMutating(
+                capabilities.effectiveTools(), snapshot.toolSchemaVersions())
+                && !recovery.sideEffectLedgerEnabled()) {
             throw new IllegalStateException(
                     "MUTATING Tool requires a configured side-effect ledger");
         }
@@ -311,7 +315,8 @@ public final class AgentRuntime {
                         content -> run.recordAssistantContent(currentStep, content),
                         run.runId,
                         eager,
-                        run.capabilities());
+                        run.capabilities(),
+                        run.snapshot.toolSchemaVersions());
                 decision = invoke(
                         () -> callGuard.execute(AgentCallGuard.CallType.MODEL, () -> planner.decide(context)),
                         deadlineNanos,
@@ -382,7 +387,8 @@ public final class AgentRuntime {
                 List<PreparedToolCall> preparedCalls = new ArrayList<>();
                 for (int callIndex = 0; callIndex < calls.size(); callIndex++) {
                     preparedCalls.add(prepare(
-                            calls.get(callIndex), effectiveTools, request, step, callIndex));
+                            calls.get(callIndex), effectiveTools, run.snapshot.toolSchemaVersions(),
+                            request, step, callIndex));
                 }
                 prepared = List.copyOf(preparedCalls);
             } catch (ToolPolicyFailure policyFailure) {
@@ -599,7 +605,8 @@ public final class AgentRuntime {
                 } catch (IllegalArgumentException invalidSwitch) {
                     return finishFailure(run, definition, "TOOL_GROUP_SWITCH_INVALID", null);
                 }
-                if (tools.containsMutating(run.capabilities().effectiveTools())
+                if (tools.containsMutating(
+                        run.capabilities().effectiveTools(), run.snapshot.toolSchemaVersions())
                         && !recovery.sideEffectLedgerEnabled()) {
                     return finishFailure(
                             run, definition, "MUTATING_TOOL_LEDGER_REQUIRED", null);
@@ -1000,10 +1007,7 @@ public final class AgentRuntime {
     }
 
     private PreparedToolCall restorePrepared(ToolCallJournalEntry entry) {
-        AgentTool tool = tools.require(entry.toolName());
-        if (!tool.schema().version().equals(entry.toolSchemaVersion())) {
-            throw new IllegalStateException("checkpoint Tool schema version no longer matches");
-        }
+        AgentTool tool = tools.require(entry.toolName(), entry.toolSchemaVersion());
         if (tool.effect() != entry.effect()) {
             throw new IllegalStateException("checkpoint Tool effect no longer matches");
         }
@@ -1264,7 +1268,9 @@ public final class AgentRuntime {
                             toolToken);
                     return callGuard.execute(
                             AgentCallGuard.CallType.TOOL,
-                            () -> toolExecutor.execute(call.tool().name(), call.arguments(), context));
+                            () -> toolExecutor.execute(
+                                    call.tool().name(), call.tool().schema().version(),
+                                    call.arguments(), context));
                 });
                 pending.add(new PendingToolCall(call, started, future, null, ledger, source));
             } catch (RejectedExecutionException rejected) {
@@ -1402,13 +1408,15 @@ public final class AgentRuntime {
     private PreparedToolCall prepare(
             AgentDecision.ToolCall call,
             Set<String> effectiveTools,
+            Map<String, String> frozenSchemaVersions,
             AgentRunRequest request,
             int step,
             int callIndex) {
         if (!effectiveTools.contains(call.toolName())) {
             throw new IllegalArgumentException("tool is not exposed for this request");
         }
-        AgentTool tool = tools.require(call.toolName());
+        AgentTool tool = tools.require(
+                call.toolName(), frozenSchemaVersions.get(call.toolName()));
         Map<String, Object> arguments = call.arguments();
         boolean repaired = false;
         try {
@@ -1436,7 +1444,9 @@ public final class AgentRuntime {
                 ? policyDecision.reason() == null || policyDecision.reason().isBlank()
                         ? "Tool execution requires approval"
                         : policyDecision.reason()
-                : null;
+                : tool.approvalRequired()
+                        ? tool.approvalReason()
+                        : null;
         if (policyDecision.action() == ToolExecutionPolicy.Action.MODIFY) {
             arguments = policyDecision.arguments();
             tool.schema().validate(arguments);
@@ -1491,7 +1501,7 @@ public final class AgentRuntime {
                 definition.maxSteps(),
                 definition.maxToolCalls(),
                 definition.timeout().toMillis(),
-                tools.versionsFor(capabilities.effectiveTools()),
+                tools.versionsFor(capabilities.registeredTools()),
                 capabilities);
     }
 
@@ -1669,6 +1679,7 @@ public final class AgentRuntime {
                 call = prepare(
                         new AgentDecision.ToolCall(toolName, arguments),
                         effectiveTools,
+                        run.snapshot.toolSchemaVersions(),
                         request,
                         step,
                         index);
@@ -1696,7 +1707,9 @@ public final class AgentRuntime {
                             toolToken);
                     return callGuard.execute(
                             AgentCallGuard.CallType.TOOL,
-                            () -> toolExecutor.execute(call.tool().name(), call.arguments(), context));
+                            () -> toolExecutor.execute(
+                                    call.tool().name(), call.tool().schema().version(),
+                                    call.arguments(), context));
                 });
                 pending.put(index, new PendingToolCall(
                         call, started, future, null, null, ToolExecutionObserver.Source.EAGER));
@@ -1887,7 +1900,7 @@ public final class AgentRuntime {
                     snapshot.id(), snapshot.version(), snapshot.plannerVersion(),
                     snapshot.promptVersion(), snapshot.decisionProviderVersion(),
                     snapshot.maxSteps(), snapshot.maxToolCalls(), snapshot.timeoutMillis(),
-                    tools.versionsFor(updated.effectiveTools()), updated);
+                    snapshot.toolSchemaVersions(), updated);
             capabilityResolver.recordToolGroupSwitch(snapshot.id(), updated);
             record(AgentRunEvent.Type.CAPABILITIES_CHANGED, Map.of(
                     "catalogVersion", updated.catalogVersion(),

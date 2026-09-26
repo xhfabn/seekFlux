@@ -454,7 +454,8 @@ public final class DefaultContextEngine implements ContextEngine {
         StringBuilder value = new StringBuilder("runtime_context:\n")
                 .append("step=").append(decisionContext.step()).append('\n')
                 .append("remaining_ms=").append(decisionContext.remaining().toMillis()).append('\n')
-                .append("request_attributes=").append(decisionContext.request().attributes());
+                .append("request_attributes=").append(modelVisibleAttributes(
+                        decisionContext.request().attributes()));
         return value.toString();
     }
 
@@ -464,7 +465,7 @@ public final class DefaultContextEngine implements ContextEngine {
         for (String name : effectiveTools(runtimeContext, decisionContext)) {
             value.append("- ").append(name);
             if (tools != null) {
-                var schema = tools.require(name).schema();
+                var schema = tool(name, decisionContext).schema();
                 value.append('@').append(schema.version())
                         .append(" parameters=").append(new java.util.TreeMap<>(schema.parameters()));
             }
@@ -485,7 +486,7 @@ public final class DefaultContextEngine implements ContextEngine {
             return List.of();
         }
         return effectiveTools(runtimeContext, decisionContext).stream().map(name -> {
-            var schema = tools.require(name).schema();
+            var schema = tool(name, decisionContext).schema();
             Map<String, Object> properties = new java.util.LinkedHashMap<>();
             List<String> required = new ArrayList<>();
             schema.parameters().entrySet().stream()
@@ -535,6 +536,20 @@ public final class DefaultContextEngine implements ContextEngine {
             return new ChatToolDefinition(
                     name, "SeekFlux Tool schema " + schema.version(), inputSchema);
         }).toList();
+    }
+
+    private io.seekflux.platform.agentruntime.application.spi.business.tool.AgentTool tool(
+            String name,
+            AgentDecisionContext decisionContext) {
+        String frozen = decisionContext.toolSchemaVersions().get(name);
+        return frozen == null ? tools.require(name) : tools.require(name, frozen);
+    }
+
+    private static Map<String, Object> modelVisibleAttributes(Map<String, Object> attributes) {
+        Map<String, Object> visible = new java.util.LinkedHashMap<>(attributes);
+        visible.remove("tenantId");
+        visible.remove("userId");
+        return Map.copyOf(visible);
     }
 
     private static io.seekflux.platform.agentruntime.domain.model.capability.CapabilitySnapshot capabilities(

@@ -48,6 +48,24 @@ class AgentSearchApplicationServiceTest {
                 agent.get().plan().derivedRequiredTags());
     }
 
+    @Test
+    void propagatesTrustedTenantAndUserIdentityToToolExecutionRequest() {
+        AtomicReference<AgentExecutionRequest> direct = new AtomicReference<>();
+        AtomicReference<AgentExecutionRequest> agent = new AtomicReference<>();
+        AgentSearchApplicationService service = service(Optional.empty(), direct, agent);
+        AgentSearchCommand command = new AgentSearchCommand(
+                "request-1", "session-1", "turn-1", "search-assistant",
+                "只看杭州亲子露营教程", 0, 5, List.of(), false,
+                AgentRequestedMode.AGENT, null,
+                io.seekflux.platform.agentruntime.application.command.AgentIngressMode.NEW_EXECUTION,
+                "tenant-a", "user-a");
+
+        service.search(command);
+
+        assertEquals("tenant-a", agent.get().tenantId());
+        assertEquals("user-a", agent.get().userId());
+    }
+
     private static AgentSearchApplicationService service(
             Optional<SearchGoal> current,
             AtomicReference<AgentExecutionRequest> direct,

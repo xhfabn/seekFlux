@@ -14,9 +14,14 @@ import io.seekflux.platform.agentruntime.domain.model.capability.SkillDefinition
 import io.seekflux.platform.agentruntime.domain.model.capability.ToolGroupDefinition;
 import io.seekflux.platform.agentruntime.infrastructure.tool.SwitchToolGroupsTool;
 import java.time.Duration;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
+import java.util.TreeSet;
 import org.junit.jupiter.api.Test;
 
 class CapabilityResolverTest {
@@ -171,6 +176,50 @@ class CapabilityResolverTest {
                 snapshot.toolRestrictionEnabled(), snapshot.requestedTools(),
                 snapshot.effectiveTools(), snapshot.activeInstructions(),
                 snapshot.lazySkillSummaries()));
+    }
+
+    @Test
+    void keepsSchemaV1SnapshotsRestorableWhileNewSnapshotsFreezeRegistryMembership() throws Exception {
+        CapabilitySnapshot current = new CapabilityResolver(catalog()).resolve(
+                definition(), CapabilityActivationState.EMPTY, CapabilityRequest.NONE);
+        String canonical = current.catalogVersion() + '|' + current.catalogHash() + '|'
+                + new TreeMap<>(current.visibleSkills()) + '|'
+                + new TreeMap<>(current.toolGroups()) + '|'
+                + new TreeSet<>(current.definitionAllowedTools()) + '|'
+                + new TreeSet<>(current.ephemeralSkillIds()) + '|'
+                + new TreeSet<>(current.activeSkills()) + '|'
+                + new TreeSet<>(current.activeToolGroups()) + '|'
+                + current.toolRestrictionEnabled() + '|'
+                + new TreeSet<>(current.requestedTools());
+        String v1Fingerprint = HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                .digest(canonical.getBytes(StandardCharsets.UTF_8)));
+
+        CapabilitySnapshot restored = new CapabilitySnapshot(
+                1, current.catalogVersion(), current.catalogHash(), v1Fingerprint,
+                current.visibleSkills(), current.toolGroups(), current.definitionAllowedTools(),
+                current.activeSkills(), current.activeToolGroups(), current.ephemeralSkillIds(),
+                current.toolRestrictionEnabled(), current.requestedTools(), current.effectiveTools(),
+                current.activeInstructions(), current.lazySkillSummaries());
+
+        assertEquals(2, current.schemaVersion());
+        assertEquals(current.definitionAllowedTools(), restored.registeredTools());
+        assertEquals(current.effectiveTools(), restored.effectiveTools());
+    }
+
+    @Test
+    void freezesOnlyToolsRegisteredAtExecutionStart() {
+        CapabilityResolver resolver = new CapabilityResolver(
+                catalog(),
+                io.seekflux.platform.agentruntime.application.spi.capability.event
+                        .CapabilityEventRecorder.NOOP,
+                java.time.Clock.systemUTC(),
+                () -> Set.of("search_direct"));
+
+        CapabilitySnapshot snapshot = resolver.resolve(
+                definition(), CapabilityActivationState.EMPTY, CapabilityRequest.NONE);
+
+        assertEquals(Set.of("search_direct"), snapshot.registeredTools());
+        assertEquals(Set.of("search_direct"), snapshot.effectiveTools());
     }
 
     private static CapabilityCatalog catalog() {

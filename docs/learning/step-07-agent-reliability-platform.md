@@ -6,8 +6,8 @@
 - 完成日期：2026-08-10
 - 对应开发 Step：Step 7
 - 对应 Agent Phase：Phase 3
-- 对应决策：[ADR-006：Agent 多实例可靠性、事务事实与 Shadow 治理](../adr/ADR-006-agent-reliability-fencing-outbox-shadow.md)、[ADR-011：Agent 流式 Push 与 Eager Tool 安全边界](../adr/ADR-011-agent-streaming-push-and-eager-tool-safety.md)、[ADR-012：Agent 持久等待、幂等决议与恢复边界](../adr/ADR-012-agent-durable-wait-and-resume.md)、[ADR-013：Agent 能力快照、作用域与 ToolGroup 路由](../adr/ADR-013-agent-capability-snapshot-and-routing.md)
-- 对应契约：[`contracts/openapi/seekflux-v1.yaml`](../../contracts/openapi/seekflux-v1.yaml)、[`agent-workspace-message-v1.schema.json`](../../contracts/events/agent-workspace-message-v1.schema.json)、[`agent-recovery-v1.schema.json`](../../contracts/events/agent-recovery-v1.schema.json)、[`agent-tool-side-effect-ledger-v1.schema.json`](../../contracts/events/agent-tool-side-effect-ledger-v1.schema.json)、[`agent-steer-queue-v1.schema.json`](../../contracts/events/agent-steer-queue-v1.schema.json)、[`agent-context-compaction-v1.schema.json`](../../contracts/events/agent-context-compaction-v1.schema.json)、[`agent-context-event-v1.schema.json`](../../contracts/events/agent-context-event-v1.schema.json)、[`agent-push-frame-v1.schema.json`](../../contracts/events/agent-push-frame-v1.schema.json)、[`agent-wait-lifecycle-v1.schema.json`](../../contracts/events/agent-wait-lifecycle-v1.schema.json)、[`agent-capability-lifecycle-v1.schema.json`](../../contracts/events/agent-capability-lifecycle-v1.schema.json)
+- 对应决策：[ADR-006：Agent 多实例可靠性、事务事实与 Shadow 治理](../adr/ADR-006-agent-reliability-fencing-outbox-shadow.md)、[ADR-011：Agent 流式 Push 与 Eager Tool 安全边界](../adr/ADR-011-agent-streaming-push-and-eager-tool-safety.md)、[ADR-012：Agent 持久等待、幂等决议与恢复边界](../adr/ADR-012-agent-durable-wait-and-resume.md)、[ADR-013：Agent 能力快照、作用域与 ToolGroup 路由](../adr/ADR-013-agent-capability-snapshot-and-routing.md)、[ADR-014：MCP Tool 来源、信任边界与恢复语义](../adr/ADR-014-mcp-tool-source-and-trust-boundary.md)
+- 对应契约：[`contracts/openapi/seekflux-v1.yaml`](../../contracts/openapi/seekflux-v1.yaml)、[`agent-workspace-message-v1.schema.json`](../../contracts/events/agent-workspace-message-v1.schema.json)、[`agent-recovery-v1.schema.json`](../../contracts/events/agent-recovery-v1.schema.json)、[`agent-tool-side-effect-ledger-v1.schema.json`](../../contracts/events/agent-tool-side-effect-ledger-v1.schema.json)、[`agent-steer-queue-v1.schema.json`](../../contracts/events/agent-steer-queue-v1.schema.json)、[`agent-context-compaction-v1.schema.json`](../../contracts/events/agent-context-compaction-v1.schema.json)、[`agent-context-event-v1.schema.json`](../../contracts/events/agent-context-event-v1.schema.json)、[`agent-push-frame-v1.schema.json`](../../contracts/events/agent-push-frame-v1.schema.json)、[`agent-wait-lifecycle-v1.schema.json`](../../contracts/events/agent-wait-lifecycle-v1.schema.json)、[`agent-capability-lifecycle-v1.schema.json`](../../contracts/events/agent-capability-lifecycle-v1.schema.json)、[`agent-mcp-lifecycle-v1.schema.json`](../../contracts/events/agent-mcp-lifecycle-v1.schema.json)
 - 固定评测：[`evals/results/agent-reliability-v1-baseline.json`](../../evals/results/agent-reliability-v1-baseline.json)
 
 ## 要解决的问题
@@ -38,6 +38,13 @@ Phase 2 证明了 Agent 的编排增量，但租约过期、实例退出、重�
 - wait resolution 在 execution authority、fencing 和行锁下 first-writer-wins；同一 resolution ID/内容/actor 忽略服务端接收时间差异而幂等，callback/timeout/取消竞态不重复 Tool；HITL 通过后按原 call ID 执行，Async 完成直接补 ToolResult；
 - HITL/Tool 等待使用独立 deadline，执行预算在挂起时冻结；有界后台扫描处理超时，Session cancel 直接解析持久等待，恢复终态后继续 drain 等待期间的 QUEUE；
 - 版本化 Skill/ToolGroup Catalog、AgentDef 最大权限、Session 持久激活和请求级 ephemeral Skill 共同解析为不可变 `CapabilitySnapshot`；Catalog/Skill/Group/Tool Schema 版本与指纹进入 Checkpoint/Trace，Queue drain 在安全边界重新解析；
+- MCP server 通过 `2025-11-25` Streamable HTTP Tool 子集接入普通 `AgentTool`；按 source 原子发现/
+  注销、namespaced 名称、受限远端 Schema、本地 effect/审批/tenant/user allowlist、取消、响应上限、
+  per-server bulkhead/熔断和 Actuator health 形成独立信任与故障边界；
+- CapabilitySnapshot v2 冻结 execution 开始时实际注册的 Tool 集，MCP Tool Schema version 覆盖
+  server config、本地 policy、远端 Schema 和 status Schema hash；v1 快照仍可按旧指纹恢复；
+- `MUTATING` MCP Tool 继续走持久副作用账本，未知结果不因重连重放；只有显式配置且 Schema 合法的
+  status Tool 可按幂等键/Call ID 对账，否则保持 UNKNOWN；
 - `switch_tool_groups` 属于 always-active 控制组，只接受冻结 Catalog 中的 group，当前 batch 结束后才改变下一模型轮的 Tool Schema；ephemeral 同名 shadow 不合并全局指令或 required Tool，Context 分开 active/ephemeral/lazy 层；
 - Provider 请求传播 request/run/可选 W3C traceparent，支持受校验的请求级 model override；版本包含端点，usage 增加 cached input/reasoning token；当前单端点复用一个宿主管理的 HttpClient，不建立无上限动态 client cache；
 - Tool 默认注册策略拒绝 `MUTATING`，显式授权后仍须通过运行时 `ALLOW/MODIFY/DENY/NEED_APPROVAL` 策略和账本能力检查；每个并行调用使用独立 ToolContext，并产生 before/after/failure 观察；
@@ -71,6 +78,9 @@ Phase 2 证明了 Agent 的编排增量，但租约过期、实例退出、重�
 14. Tool 策略返回 `NEED_APPROVAL` 或 Tool 返回 WaitRequest 时，Runtime 先原子保存 suspended Checkpoint、WAITING journal 与 pending wait，再追加 Assistant/WaitSuspended；外部决议经 `Router.resume` 恢复，补 ToolResult 后继续 Loop。
 15. Wait 的合法结论按类型收口：HITL 只允许 approve/deny，异步类只允许 completed；timeout/callback first-writer-wins。执行预算不计算外部等待时间，pending 丢失时 HITL/Waitpoint/Handoff fail-fast，Async/Child 可从 Checkpoint 重建。
 16. CapabilityResolve 在 Session/Agent 解析后冻结能力快照；持久变更只由版本化 Control API 写入 Workspace。每轮模型只看到快照内 Tool，实际执行仍由注册表/Schema/策略二次校验；切组结果从下一模型轮生效，恢复缺版本时失败关闭。
+17. MCP 启动发现失败或连接失效会原子摘除对应 source；新 execution 不再看到它。旧 execution 只按
+    冻结 Schema version 调用，热更不兼容时失败关闭；本地取消中止 HTTP 并尽力通知 peer，写调用
+    传输未知只进入 ledger reconciliation，不自动重试原副作用。
 
 ## 关键代码入口
 
@@ -110,6 +120,7 @@ Phase 2 证明了 Agent 的编排增量，但租约过期、实例退出、重�
 | `platform/persistence/.../V14__agent_wait_states.sql` | pending/resolved wait 事实、唯一 pending 和到期索引 |
 | `platform/agent-runtime/.../domain/model/capability/` | Skill、ToolGroup、Session 激活与冻结 CapabilitySnapshot |
 | `platform/agent-runtime/.../domain/service/capability/CapabilityResolver.java` | 三层作用域解析、AgentDef 权限收缩和恢复版本校验 |
+| `platform/agent-runtime/.../domain/service/tool/AgentToolRegistry.java` | 本地/远端 Tool 的 source 原子替换、批量注销和有限版本索引 |
 | `platform/agent-runtime/.../infrastructure/tool/SwitchToolGroupsTool.java` | 只影响下一模型轮的合法 ToolGroup 控制 Tool |
 | `apps/agent-server/.../interfaces/rest/AgentCapabilityController.java` | Session 持久能力查询与版本化 Control API |
 | `platform/persistence/.../V15__agent_capability_activations.sql` | capability version 及 operation 幂等唯一索引 |
@@ -117,6 +128,8 @@ Phase 2 证明了 Agent 的编排增量，但租约过期、实例退出、重�
 | `platform/agent-runtime/.../infrastructure/llm/ShadowingLlmClient.java` | 不影响主链的 Shadow 执行 |
 | `platform/agent-runtime/.../infrastructure/redis/RedisShadowSettingsStore.java` | 跨实例 Shadow 开关 |
 | `contexts/agent-orchestration-context/.../infrastructure/runtime/AgentRuntimeExecutionAdapter.java` | Context 输出 Port 与 Runtime API 的业务映射 |
+| `contexts/agent-orchestration-context/.../infrastructure/mcp/` | Streamable HTTP client、发现/连接治理、受限 Schema 和 MCP Proxy Tool |
+| `apps/agent-server/.../bootstrap/AgentMcpProperties.java` | 默认关闭的 MCP server/Tool 本地策略与凭据引用配置 |
 | `apps/worker-runner/.../AgentOutcomeAuditWorker.java` | 幂等 Agent 终态审计消费者 |
 | `evals/run_agent_reliability_eval.py` | 真实链路可靠性/SLO 固定评测 |
 
@@ -134,6 +147,11 @@ Phase 2 证明了 Agent 的编排增量，但租约过期、实例退出、重�
 - 2026-09-16 AR-7 流式模型与实时 Push 完成后，JDK 21 下 Agent Runtime 81 个、Agent Orchestration Context 28 个、Agent Server 1 个测试无失败，`mvn -q test` 全仓 26 个 Reactor 模块回归通过；固定测试覆盖文本/reasoning/细分 usage、Tool Call 分片、参数完整后 eager、非法 Schema 禁止 eager、首 chunk 超时、空流、输出前单次重试且不重复 chunk、输出后断流不重试、流中取消、Push listener 隔离、replay gap、慢消费者溢出、Session 硬上限、跨实例 relay 防回环和 Last-Event-ID 不重复执行；
 - 2026-09-17 AR-8A/AR-8B 完成后，JDK 21 下 `mvn -q test` 全仓回归通过；受影响模块 132 个测试无失败：Agent Runtime 92 个、Persistence 8 个、Agent Orchestration Context 28 个、Agent Server 4 个，Web build/lint 通过。固定测试覆盖审批前不执行/批准后只执行一次、Async callback 不重派、合法决议类型、接收时间变化的重复决议、timeout/late callback、等待中 cancel、超时扫描/single-flight、Session 投影、Checkpoint JSON 和协调器失败隔离；隔离 PostgreSQL 17 顺序执行 V1～V14 并确认 wait 约束与索引；
 - 2026-09-18 AR-9A 完成后，JDK 21 下 `mvn -q test` 全仓 62 个报告、204 个测试全部通过；固定测试覆盖 Session auto-activate 持久化、ephemeral shadow/越权、always-active 控制组、真实 Search Agent ToolGroup 缩减、下一模型轮切组及快照指纹、损坏快照的派生 Tool/Group 自校验、Context 分层、Queue 序列化、Control API 和低基数 Metrics。隔离 PostgreSQL 17 顺序执行 V1～V15，确认 capability version 非负约束和 operation 唯一索引；
+- 2026-09-19 AR-9B 完成后，`mvn -q test` 全仓 67 个报告、224 个测试全部通过；其中 Agent Runtime
+  107 个、Agent Orchestration Context 44 个、Agent Server 8 个。协议级 Streamable HTTP server
+  覆盖 initialize/session、SSE list、JSON call、取消通知与超大响应中止；受控 fake 覆盖断线/重连、
+  source 批量注销、Schema 热更、名称冲突、tenant/user 隔离、bulkhead、熔断和 UNKNOWN 写结果。
+  本阶段没有新增持久表，迁移保持 V1～V15；
 - `agent-reliability-v1` 使用真实 Content → Outbox/Kafka → Worker → Elasticsearch → Agent 链路，12 次请求可用性 `1.0`，P95 `226.402 ms`，Fallback Rate `0.0`；
 - 单写者、fencing 单调、重复请求无额外 Run/Tool 事件、终态 Outbox、幂等审计消费、Shadow 主结果不变和快速关闭全部为 `true`；
 - 固定单测证明旧 owner 不能提交、另一个实例写取消能停止 Loop、模型/Tool 故障稳定回退、Bulkhead 饱和快速拒绝；
@@ -146,7 +164,7 @@ Phase 2 证明了 Agent 的编排增量，但租约过期、实例退出、重�
 
 核心执行红线已完成：固定主链、先获权后提交、强恢复、fencing 全区间、owner-CAS、清理顺序、事件分层、分布式取消、有限并发和确定性回退。完整矩阵见 [ADR-006](../adr/ADR-006-agent-reliability-fencing-outbox-shadow.md)。
 
-仍未实现的能力包括：真实 Handoff/子 Agent 产品 launcher、持久父子/源目标 Session 关系、父取消自动级联、Fork promotion、MCP 和 Chained/Graph Agent。`DelegatedAgentLauncher/ParentChildAgentCoordinator` 当前只是预算、深度、身份传播和结果回填协议，Fork 明确返回 `FORK_PROMOTION_UNSUPPORTED`，因此 AR-8C 保持后置可选。Capability Catalog 当前由宿主静态装配，没有在线配置发布或旧版本制品仓库；跨部署恢复若缺少冻结版本会失败关闭。审批页面、租户授权和业务通知属于具体产品 Adapter；通用 API 记录已认证 actor，但不替代权限判断。AR-7 当前提供 SSE 而非 WebSocket，Push history 是有界瞬态投影而不是可审计事实；Redis 故障时本地执行继续，但跨实例实时订阅会降级，恢复仍依赖 PostgreSQL Workspace/Checkpoint。当前只有单端点 OpenAI-compatible Provider，因此复用一个 HttpClient；多端点会话粘性和有界动态 client pool 要在真实路由需求出现时进入 Provider Adapter。AR-6 仍使用确定性 Skeleton 摘要并直接读取 PostgreSQL，没有模型摘要器或 Redis 热投影。AR-4 已提供通用副作用账本和对账协议，但框架不提供跨外部系统分布式事务；每个真实写 Tool 仍必须依据目标系统实现可靠幂等、状态查询或补偿，无 reconciler 或外部仍无法判定时会保留 `UNKNOWN` 并持续失败关闭。
+仍未实现的能力包括：真实 Handoff/子 Agent 产品 launcher、持久父子/源目标 Session 关系、父取消自动级联、Fork promotion 和 Chained/Graph Agent。`DelegatedAgentLauncher/ParentChildAgentCoordinator` 当前只是预算、深度、身份传播和结果回填协议，Fork 明确返回 `FORK_PROMOTION_UNSUPPORTED`，因此 AR-8C 保持后置可选。MCP 当前只实现 Streamable HTTP Tool 子集和静态启动配置，没有 Resources/Prompts/Sampling/Elicitation、OAuth 协商、server push、在线发布或管理端 refresh；默认关闭，第三方业务 server 仍需逐 Tool 做凭据、effect、审批、allowlist 和对账验收。Capability Catalog 当前由宿主静态装配，没有在线配置发布或旧版本制品仓库；跨部署恢复若缺少冻结版本会失败关闭。审批页面、租户授权和业务通知属于具体产品 Adapter；通用 API 只消费可信网关注入的 actor/tenant，不替代认证。AR-7 当前提供 SSE 而非 WebSocket，Push history 是有界瞬态投影而不是可审计事实；Redis 故障时本地执行继续，但跨实例实时订阅会降级，恢复仍依赖 PostgreSQL Workspace/Checkpoint。当前只有单端点 OpenAI-compatible Provider，因此复用一个 HttpClient；多端点会话粘性和有界动态 client pool 要在真实路由需求出现时进入 Provider Adapter。AR-6 仍使用确定性 Skeleton 摘要并直接读取 PostgreSQL，没有模型摘要器或 Redis 热投影。AR-4 已提供通用副作用账本和对账协议，但框架不提供跨外部系统分布式事务；每个真实写 Tool 仍必须依据目标系统实现可靠幂等、状态查询或补偿，无 reconciler 或外部仍无法判定时会保留 `UNKNOWN` 并持续失败关闭。
 
 真实 Provider 已做单次本地功能联调，但 Token/成本/质量基线仍未建立。仓库已经具备计量、定价、Trace、Metrics 与报告字段；后续必须用固定数据集、固定 Provider/模型/Prompt 版本另生成可复现的运行环境基线，不能用一次成功请求替代评测。
 

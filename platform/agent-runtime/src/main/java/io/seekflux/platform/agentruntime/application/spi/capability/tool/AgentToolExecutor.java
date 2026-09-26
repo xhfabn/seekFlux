@@ -8,6 +8,14 @@ public interface AgentToolExecutor {
 
     AgentToolInvocation execute(
             String toolName,
+            String expectedSchemaVersion,
             Map<String, Object> arguments,
             AgentToolContext context);
+
+    default AgentToolInvocation execute(
+            String toolName,
+            Map<String, Object> arguments,
+            AgentToolContext context) {
+        return execute(toolName, null, arguments, context);
+    }
 }

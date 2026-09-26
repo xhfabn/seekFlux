@@ -86,18 +86,27 @@ public class AgentSearchController {
     }
 
     @PostMapping("/search")
-    public AgentSearchResponse search(@Valid @RequestBody AgentSearchRequest request) {
-        return AgentSearchResponse.from(agentSearch.search(command(request)));
+    public AgentSearchResponse search(
+            @Valid @RequestBody AgentSearchRequest request,
+            @RequestHeader(name = "X-Tenant-Id", required = false) String tenantId,
+            @RequestHeader(name = "X-User-Id", required = false) String userId) {
+        return AgentSearchResponse.from(agentSearch.search(command(request, tenantId, userId)));
+    }
+
+    public AgentSearchResponse search(AgentSearchRequest request) {
+        return search(request, null, null);
     }
 
     @PostMapping(path = "/search:stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter stream(
             @Valid @RequestBody AgentSearchRequest request,
-            @RequestHeader(name = "Last-Event-ID", required = false) String lastEventId) {
+            @RequestHeader(name = "Last-Event-ID", required = false) String lastEventId,
+            @RequestHeader(name = "X-Tenant-Id", required = false) String tenantId,
+            @RequestHeader(name = "X-User-Id", required = false) String userId) {
         if (pushEvents == null || sseExecutor == null) {
             throw new IllegalStateException("Agent streaming is not configured");
         }
-        AgentSearchCommand command = command(request);
+        AgentSearchCommand command = command(request, tenantId, userId);
         long afterSequence = parseLastEventId(lastEventId);
         boolean reconnect = afterSequence >= 0;
         PushEventStream.Subscription subscription =
@@ -145,6 +154,10 @@ public class AgentSearchController {
             emitter.completeWithError(new IllegalStateException("AGENT_STREAM_SATURATED", saturated));
         }
         return emitter;
+    }
+
+    public SseEmitter stream(AgentSearchRequest request, String lastEventId) {
+        return stream(request, lastEventId, null, null);
     }
 
     private void pump(
@@ -217,7 +230,8 @@ public class AgentSearchController {
         }
     }
 
-    private static AgentSearchCommand command(AgentSearchRequest request) {
+    private static AgentSearchCommand command(
+            AgentSearchRequest request, String tenantId, String userId) {
         String requestId = request.requestId() == null || request.requestId().isBlank()
                 ? UUID.randomUUID().toString()
                 : request.requestId().trim();
@@ -239,7 +253,9 @@ public class AgentSearchController {
                 allowClarification,
                 request.mode() == null ? AgentRequestedMode.AUTO : request.mode(),
                 constraintPatch(request.constraintPatch()),
-                request.ingressMode());
+                request.ingressMode(),
+                tenantId,
+                userId);
     }
 
     private static ConstraintPatch constraintPatch(AgentSearchRequest.ConstraintPatchRequest patch) {

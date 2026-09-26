@@ -28,7 +28,30 @@ public record CapabilitySnapshot(
         Set<String> requestedTools,
         Set<String> effectiveTools,
         List<String> activeInstructions,
-        List<String> lazySkillSummaries) {
+        List<String> lazySkillSummaries,
+        Set<String> registeredTools) {
+
+    public CapabilitySnapshot(
+            int schemaVersion,
+            String catalogVersion,
+            String catalogHash,
+            String fingerprint,
+            Map<String, SkillDefinition> visibleSkills,
+            Map<String, ToolGroupDefinition> toolGroups,
+            Set<String> definitionAllowedTools,
+            Set<String> activeSkills,
+            Set<String> activeToolGroups,
+            Set<String> ephemeralSkillIds,
+            boolean toolRestrictionEnabled,
+            Set<String> requestedTools,
+            Set<String> effectiveTools,
+            List<String> activeInstructions,
+            List<String> lazySkillSummaries) {
+        this(schemaVersion, catalogVersion, catalogHash, fingerprint, visibleSkills, toolGroups,
+                definitionAllowedTools, activeSkills, activeToolGroups, ephemeralSkillIds,
+                toolRestrictionEnabled, requestedTools, effectiveTools, activeInstructions,
+                lazySkillSummaries, definitionAllowedTools);
+    }
 
     public CapabilitySnapshot {
         if (schemaVersion < 1) {
@@ -45,6 +68,8 @@ public record CapabilitySnapshot(
         ephemeralSkillIds = copy(ephemeralSkillIds);
         requestedTools = copy(requestedTools);
         effectiveTools = copy(effectiveTools);
+        registeredTools = registeredTools == null
+                ? definitionAllowedTools : copy(registeredTools);
         activeInstructions = activeInstructions == null ? List.of() : List.copyOf(activeInstructions);
         lazySkillSummaries = lazySkillSummaries == null ? List.of() : List.copyOf(lazySkillSummaries);
         if (!visibleSkills.keySet().containsAll(activeSkills)) {
@@ -62,9 +87,12 @@ public record CapabilitySnapshot(
         if (!definitionAllowedTools.containsAll(requestedTools)) {
             throw new IllegalArgumentException("requested Tools cannot exceed AgentDef permissions");
         }
+        if (!definitionAllowedTools.containsAll(registeredTools)) {
+            throw new IllegalArgumentException("registered Tools cannot exceed AgentDef permissions");
+        }
         Set<String> expectedTools = effectiveTools(
                 visibleSkills, toolGroups, definitionAllowedTools, activeSkills,
-                activeToolGroups, toolRestrictionEnabled, requestedTools);
+                activeToolGroups, toolRestrictionEnabled, requestedTools, registeredTools);
         if (!effectiveTools.equals(expectedTools)) {
             throw new IllegalArgumentException("effective Tools do not match the frozen capability inputs");
         }
@@ -77,17 +105,16 @@ public record CapabilitySnapshot(
             throw new IllegalArgumentException("lazy Skill summaries do not match the frozen Skills");
         }
         if (!"legacy-v1".equals(catalogVersion)) {
-            String expectedFingerprint = fingerprint(
-                    catalogVersion,
-                    catalogHash,
-                    visibleSkills,
-                    toolGroups,
-                    definitionAllowedTools,
-                    ephemeralSkillIds,
-                    activeSkills,
-                    activeToolGroups,
-                    toolRestrictionEnabled,
-                    requestedTools);
+            String expectedFingerprint = schemaVersion == 1
+                    ? legacyFingerprint(
+                            catalogVersion, catalogHash, visibleSkills, toolGroups,
+                            definitionAllowedTools, ephemeralSkillIds, activeSkills,
+                            activeToolGroups, toolRestrictionEnabled, requestedTools)
+                    : fingerprint(
+                            catalogVersion, catalogHash, visibleSkills, toolGroups,
+                            definitionAllowedTools, registeredTools, ephemeralSkillIds,
+                            activeSkills, activeToolGroups, toolRestrictionEnabled,
+                            requestedTools);
             if (!fingerprint.equals(expectedFingerprint)) {
                 throw new IllegalArgumentException("capability snapshot fingerprint does not match its content");
             }
@@ -103,21 +130,39 @@ public record CapabilitySnapshot(
             Set<String> ephemeralSkillIds,
             boolean toolRestrictionEnabled,
             Set<String> requestedTools) {
+        return create(catalog, visibleSkills, definitionAllowedTools, activeSkills,
+                activeToolGroups, ephemeralSkillIds, toolRestrictionEnabled, requestedTools,
+                definitionAllowedTools);
+    }
+
+    public static CapabilitySnapshot create(
+            CapabilityCatalog catalog,
+            Map<String, SkillDefinition> visibleSkills,
+            Set<String> definitionAllowedTools,
+            Set<String> activeSkills,
+            Set<String> activeToolGroups,
+            Set<String> ephemeralSkillIds,
+            boolean toolRestrictionEnabled,
+            Set<String> requestedTools,
+            Set<String> registeredTools) {
         String fingerprint = fingerprint(
-                catalog, visibleSkills, catalog.toolGroups(), definitionAllowedTools, ephemeralSkillIds,
+                catalog, visibleSkills, catalog.toolGroups(), definitionAllowedTools,
+                registeredTools, ephemeralSkillIds,
                 activeSkills, activeToolGroups, toolRestrictionEnabled, requestedTools);
         return recompute(
+                2,
                 catalog.version(), catalog.contentHash(), fingerprint, visibleSkills,
                 catalog.toolGroups(), definitionAllowedTools, activeSkills, activeToolGroups,
-                ephemeralSkillIds, toolRestrictionEnabled, requestedTools);
+                ephemeralSkillIds, toolRestrictionEnabled, requestedTools, registeredTools);
     }
 
     public static CapabilitySnapshot legacy(Set<String> allowedTools) {
         Set<String> tools = copy(allowedTools);
         return recompute(
+                1,
                 "legacy-v1", sha256("legacy:" + new TreeSet<>(tools)),
                 sha256("legacy-snapshot:" + new TreeSet<>(tools)),
-                Map.of(), Map.of(), tools, Set.of(), Set.of(), Set.of(), false, Set.of());
+                Map.of(), Map.of(), tools, Set.of(), Set.of(), Set.of(), false, Set.of(), tools);
     }
 
     public CapabilitySnapshot switchToolGroups(Set<String> groups) {
@@ -125,21 +170,20 @@ public record CapabilitySnapshot(
         if (!toolGroups.keySet().containsAll(normalized)) {
             throw new IllegalArgumentException("ToolGroup switch references an unknown group");
         }
-        String updatedFingerprint = fingerprint(
-                catalogVersion,
-                catalogHash,
-                visibleSkills,
-                toolGroups,
-                definitionAllowedTools,
-                ephemeralSkillIds,
-                activeSkills,
-                normalized,
-                toolRestrictionEnabled,
-                requestedTools);
+        String updatedFingerprint = schemaVersion == 1
+                ? legacyFingerprint(
+                        catalogVersion, catalogHash, visibleSkills, toolGroups,
+                        definitionAllowedTools, ephemeralSkillIds, activeSkills, normalized,
+                        toolRestrictionEnabled, requestedTools)
+                : fingerprint(
+                        catalogVersion, catalogHash, visibleSkills, toolGroups,
+                        definitionAllowedTools, registeredTools, ephemeralSkillIds,
+                        activeSkills, normalized, toolRestrictionEnabled, requestedTools);
         return recompute(
+                schemaVersion,
                 catalogVersion, catalogHash, updatedFingerprint, visibleSkills, toolGroups,
                 definitionAllowedTools, activeSkills, normalized, ephemeralSkillIds,
-                toolRestrictionEnabled, requestedTools);
+                toolRestrictionEnabled, requestedTools, registeredTools);
     }
 
     public Map<String, String> skillVersions() {
@@ -155,6 +199,7 @@ public record CapabilitySnapshot(
     }
 
     private static CapabilitySnapshot recompute(
+            int schemaVersion,
             String catalogVersion,
             String catalogHash,
             String fingerprint,
@@ -165,16 +210,18 @@ public record CapabilitySnapshot(
             Set<String> activeToolGroups,
             Set<String> ephemeralSkillIds,
             boolean toolRestrictionEnabled,
-            Set<String> requestedTools) {
+            Set<String> requestedTools,
+            Set<String> registeredTools) {
         Set<String> effective = effectiveTools(
                 visibleSkills, toolGroups, definitionAllowedTools, activeSkills,
-                activeToolGroups, toolRestrictionEnabled, requestedTools);
+                activeToolGroups, toolRestrictionEnabled, requestedTools, registeredTools);
         List<String> instructions = activeInstructions(visibleSkills, activeSkills);
         List<String> lazy = lazySkillSummaries(visibleSkills, activeSkills);
         return new CapabilitySnapshot(
-                1, catalogVersion, catalogHash, fingerprint, visibleSkills, toolGroups,
+                schemaVersion, catalogVersion, catalogHash, fingerprint, visibleSkills, toolGroups,
                 definitionAllowedTools, activeSkills, activeToolGroups, ephemeralSkillIds,
-                toolRestrictionEnabled, requestedTools, effective, instructions, lazy);
+                toolRestrictionEnabled, requestedTools, effective, instructions, lazy,
+                registeredTools);
     }
 
     private static String fingerprint(
@@ -182,6 +229,7 @@ public record CapabilitySnapshot(
             Map<String, SkillDefinition> visibleSkills,
             Map<String, ToolGroupDefinition> toolGroups,
             Set<String> definitionAllowedTools,
+            Set<String> registeredTools,
             Set<String> ephemeralSkillIds,
             Set<String> activeSkills,
             Set<String> activeToolGroups,
@@ -189,11 +237,33 @@ public record CapabilitySnapshot(
             Set<String> requestedTools) {
         return fingerprint(
                 catalog.version(), catalog.contentHash(), visibleSkills, toolGroups,
-                definitionAllowedTools,
+                definitionAllowedTools, registeredTools,
                 ephemeralSkillIds, activeSkills, activeToolGroups, restricted, requestedTools);
     }
 
     private static String fingerprint(
+            String catalogVersion,
+            String catalogHash,
+            Map<String, SkillDefinition> visibleSkills,
+            Map<String, ToolGroupDefinition> toolGroups,
+            Set<String> definitionAllowedTools,
+            Set<String> registeredTools,
+            Set<String> ephemeralSkillIds,
+            Set<String> activeSkills,
+            Set<String> activeToolGroups,
+            boolean restricted,
+            Set<String> requestedTools) {
+        String canonical = catalogVersion + '|' + catalogHash + '|'
+                + new TreeMap<>(visibleSkills) + '|' + new TreeMap<>(toolGroups) + '|'
+                + new TreeSet<>(definitionAllowedTools) + '|'
+                + new TreeSet<>(registeredTools) + '|'
+                + new TreeSet<>(ephemeralSkillIds) + '|' + new TreeSet<>(activeSkills) + '|'
+                + new TreeSet<>(activeToolGroups) + '|' + restricted + '|'
+                + new TreeSet<>(requestedTools);
+        return sha256(canonical);
+    }
+
+    private static String legacyFingerprint(
             String catalogVersion,
             String catalogHash,
             Map<String, SkillDefinition> visibleSkills,
@@ -220,7 +290,8 @@ public record CapabilitySnapshot(
             Set<String> activeSkills,
             Set<String> activeToolGroups,
             boolean toolRestrictionEnabled,
-            Set<String> requestedTools) {
+            Set<String> requestedTools,
+            Set<String> registeredTools) {
         Set<String> allowed = new LinkedHashSet<>(definitionAllowedTools);
         for (String skillId : activeSkills) {
             SkillDefinition skill = visibleSkills.get(skillId);
@@ -232,6 +303,7 @@ public record CapabilitySnapshot(
             }
             allowed.addAll(skill.requiredTools());
         }
+        allowed.retainAll(registeredTools);
 
         Map<String, Set<String>> memberships = new LinkedHashMap<>();
         for (ToolGroupDefinition group : toolGroups.values()) {

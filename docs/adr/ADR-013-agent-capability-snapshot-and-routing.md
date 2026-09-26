@@ -48,7 +48,8 @@ execution 看到不同指令与 Tool Schema；如果只相信模型输出，又�
   Skill 会进入当次 Checkpoint，但不会进入 Session 激活投影。
 - Catalog 当前由宿主静态装配，没有提供在线编辑器、分布式配置发布或旧版本制品仓库；这些属于
   具体配置平台。请求级 Skill 只允许有界、可序列化字段，调用方不得把凭据写入 instruction。
-- MCP 仍只是未来的一种 Tool 来源，Chained/Graph 仍是独立编排引擎；本决策不提前引入它们。
+- MCP 后续按 [ADR-014](ADR-014-mcp-tool-source-and-trust-boundary.md) 作为独立 Tool 来源接入，
+  并把 execution 开始时实际注册的 Tool 集纳入 v2 快照；Chained/Graph 仍是独立编排引擎。
 
 ## 关联
 

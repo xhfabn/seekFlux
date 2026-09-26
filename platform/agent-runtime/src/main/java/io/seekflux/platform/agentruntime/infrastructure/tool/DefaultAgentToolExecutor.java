@@ -20,10 +20,13 @@ public final class DefaultAgentToolExecutor implements AgentToolExecutor {
     @Override
     public AgentToolInvocation execute(
             String toolName,
+            String expectedSchemaVersion,
             Map<String, Object> arguments,
             AgentToolContext context) {
         context.cancellationToken().throwIfCancelled();
-        AgentTool tool = registry.require(toolName);
+        AgentTool tool = expectedSchemaVersion == null
+                ? registry.require(toolName)
+                : registry.require(toolName, expectedSchemaVersion);
         tool.schema().validate(arguments);
         try {
             AgentToolResult result = tool.execute(context);

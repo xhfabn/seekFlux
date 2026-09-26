@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://seekflux.io/contracts/events/agent-mcp-lifecycle-v1.schema.json",
+  "title": "Agent MCP lifecycle and call observation v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "eventType",
+    "schemaVersion",
+    "serverId",
+    "outcome",
+    "reason",
+    "durationMillis",
+    "activeToolCount",
+    "eventTime"
+  ],
+  "properties": {
+    "eventType": {
+      "type": "string",
+      "enum": ["DISCOVERY", "CALL", "CONNECTION"]
+    },
+    "schemaVersion": {"const": 1},
+    "serverId": {"type": "string", "minLength": 1, "maxLength": 64},
+    "toolName": {
+      "type": ["string", "null"],
+      "minLength": 1,
+      "maxLength": 128
+    },
+    "outcome": {
+      "type": "string",
+      "enum": ["SUCCEEDED", "REJECTED", "FAILED", "CANCELLED"]
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "Controlled local reason code; remote error text and credentials are forbidden."
+    },
+    "durationMillis": {"type": "integer", "minimum": 0},
+    "activeToolCount": {"type": "integer", "minimum": 0, "maximum": 128},
+    "eventTime": {"type": "string", "format": "date-time"}
+  }
+}

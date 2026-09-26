@@ -14,6 +14,9 @@ paths:
       operationId: agentSearch
       summary: Execute the bounded Search Agent and fall back to Direct Search when required
       tags: [Agent]
+      parameters:
+        - $ref: "#/components/parameters/TenantIdHeader"
+        - $ref: "#/components/parameters/UserIdHeader"
       requestBody:
         required: true
         content:
@@ -44,6 +47,8 @@ paths:
         event with code REPLAY_GAP means the requested sequence is older than retained history.
       tags: [Agent]
       parameters:
+        - $ref: "#/components/parameters/TenantIdHeader"
+        - $ref: "#/components/parameters/UserIdHeader"
         - name: Last-Event-ID
           in: header
           required: false
@@ -548,6 +553,12 @@ components:
       required: false
       description: Local baseline identity. A gateway-authenticated identity replaces this header in production.
       schema: {type: string, maxLength: 128, default: anonymous}
+    TenantIdHeader:
+      name: X-Tenant-Id
+      in: header
+      required: false
+      description: Gateway-authenticated tenant identity used by local MCP Tool policy.
+      schema: {type: string, maxLength: 128}
     UserIdPath:
       name: userId
       in: path
@@ -747,6 +758,7 @@ components:
         - toolGroupVersions
         - activeSkills
         - activeToolGroups
+        - registeredTools
         - effectiveTools
         - startedAt
         - tookMillis
@@ -783,6 +795,10 @@ components:
           items: {type: string}
         activeToolGroups:
           type: array
+          items: {type: string}
+        registeredTools:
+          type: array
+          description: Tool names frozen as registered at run start; disconnected MCP sources are excluded.
           items: {type: string}
         effectiveTools:
           type: array

@@ -277,6 +277,56 @@ Schema、执行策略和副作用安全检查。Context 分别渲染 ephemeral�
 [ADR-013](adr/ADR-013-agent-capability-snapshot-and-routing.md)，持久事件契约见
 [`agent-capability-lifecycle-v1.schema.json`](../contracts/events/agent-capability-lifecycle-v1.schema.json)。
 
+### 6.6 MCP Tool 来源与连接治理
+
+MCP 以 Agent Orchestration Infrastructure Adapter 接入，不改变 Loop。`McpConnectionManager` 只实现
+协议版本 `2025-11-25` 的 Streamable HTTP Tool 子集，启动时尽力发现、断线后懒重连，并按
+`mcp:{serverId}` 原子替换或摘除来源；远端 Tool 映射为 `{serverId}__{remoteToolName}`，跨来源冲突
+直接拒绝。本地 Search Tool 和其他 MCP server 不受单一 server 故障影响。
+
+远端 Schema 是不可信输入：`McpSchemaTranslator` 限制字节、深度、节点、字段和可用类型；effect、
+审批、tenant/user allowlist、响应上限和可选 reconciliation Tool 由本地配置决定。凭据配置只保存
+`env:NAME` 引用，每次请求即时解析，不进入 Workspace、Checkpoint、Trace、事件或日志。Agent API
+把网关认证后的 `X-Tenant-Id/X-User-Id` 传播到 ToolContext 做本地授权，但 ContextEngine 会在模型
+可见属性中剔除这两个字段。
+
+`AgentToolRegistry` 现在支持按来源原子热更和有限旧版本索引。`CapabilitySnapshot` v2 冻结 execution
+开始时实际已注册的 Tool 集；MCP Schema version 同时覆盖 server config、本地 policy、远端输入
+Schema 和 status Tool Schema hash。断线或热更后旧 execution 不会静默调用新定义：只有当前连接仍
+提供同一版本才执行，否则返回版本不可用；v1 能力快照继续按旧指纹恢复。
+
+每 server 有独立 connect/request timeout、bulkhead、连续失败熔断、在途 client 退役和响应读取上限。
+本地取消会取消 HTTP Future 并尽力发送 MCP `notifications/cancelled`。`MUTATING` MCP Tool 继续使用
+AR-4 ledger；未知结果不因重连重放原调用，只能通过显式配置且经过 Schema 校验的只读 status Tool
+按 `idempotencyKey/toolCallId` 对账，否则保持 `UNKNOWN`。Actuator health 和
+`seekflux.agent.mcp.*` Metrics 只暴露受控状态/版本/原因。完整取舍见
+[ADR-014](adr/ADR-014-mcp-tool-source-and-trust-boundary.md)，事件契约见
+[`agent-mcp-lifecycle-v1.schema.json`](../contracts/events/agent-mcp-lifecycle-v1.schema.json)。
+
+最小配置示例（默认 `enabled=false`）：
+
+```yaml
+seekflux:
+  agent:
+    mcp:
+      enabled: true
+      servers:
+        - id: docs
+          config-version: docs-v1
+          endpoint: https://mcp.example.com/rpc
+          credential-ref: env:DOCS_MCP_TOKEN
+          request-timeout: 5s
+          max-concurrent-calls: 4
+          max-response-bytes: 1048576
+          tools:
+            - remote-name: lookup
+              policy-version: lookup-policy-v1
+              effect: READ_ONLY
+              approval-required: false
+              allowed-tenant-ids: [tenant-a]
+              allowed-user-ids: [user-a]
+```
+
 ## 7. Search Agent
 
 当前提供两个 AgentDef：
@@ -287,6 +337,10 @@ Schema、执行策略和副作用安全检查。Context 分别渲染 ephemeral�
 | `search-precise` | `search-precise-v2` | 3 | `search_direct@v1`、`search_filtered@v1`、`switch_tool_groups@v1` |
 
 二者复用同一 Runtime。默认 `DeterministicSearchLlmClient@deterministic-complex-search-decision-v2` 无需 API Key，可以稳定验证“并行 Search Tool → 观察结果 → 选择候选集 → 完成”。Context Infrastructure 中的 `OpenAiCompatibleLlmClient` 实现 Runtime 的 `LlmClient` SPI，负责真实 Chat Completions 兼容协议、结构化 Decision、usage 解析和配置价格换算；协议测试不等同于真实模型质量或付费成本评测，确定性 Provider 的 Trace 会明确 `usageMeasured=false`。
+
+启用 `seekflux.agent.mcp.enabled=true` 后，配置中显式列出的 namespaced MCP Tool 会加入两个 AgentDef
+的最大权限，但只有启动发现成功且进入 execution 冻结注册集的 Tool 才会暴露给模型。默认配置关闭
+MCP 且 server 列表为空，因此现有 Search Agent 行为不变。
 
 `ShadowingLlmClient` 在独立有界线程池运行候选策略，只同步返回 primary。候选结果、延迟、错误和一致性写入 `agent.shadow_evaluations`；Redis 共享的开关/采样率使任一实例关闭后其他实例下一次请求生效。Shadow 拒绝或失败不会影响主链。
 
@@ -316,6 +370,9 @@ GET  /v1/agent/runtime/shadow
 PUT  /v1/agent/runtime/shadow
 ```
 
+同步和 SSE Search 入口可接收可选 `X-Tenant-Id/X-User-Id`；生产环境必须由可信网关注入，Runtime
+只把它们用于本地 MCP Tool policy，不把请求头本身当成认证实现。
+
 搜索请求可传 `ingressMode`；排队成功返回 `state=QUEUED` 和当前 `queueDepth`，不执行 Agent 投影或 Direct Search fallback。挂起返回独立 `state=WAITING`、`waitId` 和 `waitType`。wait resolve API 要求 `X-User-Id` 并把它写入决议 actor；宿主仍须在调用 Controller 前完成真实身份认证和租户授权。普通搜索响应同时返回稳定业务状态、`AgentTrace` 和可选的 `SearchTrace`；取消响应的顶层和 Trace 都返回枚举化 `cancellationReason`，且不会执行 Direct Search fallback。完整请求/响应 Schema 见 [`contracts/openapi/seekflux-v1.yaml`](../contracts/openapi/seekflux-v1.yaml)。
 
 ## 9. 验证和当前边界
@@ -329,6 +386,6 @@ python3 evals/run_agent_reliability_eval.py
 
 固定 `direct-search-v1` 六 Query 基线上，强制 Agent 与 Direct 的 `Recall@5/MRR@5/nDCG@5` 均为 `1.0`，证明基础复用没有回归。`complex-search-v1` 的六条关键词陷阱 Query 中，Direct `MRR@1/Recall@1=0.0`，Agent `MRR@1/Recall@1=1.0`；Tool 选择、任务完成、简单 Direct 路由和多轮版本测试全部通过。
 
-`agent-reliability-v1` 固定评测证明单写者、fencing 单调、重复请求无额外 Tool 事件、事务 Outbox、幂等审计、Shadow 主结果隔离和快速关闭；12 次样本可用性 `1.0`，P95 `226.402 ms`，Fallback `0.0`。旧 owner、跨实例取消、停机取消、模型/Tool 在途取消、取消后禁止下一轮、OpenAI 调用中断、模型/Tool 故障和 Bulkhead 另有自动化测试。AR-3 增加 PRE/POST/终态 Checkpoint、模型后、Tool 提交/结果和未知写 Tool 的固定崩溃测试；AR-4 增加请求前、外部成功未确认、账本成功未推进 Session 和重复恢复测试；AR-5 增加 STEER/QUEUE、容量、FIFO 批量提升、最后意图、幂等、崩溃恢复和 drain 失权测试；AR-6 增加长上下文完整轮次、摘要 no-gap、ASYNC single-flight、400/413 有界重试、OutputGuard 和 repair 取消测试；AR-8A/8B 增加审批只执行一次、Async 不重派、决议类型、幂等/冲突、timeout/callback、等待中取消和投影恢复测试；AR-9A 增加 auto-activate 持久化、ephemeral shadow、越权拒绝、下一轮切组、真实 Search ToolGroup、快照自校验、Context 分层和低基数指标测试。2026-09-18 全仓 204 个测试通过；隔离 PostgreSQL 17 已顺序执行 V1～V15，并确认 capability version 约束、operation 唯一索引和 wait 约束。
+`agent-reliability-v1` 固定评测证明单写者、fencing 单调、重复请求无额外 Tool 事件、事务 Outbox、幂等审计、Shadow 主结果隔离和快速关闭；12 次样本可用性 `1.0`，P95 `226.402 ms`，Fallback `0.0`。旧 owner、跨实例取消、停机取消、模型/Tool 在途取消、取消后禁止下一轮、OpenAI 调用中断、模型/Tool 故障和 Bulkhead 另有自动化测试。AR-3 增加 PRE/POST/终态 Checkpoint、模型后、Tool 提交/结果和未知写 Tool 的固定崩溃测试；AR-4 增加请求前、外部成功未确认、账本成功未推进 Session 和重复恢复测试；AR-5 增加 STEER/QUEUE、容量、FIFO 批量提升、最后意图、幂等、崩溃恢复和 drain 失权测试；AR-6 增加长上下文完整轮次、摘要 no-gap、ASYNC single-flight、400/413 有界重试、OutputGuard 和 repair 取消测试；AR-8A/8B 增加审批只执行一次、Async 不重派、决议类型、幂等/冲突、timeout/callback、等待中取消和投影恢复测试；AR-9A 增加 auto-activate 持久化、ephemeral shadow、越权拒绝、下一轮切组、真实 Search ToolGroup、快照自校验、Context 分层和低基数指标测试；AR-9B 增加协议级 Streamable HTTP/SSE、取消通知、响应上限、source 热更/注销、断线重连、Schema 拒绝、身份隔离、bulkhead、熔断和未知写结果测试。2026-09-19 全仓 67 个测试报告、224 个测试通过；隔离 PostgreSQL 仍为 V1～V15，本阶段没有新增持久表。
 
-对照 Ark-Leto 后仍未完成的是产品化 Handoff/子 Agent/Fork、MCP、Chained/Graph 和完整 OTel；AR-8C 当前只有通用协议，不计为能力完成。Capability Catalog 当前静态装配，在线发布和旧版本制品仓库仍由未来配置平台负责。当前压缩器是确定性 Skeleton，不包含模型摘要器或 Redis 热投影。写 Tool 已有持久账本与 reconciliation 协议，但每个真实写 Tool 仍必须依据其外部系统能力实现状态查询或补偿，框架不能把不支持查询/幂等的外部接口变安全。真实付费 Provider 基线也需要部署方端点与密钥；当前报告不伪造 Token/成本。完整取舍见 [ADR-006](adr/ADR-006-agent-reliability-fencing-outbox-shadow.md)、[ADR-012](adr/ADR-012-agent-durable-wait-and-resume.md) 和 [ADR-013](adr/ADR-013-agent-capability-snapshot-and-routing.md)。
+对照 Ark-Leto 后仍未完成的是产品化 Handoff/子 Agent/Fork、Chained/Graph 和完整 OTel；AR-8C 当前只有通用协议，不计为能力完成。MCP 当前只覆盖 Streamable HTTP Tool 子集，没有 Resources/Prompts/Sampling、OAuth 协商、在线配置发布或第三方 server 的业务级 effect/审批/对账验收。Capability Catalog 当前静态装配，在线发布和旧版本制品仓库仍由未来配置平台负责。当前压缩器是确定性 Skeleton，不包含模型摘要器或 Redis 热投影。写 Tool 已有持久账本与 reconciliation 协议，但每个真实写 Tool（包括 MCP）仍必须依据其外部系统能力实现状态查询或补偿，框架不能把不支持查询/幂等的外部接口变安全。真实付费 Provider 基线也需要部署方端点与密钥；当前报告不伪造 Token/成本。完整取舍见 [ADR-006](adr/ADR-006-agent-reliability-fencing-outbox-shadow.md)、[ADR-012](adr/ADR-012-agent-durable-wait-and-resume.md)、[ADR-013](adr/ADR-013-agent-capability-snapshot-and-routing.md) 和 [ADR-014](adr/ADR-014-mcp-tool-source-and-trust-boundary.md)。

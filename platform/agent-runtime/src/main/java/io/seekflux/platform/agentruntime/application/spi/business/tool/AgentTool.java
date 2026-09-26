@@ -8,12 +8,26 @@ public interface AgentTool {
 
     enum Effect { READ_ONLY, IDEMPOTENT, MUTATING }
 
+    String LOCAL_SOURCE = "local";
+
     String name();
 
     AgentToolSchema schema();
 
     default Effect effect() {
         return Effect.MUTATING;
+    }
+
+    default String source() {
+        return LOCAL_SOURCE;
+    }
+
+    default boolean approvalRequired() {
+        return false;
+    }
+
+    default String approvalReason() {
+        return "Tool execution requires approval";
     }
 
     AgentToolResult execute(AgentToolContext context);
