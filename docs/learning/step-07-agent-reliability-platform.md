@@ -178,6 +178,13 @@ Phase 2 证明了 Agent 的编排增量，但租约过期、实例退出、重�
   JAR 齐全，Core 的 `jdeps` 结果只有 `java.base`。Portal 显示 `io.github.xhfabn` Verified，
   GitHub Actions Repository secrets 存在四个要求的名称，所有者确认公钥已可从 keyserver
   检索。Secret 值不可见，实际 CI 签名与 Portal staging/publish 尚待验证；
+- 2026-09-27 RC1 staging 验收：`codex/agent-runtime-publishable-v1` 的提交
+  `e0f2139980028fa9b7215e53ef6bab2110d82cc4` 已由 Tag `agent-runtime-v1.0.0-RC1`
+  触发[发布工作流](https://github.com/xhfabn/seekFlux/actions/runs/36301443634)，测试、公共
+  制品边界、签名与上传步骤全部通过。Portal deployment
+  `c65b92a7-cd6f-41f4-8a20-f71cbbd6c927` 为 `VALIDATED`，2/2 组件通过校验，
+  每个组件均含 POM、主 JAR、sources、Javadoc、签名及校验和。最终人工 Publish 尚未执行，
+  因而未做公开仓库空缓存消费者验收；
 - `agent-reliability-v1` 使用真实 Content → Outbox/Kafka → Worker → Elasticsearch → Agent 链路，12 次请求可用性 `1.0`，P95 `226.402 ms`，Fallback Rate `0.0`；
 - 单写者、fencing 单调、重复请求无额外 Run/Tool 事件、终态 Outbox、幂等审计消费、Shadow 主结果不变和快速关闭全部为 `true`；
 - 固定单测证明旧 owner 不能提交、另一个实例写取消能停止 Loop、模型/Tool 故障稳定回退、Bulkhead 饱和快速拒绝；
@@ -196,9 +203,9 @@ Phase 2 证明了 Agent 的编排增量，但租约过期、实例退出、重�
 
 公共 Core 只承诺 SPI 与运行协议，不承诺任何默认数据库、Redis、模型厂商、MCP 或观测
 Adapter。宿主自行实现持久化时必须保留 fencing、幂等、原子提交、first-writer-wins 和
-未知写结果不重放等不变量。当前仅达到 RC1 可发布构建；仓库所有者已于 2026-09-27
-选择 Apache-2.0，并补齐根 `LICENSE`、发布 POM 元数据和 JAR 内许可证。Central 命名空间、
-凭据、GPG 签名与真实发布仍未完成。
+未知写结果不重放等不变量。RC1 已完成可发布构建、CI 签名与 Portal staging 校验；
+仓库所有者已于 2026-09-27 选择 Apache-2.0，并补齐根 `LICENSE`、发布 POM 元数据和
+JAR 内许可证。最终人工 Publish 与公开仓库消费者验收仍未完成。
 
 ## 如何验证
 

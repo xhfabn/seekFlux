@@ -60,7 +60,11 @@ Session、执行权、模型、恢复、分布式取消和业务 Tool 的实现�
 - 2026-09-27 已补齐 Apache-2.0 根许可证、两个公共 POM 的许可证元数据与发布包内许可证；
   JDK 21 下两个目标模块测试、`central-release` 打包通过，四个主/源码 JAR 均含
   `META-INF/LICENSE`。同日发布前复核：Portal 命名空间 Verified，四个 GitHub Secret 名称
-  可见，公钥已可检索；Secret 值、CI 签名及实际 staging/publish 尚未验证。
+  可见，公钥已可检索；当时 Secret 值、CI 签名及实际 staging/publish 尚未验证。
+- 2026-09-27 Tag `agent-runtime-v1.0.0-RC1` 触发的
+  [GitHub Actions 运行](https://github.com/xhfabn/seekFlux/actions/runs/36301443634) 已通过签名与
+  Central 上传；Portal deployment `c65b92a7-cd6f-41f4-8a20-f71cbbd6c927` 已 `VALIDATED`
+  （2/2 组件）。最终人工 Publish 与公开仓库消费者验收仍未完成。
 
 ## 关联
 

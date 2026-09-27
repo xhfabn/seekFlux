@@ -12,9 +12,20 @@ JDBC、Redis、模型 Provider、MCP、Micrometer 和 SeekFlux 业务 Adapter �
 1. Apache-2.0 已由仓库所有者选定；根 `LICENSE`、两个公共 POM 的 `<licenses>` 元数据和
    JAR 内 `META-INF/LICENSE` 已配置。发布前仍需确认拟发布代码的授权归属。
 2. 2026-09-27 已在 Maven Central Publisher Portal 确认 `io.github.xhfabn` 为 Verified。
-3. 仓库所有者已生成 GPG 签名密钥，并确认公钥可从 keyserver 检索；CI 实际签名仍须验收。
+3. 仓库所有者已生成 GPG 签名密钥，并确认公钥可从 keyserver 检索；RC1 工作流已完成实际签名和 Portal 校验。
 4. GitHub Actions 的 Repository secrets 中已存在 `CENTRAL_USERNAME`、`CENTRAL_TOKEN`、
-   `GPG_PRIVATE_KEY` 和 `GPG_PASSPHRASE` 四个名称。Secret 值不可读，必须由 staging 工作流验证。
+   `GPG_PRIVATE_KEY` 和 `GPG_PASSPHRASE` 四个名称。Secret 值不可读；RC1 staging 工作流已验证其可用性。
+
+## RC1 当前状态（2026-09-27）
+
+- 发布分支：`codex/agent-runtime-publishable-v1`；源提交：`e0f2139980028fa9b7215e53ef6bab2110d82cc4`；
+  Tag：`agent-runtime-v1.0.0-RC1`。
+- [GitHub Actions 运行](https://github.com/xhfabn/seekFlux/actions/runs/36301443634) 已成功完成测试、边界检查、
+  GPG 签名和 Central staging。
+- Portal deployment `c65b92a7-cd6f-41f4-8a20-f71cbbd6c927` 显示 `VALIDATED`，两个组件均通过校验；
+  每个组件均有 POM、主 JAR、sources JAR、Javadoc JAR、签名和校验和。
+- 尚未点击 Portal 最终 Publish；`1.0.0-RC1` 尚非公开发布。版本正式发布后不可覆盖或删除，
+  后续迭代须使用新的版本号；发布后仍须做空缓存外部消费者验收。
 
 ## 版本更新
 

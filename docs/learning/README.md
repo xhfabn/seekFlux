@@ -50,8 +50,10 @@ Agent Phase 3 已经完成，Phase 4 的行为事实与实时特征两个深化�
 Runtime 的公共发布边界已按 [ADR-015](../adr/ADR-015-agent-runtime-publication-boundary.md)
 收敛为纯 Java Core 与可选 Spring Boot 自动装配。仓库所有者已选择 Apache-2.0，根许可证、
 两个发布 POM 的许可证元数据和 JAR 内许可证已配置；Portal 中 `io.github.xhfabn` 已验证，
-GitHub Actions 的四个 Secret 名称已就位，公钥已在 keyserver 可检索。Secret 值和 CI 签名
-尚未通过真实 staging 验证；当前完成的是可发布构建与边界验证，不是已经发布。
+GitHub Actions 的四个 Secret 名称已就位，公钥已在 keyserver 可检索。RC1 Tag 已触发
+[发布工作流](https://github.com/xhfabn/seekFlux/actions/runs/36301443634)，实际签名及 Portal
+两个组件的 staging 校验通过；最终人工 Publish 和发布后空缓存消费者验收仍未完成，
+当前不应称为已公开发布。
 
 运行模型决策见 [ADR-002：命令式应用运行模型与局部有界并发](../adr/ADR-002-imperative-application-runtime.md)。普通 Search/Feed 保持同步 JSON；未来 Agent 的模型调用和 Tool fan-out 只能在 Agent 边界内使用明确、有界、可观测的并发，不把 `Mono`/`Flux` 重新扩散到业务接口。
 

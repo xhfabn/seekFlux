@@ -717,4 +717,19 @@ AR-9 的完成门槛不能共用：AR-9A、9B、9C1、9C2、9C3 各自只在其�
 
 ---
 
+### 2026-09-27：RC1 签名与 Central 暂存校验通过
+
+- 阶段：不改变 Agent Runtime 能力阶段状态；此记录只更新 RC1 发布验收事实。
+- 完成证据：提交 `e0f2139980028fa9b7215e53ef6bab2110d82cc4` 已推送至
+  `codex/agent-runtime-publishable-v1`，Tag `agent-runtime-v1.0.0-RC1` 已推送；
+  [GitHub Actions 运行](https://github.com/xhfabn/seekFlux/actions/runs/36301443634) 成功完成测试、
+  公共边界验证、签名和上传。Portal deployment
+  `c65b92a7-cd6f-41f4-8a20-f71cbbd6c927` 显示 `VALIDATED`、2/2 组件通过校验；
+  两个组件的 POM、主 JAR、sources、Javadoc、签名及校验和均已核对。
+- 剩余边界：尚未在 Portal 最终 Publish；版本未公开，空缓存外部消费者验收不能提前完成。
+- 下一步：获得不可撤销发布确认后人工 Publish，再验证公开 GAV 与独立消费者接入。
+- 操作细节见[发布手册](RELEASING.md)。
+
+---
+
 维护原则：本文会随着代码事实持续调整阶段内部设计，但不会通过改文档提前宣布能力完成。历史交付记录保留当时证据；若后续设计发生变化，新增记录说明原因并链接对应 ADR，而不是静默改写历史。
