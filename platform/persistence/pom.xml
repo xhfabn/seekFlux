@@ -7,7 +7,7 @@
     </parent>
     <artifactId>persistence</artifactId>
     <dependencies>
-        <dependency><groupId>io.seekflux</groupId><artifactId>agent-runtime</artifactId><version>${project.version}</version></dependency>
+        <dependency><groupId>io.github.xhfabn.seekflux</groupId><artifactId>seekflux-agent-runtime-core</artifactId><version>${seekflux.agent-runtime.version}</version></dependency>
         <dependency><groupId>io.seekflux</groupId><artifactId>content-context</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>io.seekflux</groupId><artifactId>feature-context</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>io.seekflux</groupId><artifactId>interaction-context</artifactId><version>${project.version}</version></dependency>

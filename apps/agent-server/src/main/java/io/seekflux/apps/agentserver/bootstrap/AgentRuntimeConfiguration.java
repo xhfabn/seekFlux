@@ -59,9 +59,9 @@ import io.seekflux.platform.agentruntime.application.spi.capability.shadow.Agent
 import io.seekflux.platform.agentruntime.domain.service.shadow.ShadowControl;
 import io.seekflux.platform.agentruntime.application.spi.capability.shadow.ShadowSettingsStore;
 import io.seekflux.platform.agentruntime.infrastructure.llm.ShadowingLlmClient;
-import io.seekflux.platform.agentruntime.infrastructure.redis.RedisCancellationSignalStore;
-import io.seekflux.platform.agentruntime.infrastructure.redis.RedisExecutionAuthorityStore;
-import io.seekflux.platform.agentruntime.infrastructure.redis.RedisShadowSettingsStore;
+import io.seekflux.agent.infrastructure.redis.RedisCancellationSignalStore;
+import io.seekflux.agent.infrastructure.redis.RedisExecutionAuthorityStore;
+import io.seekflux.agent.infrastructure.redis.RedisShadowSettingsStore;
 import io.seekflux.platform.agentruntime.domain.service.loop.AgentLoop;
 import io.seekflux.platform.agentruntime.domain.service.loop.DefaultAgentLoop;
 import io.seekflux.platform.agentruntime.domain.service.router.DefaultRouter;

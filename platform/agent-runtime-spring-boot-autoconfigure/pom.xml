@@ -5,12 +5,12 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>io.github.xhfabn.seekflux</groupId>
-    <artifactId>seekflux-agent-runtime-core</artifactId>
+    <artifactId>seekflux-agent-runtime-spring-boot-autoconfigure</artifactId>
     <version>1.0.0-RC1</version>
     <packaging>jar</packaging>
 
-    <name>SeekFlux Agent Runtime Core</name>
-    <description>Provider-neutral, infrastructure-neutral Java agent runtime kernel.</description>
+    <name>SeekFlux Agent Runtime Spring Boot Auto-configuration</name>
+    <description>Optional Spring Boot assembly for the SeekFlux Agent Runtime Core.</description>
     <url>https://github.com/xhfabn/seekFlux</url>
 
     <licenses>
@@ -38,32 +38,31 @@
         <maven.compiler.release>21</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
-        <junit.version>5.13.4</junit.version>
-        <assertj.version>3.27.4</assertj.version>
+        <spring-boot.version>3.5.16</spring-boot.version>
     </properties>
-
-    <dependencyManagement>
-        <dependencies>
-            <dependency>
-                <groupId>org.junit</groupId>
-                <artifactId>junit-bom</artifactId>
-                <version>${junit.version}</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
-        </dependencies>
-    </dependencyManagement>
 
     <dependencies>
         <dependency>
-            <groupId>org.junit.jupiter</groupId>
-            <artifactId>junit-jupiter</artifactId>
-            <scope>test</scope>
+            <groupId>io.github.xhfabn.seekflux</groupId>
+            <artifactId>seekflux-agent-runtime-core</artifactId>
+            <version>${project.version}</version>
         </dependency>
         <dependency>
-            <groupId>org.assertj</groupId>
-            <artifactId>assertj-core</artifactId>
-            <version>${assertj.version}</version>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-autoconfigure</artifactId>
+            <version>${spring-boot.version}</version>
+            <optional>true</optional>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-configuration-processor</artifactId>
+            <version>${spring-boot.version}</version>
+            <optional>true</optional>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <version>${spring-boot.version}</version>
             <scope>test</scope>
         </dependency>
     </dependencies>

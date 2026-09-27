@@ -6,7 +6,7 @@
 - 完成日期：2026-08-10
 - 对应开发 Step：Step 7
 - 对应 Agent Phase：Phase 3
-- 对应决策：[ADR-006：Agent 多实例可靠性、事务事实与 Shadow 治理](../adr/ADR-006-agent-reliability-fencing-outbox-shadow.md)、[ADR-011：Agent 流式 Push 与 Eager Tool 安全边界](../adr/ADR-011-agent-streaming-push-and-eager-tool-safety.md)、[ADR-012：Agent 持久等待、幂等决议与恢复边界](../adr/ADR-012-agent-durable-wait-and-resume.md)、[ADR-013：Agent 能力快照、作用域与 ToolGroup 路由](../adr/ADR-013-agent-capability-snapshot-and-routing.md)、[ADR-014：MCP Tool 来源、信任边界与恢复语义](../adr/ADR-014-mcp-tool-source-and-trust-boundary.md)
+- 对应决策：[ADR-006：Agent 多实例可靠性、事务事实与 Shadow 治理](../adr/ADR-006-agent-reliability-fencing-outbox-shadow.md)、[ADR-011：Agent 流式 Push 与 Eager Tool 安全边界](../adr/ADR-011-agent-streaming-push-and-eager-tool-safety.md)、[ADR-012：Agent 持久等待、幂等决议与恢复边界](../adr/ADR-012-agent-durable-wait-and-resume.md)、[ADR-013：Agent 能力快照、作用域与 ToolGroup 路由](../adr/ADR-013-agent-capability-snapshot-and-routing.md)、[ADR-014：MCP Tool 来源、信任边界与恢复语义](../adr/ADR-014-mcp-tool-source-and-trust-boundary.md)、[ADR-015：Agent Runtime 公共制品与宿主实现边界](../adr/ADR-015-agent-runtime-publication-boundary.md)
 - 对应契约：[`contracts/openapi/seekflux-v1.yaml`](../../contracts/openapi/seekflux-v1.yaml)、[`agent-workspace-message-v1.schema.json`](../../contracts/events/agent-workspace-message-v1.schema.json)、[`agent-recovery-v1.schema.json`](../../contracts/events/agent-recovery-v1.schema.json)、[`agent-tool-side-effect-ledger-v1.schema.json`](../../contracts/events/agent-tool-side-effect-ledger-v1.schema.json)、[`agent-steer-queue-v1.schema.json`](../../contracts/events/agent-steer-queue-v1.schema.json)、[`agent-context-compaction-v1.schema.json`](../../contracts/events/agent-context-compaction-v1.schema.json)、[`agent-context-event-v1.schema.json`](../../contracts/events/agent-context-event-v1.schema.json)、[`agent-push-frame-v1.schema.json`](../../contracts/events/agent-push-frame-v1.schema.json)、[`agent-wait-lifecycle-v1.schema.json`](../../contracts/events/agent-wait-lifecycle-v1.schema.json)、[`agent-capability-lifecycle-v1.schema.json`](../../contracts/events/agent-capability-lifecycle-v1.schema.json)、[`agent-mcp-lifecycle-v1.schema.json`](../../contracts/events/agent-mcp-lifecycle-v1.schema.json)
 - 固定评测：[`evals/results/agent-reliability-v1-baseline.json`](../../evals/results/agent-reliability-v1-baseline.json)
 
@@ -55,7 +55,12 @@ Phase 2 证明了 Agent 的编排增量，但租约过期、实例退出、重�
 - 隔离执行器中的 Shadow、PostgreSQL 对比记录、Redis 跨实例开关和管理 API；
 - OpenAI-compatible 响应兼容标准 `message.content` 与 LongCat `message.reasoning_content`，两种结构都保留真实 usage；
 - Agent Runtime 内核完成 DDD 物理分层：Application 只保留 `api`、`command`、`spi/business`、`spi/capability` 对外契约；领域模型按 Agent Definition、Decision、Run、Session、Tool、Feature、Execution 细分；Runtime、Router、Loop、Feature、Context、Tool、Execution、Shadow 编排进入 `domain/service`，默认 SPI 实现进入 `infrastructure`；外层 Agent Server 的 HTTP API 对应系统 `interfaces/rest`；
-- Runtime 技术实现和 Search Agent 业务适配器按所有者内聚：执行权、取消和 Shadow 配置的 Redis 默认实现进入 `platform/agent-runtime/infrastructure`，Runtime/Context 映射、Search Tool、Direct Fallback、投影、确定性决策、OpenAI-compatible Provider 和指标进入 `contexts/agent-orchestration-context/infrastructure`；Agent Server 只保留 REST、启动和组合装配；
+- Runtime 公共边界在 2026-09-26 进一步收敛：`seekflux-agent-runtime-core`
+  为 Java 21 零第三方主依赖内核，Redis 执行权、取消和 Shadow 实现迁入
+  `contexts/agent-orchestration-context/infrastructure`；新增的
+  `seekflux-agent-runtime-spring-boot-autoconfigure` 只传递 Core，Spring Boot 依赖为 optional。
+  Runtime/Context 映射、Search Tool、Direct Fallback、投影、Provider、MCP 和指标仍由
+  SeekFlux 宿主 Adapter 持有；Agent Server 继续只保留 REST、启动和组合装配；
 - C 端新增任务型 AI 搜索界面，通过同源 Bridge 直连 Agent Server，支持多轮 Goal 版本、追问、取消、降级提示和真实 Search 候选展示；
 - macOS 中间件改由 launchd 托管，解决启动命令结束后 Kafka/ES/MinIO 退出的问题；
 - 自带样本发布、索引等待、清理和数据库断言的可靠性 Eval。
@@ -93,7 +98,7 @@ Phase 2 证明了 Agent 的编排增量，但租约过期、实例退出、重�
 | `platform/agent-runtime/.../domain/service/execution/SessionExecutor.java` | fencing、续租、恢复、跨实例取消、优雅停机 |
 | `platform/agent-runtime/.../application/command/AgentIngressMode.java` | NEW_EXECUTION、STEER、QUEUE 显式入口语义 |
 | `platform/agent-runtime/.../domain/service/execution/SteerQueuePolicy.java` | 持久队列容量策略 |
-| `platform/agent-runtime/.../infrastructure/redis/RedisExecutionAuthorityStore.java` | 原子 fencing 计数与 owner-CAS Lua |
+| `contexts/agent-orchestration-context/.../infrastructure/redis/RedisExecutionAuthorityStore.java` | SeekFlux 宿主的原子 fencing 计数与 owner-CAS Lua |
 | `platform/persistence/.../JdbcAgentSessionStore.java` | 受 fencing 保护的消息/Outcome/Outbox 事务与 Workspace 重放 |
 | `platform/persistence/.../WorkspaceMessageCodec.java` | 版本化 Assistant/ToolResult payload 的 JSON 边界映射 |
 | `platform/agent-runtime/.../domain/model/recovery/` | Checkpoint、Tool journal、ResumeIngress/ResumeAction 领域契约 |
@@ -126,7 +131,10 @@ Phase 2 证明了 Agent 的编排增量，但租约过期、实例退出、重�
 | `platform/persistence/.../V15__agent_capability_activations.sql` | capability version 及 operation 幂等唯一索引 |
 | `platform/agent-runtime/.../domain/service/execution/AgentCallGuard.java` | 模型/Tool Bulkhead 与故障注入边界 |
 | `platform/agent-runtime/.../infrastructure/llm/ShadowingLlmClient.java` | 不影响主链的 Shadow 执行 |
-| `platform/agent-runtime/.../infrastructure/redis/RedisShadowSettingsStore.java` | 跨实例 Shadow 开关 |
+| `contexts/agent-orchestration-context/.../infrastructure/redis/RedisShadowSettingsStore.java` | SeekFlux 宿主的跨实例 Shadow 开关 |
+| `platform/agent-runtime/pom.xml` | 可独立发布、零第三方主依赖的 Core 制品 |
+| `platform/agent-runtime-spring-boot-autoconfigure/` | 从宿主 Bean 组装 Runtime，只传递 Core |
+| `.github/workflows/agent-runtime-release.yml` | 验证、签名并暂存两个 Maven Central 制品，不自动发布 |
 | `contexts/agent-orchestration-context/.../infrastructure/runtime/AgentRuntimeExecutionAdapter.java` | Context 输出 Port 与 Runtime API 的业务映射 |
 | `contexts/agent-orchestration-context/.../infrastructure/mcp/` | Streamable HTTP client、发现/连接治理、受限 Schema 和 MCP Proxy Tool |
 | `apps/agent-server/.../bootstrap/AgentMcpProperties.java` | 默认关闭的 MCP server/Tool 本地策略与凭据引用配置 |
@@ -152,6 +160,24 @@ Phase 2 证明了 Agent 的编排增量，但租约过期、实例退出、重�
   覆盖 initialize/session、SSE list、JSON call、取消通知与超大响应中止；受控 fake 覆盖断线/重连、
   source 批量注销、Schema 热更、名称冲突、tenant/user 隔离、bulkhead、熔断和 UNKNOWN 写结果。
   本阶段没有新增持久表，迁移保持 V1～V15；
+- 2026-09-26 公共制品收敛后，Core 136 个主源码文件没有 JDK/SeekFlux 之外的
+  import；独立消费者的 Maven 依赖树只有
+  `seekflux-agent-runtime-spring-boot-autoconfigure → seekflux-agent-runtime-core`，没有 Spring Boot、
+  Redis、JDBC、Jackson、Provider 或 MCP 传递依赖。Auto-configuration 5 个新测试覆盖
+  宿主端口装配、只读 Tool 收集、默认拒绝写 Tool、配置关闭和缺失必需端口；
+  `central-release` profile 已实际产出两个主 JAR、sources JAR 和 Javadoc JAR；
+  JDK 21 下 `mvn -q test` 全仓 68 个报告、229 个测试全部通过。本轮没有新增持久表、
+  HTTP API 或事件契约；
+- 2026-09-27 仓库所有者选择 Apache-2.0；根 `LICENSE`、两个公共 POM 的许可证元数据和
+  发布 workflow 的 JAR 许可证检查已补齐。JDK 21 下 `central-release` 本地打包成功；
+  同范围 Maven 测试通过，两个主 JAR 和两个 sources JAR 均含 `META-INF/LICENSE`。
+  本轮未改动 Java 逻辑，
+  Central 命名空间、凭据、GPG 签名、真实 staging/publish 和外部消费者验收仍未完成；
+- 2026-09-27 RC1 发布前复核：JDK 21 下全仓 `mvn -q test` 共 68 个报告、229 个测试，
+  failures/errors/skipped 均为 0；`central-release` 打包成功，两个主 JAR、sources 和 Javadoc
+  JAR 齐全，Core 的 `jdeps` 结果只有 `java.base`。Portal 显示 `io.github.xhfabn` Verified，
+  GitHub Actions Repository secrets 存在四个要求的名称，所有者确认公钥已可从 keyserver
+  检索。Secret 值不可见，实际 CI 签名与 Portal staging/publish 尚待验证；
 - `agent-reliability-v1` 使用真实 Content → Outbox/Kafka → Worker → Elasticsearch → Agent 链路，12 次请求可用性 `1.0`，P95 `226.402 ms`，Fallback Rate `0.0`；
 - 单写者、fencing 单调、重复请求无额外 Run/Tool 事件、终态 Outbox、幂等审计消费、Shadow 主结果不变和快速关闭全部为 `true`；
 - 固定单测证明旧 owner 不能提交、另一个实例写取消能停止 Loop、模型/Tool 故障稳定回退、Bulkhead 饱和快速拒绝；
@@ -168,10 +194,16 @@ Phase 2 证明了 Agent 的编排增量，但租约过期、实例退出、重�
 
 真实 Provider 已做单次本地功能联调，但 Token/成本/质量基线仍未建立。仓库已经具备计量、定价、Trace、Metrics 与报告字段；后续必须用固定数据集、固定 Provider/模型/Prompt 版本另生成可复现的运行环境基线，不能用一次成功请求替代评测。
 
+公共 Core 只承诺 SPI 与运行协议，不承诺任何默认数据库、Redis、模型厂商、MCP 或观测
+Adapter。宿主自行实现持久化时必须保留 fencing、幂等、原子提交、first-writer-wins 和
+未知写结果不重放等不变量。当前仅达到 RC1 可发布构建；仓库所有者已于 2026-09-27
+选择 Apache-2.0，并补齐根 `LICENSE`、发布 POM 元数据和 JAR 内许可证。Central 命名空间、
+凭据、GPG 签名与真实发布仍未完成。
+
 ## 如何验证
 
 ```bash
-mvn -pl platform/agent-runtime,contexts/agent-orchestration-context,apps/agent-server,apps/worker-runner -am test
+mvn -pl platform/agent-runtime,platform/agent-runtime-spring-boot-autoconfigure,contexts/agent-orchestration-context,apps/agent-server,apps/worker-runner -am test
 npm --prefix apps/web test
 npm --prefix apps/web run lint
 python3 -m py_compile evals/run_agent_reliability_eval.py

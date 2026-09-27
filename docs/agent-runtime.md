@@ -1,6 +1,6 @@
 # SeekFlux Agent Runtime 内核设计
 
-本文记录已经实现的 Agent Runtime 细节。系统全局目标见 [`SeekFlux.md`](../SeekFlux.md)，阶段状态见[学习路线](learning/README.md)，后续模块实施与每轮交付证据见 [Agent Runtime 演进路线](../platform/agent-runtime/ROADMAP.md)，长期决策见 [ADR-004](adr/ADR-004-ark-leto-inspired-agent-runtime.md)。
+本文记录已经实现的 Agent Runtime 细节。系统全局目标见 [`SeekFlux.md`](../SeekFlux.md)，阶段状态见[学习路线](learning/README.md)，后续模块实施与每轮交付证据见 [Agent Runtime 演进路线](../platform/agent-runtime/ROADMAP.md)，内核和公共制品决策见 [ADR-004](adr/ADR-004-ark-leto-inspired-agent-runtime.md) 与 [ADR-015](adr/ADR-015-agent-runtime-publication-boundary.md)。
 
 ## 1. 实现口径
 
@@ -29,14 +29,15 @@ flowchart LR
 
 | 模块 | 已实现职责 | 禁止拥有的职责 |
 | --- | --- | --- |
-| `platform/agent-runtime` | Runtime Domain/Application、纯 Java 默认实现，以及 Redis 执行权/取消/Shadow 配置 | SearchGoal、Search Tool、模型厂商协议、HTTP 或 Elasticsearch 业务访问 |
-| `contexts/agent-orchestration-context` | SearchGoal/ConstraintPatch、SearchPlan、Query Mode、输入/输出 Port，以及 Runtime/Search/LLM Provider/投影/指标业务 Adapter | Runtime 通用机制、HTTP 接口、直接访问检索索引 |
+| `platform/agent-runtime` | 可发布的 Runtime Core：API/SPI、Domain/Application 和纯 Java默认实现；Java 21、零第三方主依赖 | Spring、Redis、JDBC、Jackson、Provider、MCP、Micrometer 与 Search 业务 |
+| `platform/agent-runtime-spring-boot-autoconfigure` | 从宿主 Bean 组装 Registry、Context、Runtime、Loop、Executor、Pipeline 与 Router；只传递 Core | 引入 Spring Boot、数据库、Redis、Provider、业务定义或 HTTP API |
+| `contexts/agent-orchestration-context` | SearchGoal/ConstraintPatch、SearchPlan、Query Mode、输入/输出 Port，以及 Runtime/Search/Redis/LLM Provider/MCP/投影/指标宿主 Adapter | Runtime 通用机制、HTTP 接口、直接访问检索索引 |
 | `apps/agent-server` | `interfaces/rest`、Spring Boot 启动和最终 Bean 装配 | Runtime/Context/技术 Adapter 的具体实现，在 Controller 内规划或过滤结果 |
 | `platform/persistence` | Session 追加事件、最新投影、Run/RunEvent 持久化 | Agent 业务决策 |
 
 ### 2.1 Runtime 内部 DDD 分层
 
-`platform/agent-runtime` 已按领域、应用和基础设施三层组织；Domain/Application 不依赖 Spring，具体技术依赖只允许出现在 Infrastructure。接口层位于外层应用模块：
+`platform/agent-runtime` 已按领域、应用和基础设施三层组织；整个公开 Core 主源码不依赖 Spring 或其他第三方库，不再只把限制停留在 Domain/Application。Spring Boot 装配在独立 Auto-configuration 模块，Redis/JDBC/Provider/MCP 等技术实现由宿主模块持有。接口层位于外层应用模块：
 
 ```text
 platform/agent-runtime/.../agentruntime/
@@ -73,7 +74,11 @@ platform/agent-runtime/.../agentruntime/
     ├── llm/                   # Shadow LLM 装饰器
     ├── prompt/                # 内存 Prompt resolver
     ├── tool/                  # 默认 Tool executor
-    └── redis/                 # 执行权、取消、Shadow 配置的 Redis 实现
+
+platform/agent-runtime-spring-boot-autoconfigure/
+├── AgentRuntimeAutoConfiguration.java  # 通用条件装配
+├── AgentRuntimeProperties.java         # 有界线程池、上下文与取消配置
+└── META-INF/spring/...AutoConfiguration.imports
 
 contexts/agent-orchestration-context/
 ├── domain/                    # Search Agent 领域语义
@@ -83,6 +88,8 @@ contexts/agent-orchestration-context/
     ├── search/、tool/         # Direct Search 与 Search Agent Tool
     ├── session/、projection/  # 会话目标和 Redis 热投影
     ├── llm/                   # 确定性决策与 OpenAI-compatible LlmClient Adapter
+    ├── redis/                 # 执行权、取消、Shadow 配置的 SeekFlux 私有实现
+    ├── mcp/                   # MCP Tool Source 与连接治理
     └── observability/         # Agent 执行指标
 
 apps/agent-server/.../agentserver/
@@ -93,7 +100,15 @@ apps/agent-server/.../agentserver/
 
 `application` 是 Runtime 的纯契约面，不保存业务编排：业务通过 `application/api` 调用 Runtime，通过 `application/command` 传入请求；Runtime 通过 `application/spi` 调用由业务或运行环境提供的能力。API/SPI 专属 DTO 与对应契约就近放置，不再建立笼统的 `application/model`、`application/port` 或 `application/service`。
 
-`spi/business` 承载 Agent Planner、Tool、Feature 和上下文组装等业务扩展；`spi/capability` 承载 LLM、Session、执行权、记录和事件发布等运行能力。`domain/model` 保存各组件自身的状态与规则，`domain/service` 保存 Runtime、Router、Loop、Feature、Context、Tool、执行权和 Shadow 之间的编排。Runtime 的 `infrastructure` 只提供由 Runtime 拥有且与具体 Agent 业务无关的默认实现；模型厂商协议及其到业务 Decision 的转换由 Context Infrastructure 实现对应 SPI。
+`spi/business` 承载 Agent Planner、Tool、Feature 和上下文组装等业务扩展；`spi/capability` 承载 LLM、Session、执行权、记录和事件发布等运行能力。`domain/model` 保存各组件自身的状态与规则，`domain/service` 保存 Runtime、Router、Loop、Feature、Context、Tool、执行权和 Shadow 之间的编排。Runtime 的 `infrastructure` 只保留纯 Java 默认实现；模型厂商协议、Redis、数据库、MCP 及其业务 Decision 转换由宿主 Infrastructure 实现对应 SPI。
+
+### 2.2 公共 Maven 制品
+
+普通 Java 宿主使用 `io.github.xhfabn.seekflux:seekflux-agent-runtime-core:1.0.0-RC1` 并手工装配。
+已有 Spring Boot 的宿主只声明 `seekflux-agent-runtime-spring-boot-autoconfigure`：它传递 Core，但
+Spring Boot 依赖标记为 optional，不会把 Spring Boot、Redis、JDBC、Jackson、模型 Provider 或 MCP
+带给消费者。完整接入、必需端口和配置示例分别见 [Core README](../platform/agent-runtime/README.md)
+与 [Auto-configuration README](../platform/agent-runtime-spring-boot-autoconfigure/README.md)。
 
 具体调用关系是：`业务/interfaces → Context 输入 Port → Context 应用服务 → Context 输出 Port ← Context infrastructure → Runtime application/api`；Runtime 的 `domain/service → application/spi ← Runtime infrastructure`。Domain/Application 不依赖具体 Infrastructure，实现依赖由组合根注入。`apps/agent-server` 只是可部署宿主和组合根，不是第三层业务逻辑；它选择实现并管理 Spring/线程池生命周期。此次调整改变了 Java 包名和仓库内调用方，但没有改变方法体、HTTP/OpenAPI 契约、事件 Schema 或运行语义。
 
@@ -378,7 +393,7 @@ PUT  /v1/agent/runtime/shadow
 ## 9. 验证和当前边界
 
 ```bash
-mvn -pl platform/agent-runtime,contexts/agent-orchestration-context,apps/agent-server,apps/worker-runner -am test
+mvn -pl platform/agent-runtime,platform/agent-runtime-spring-boot-autoconfigure,contexts/agent-orchestration-context,apps/agent-server,apps/worker-runner -am test
 python3 evals/run_agent_search_eval.py
 python3 evals/run_complex_agent_eval.py
 python3 evals/run_agent_reliability_eval.py

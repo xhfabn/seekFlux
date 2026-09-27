@@ -1,4 +1,4 @@
-package io.seekflux.platform.agentruntime.infrastructure.redis;
+package io.seekflux.agent.infrastructure.redis;
 
 import io.seekflux.platform.agentruntime.application.spi.capability.execution.ExecutionAuthority;
 import io.seekflux.platform.agentruntime.application.spi.capability.execution.ExecutionAuthorityStore;

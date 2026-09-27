@@ -47,6 +47,15 @@ External Sources → Media Importer → MinIO + Content Server
 
 Agent Runtime 的详细设计见 [docs/agent-runtime.md](docs/agent-runtime.md)，多实例可靠性与 Ark-Leto 参考实现的对照见 [ADR-006](docs/adr/ADR-006-agent-reliability-fencing-outbox-shadow.md)。
 
+## Agent Runtime 公共制品
+
+可复用 Runtime 按两个 Maven 制品维护：纯 Java、零第三方主依赖的
+`seekflux-agent-runtime-core`，以及只传递 Core 的
+`seekflux-agent-runtime-spring-boot-autoconfigure`。持久化、Redis、模型 Provider、MCP 和观测由宿主
+实现 SPI，不作为公共制品依赖。用法见 [Core README](platform/agent-runtime/README.md) 与
+[Spring Boot Auto-configuration README](platform/agent-runtime-spring-boot-autoconfigure/README.md)；发布流程见
+[Agent Runtime 发布手册](platform/agent-runtime/RELEASING.md)。
+
 ## 本地运行
 
 环境要求：JDK 21、Maven 3.9+、Docker Engine 26+（Compose 方式）、建议至少 8 GB 可用内存。具体环境基线见 [docs/environment.md](docs/environment.md)。
@@ -103,7 +112,7 @@ python3 tools/media_import.py qilin \
 ## 验证与文档
 
 ```bash
-mvn -pl platform/agent-runtime,apps/agent-server,apps/worker-runner -am test
+mvn -pl platform/agent-runtime,platform/agent-runtime-spring-boot-autoconfigure,apps/agent-server,apps/worker-runner -am test
 python3 evals/run_agent_search_eval.py
 python3 evals/run_complex_agent_eval.py
 python3 evals/run_agent_reliability_eval.py

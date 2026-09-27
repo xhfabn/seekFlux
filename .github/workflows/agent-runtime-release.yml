@@ -1,0 +1,70 @@
+name: Release Agent Runtime
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "agent-runtime-v*"
+
+permissions:
+  contents: read
+
+jobs:
+  verify-and-stage:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Verify Apache-2.0 distribution license
+        run: |
+          test -f LICENSE
+          grep -q 'Apache License, Version 2.0' platform/agent-runtime/pom.xml
+          grep -q 'Apache License, Version 2.0' platform/agent-runtime-spring-boot-autoconfigure/pom.xml
+
+      - name: Set up Java and Maven Central credentials
+        uses: actions/setup-java@v4
+        with:
+          java-version: "21"
+          distribution: temurin
+          cache: maven
+          server-id: central
+          server-username: CENTRAL_USERNAME
+          server-password: CENTRAL_TOKEN
+          gpg-private-key: ${{ secrets.GPG_PRIVATE_KEY }}
+          gpg-passphrase: GPG_PASSPHRASE
+
+      - name: Verify runtime modules
+        run: >-
+          mvn --batch-mode --no-transfer-progress
+          -pl platform/agent-runtime,platform/agent-runtime-spring-boot-autoconfigure
+          -am verify
+
+      - name: Verify public artifact boundaries
+        shell: bash
+        run: |
+          core_jars=(platform/agent-runtime/target/seekflux-agent-runtime-core-*.jar)
+          autoconfigure_jars=(platform/agent-runtime-spring-boot-autoconfigure/target/seekflux-agent-runtime-spring-boot-autoconfigure-*.jar)
+          test "${#core_jars[@]}" -eq 1
+          test "${#autoconfigure_jars[@]}" -eq 1
+          core_jar="${core_jars[0]}"
+          autoconfigure_jar="${autoconfigure_jars[0]}"
+          expected="$(basename "$core_jar") -> java.base"
+          actual="$(jdeps --multi-release 21 --recursive -s "$core_jar")"
+          test "$actual" = "$expected"
+          jar tf "$autoconfigure_jar" \
+            | grep -Fx META-INF/spring-configuration-metadata.json
+          jar tf "$autoconfigure_jar" \
+            | grep -Fx META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports
+          jar tf "$core_jar" | grep -Fx META-INF/LICENSE
+          jar tf "$autoconfigure_jar" | grep -Fx META-INF/LICENSE
+
+      - name: Stage signed artifacts in Central Portal
+        run: >-
+          mvn --batch-mode --no-transfer-progress
+          -pl platform/agent-runtime,platform/agent-runtime-spring-boot-autoconfigure
+          -am deploy -Pcentral-release -DskipTests
+        env:
+          CENTRAL_USERNAME: ${{ secrets.CENTRAL_USERNAME }}
+          CENTRAL_TOKEN: ${{ secrets.CENTRAL_TOKEN }}
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}

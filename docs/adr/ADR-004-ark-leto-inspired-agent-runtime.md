@@ -2,7 +2,7 @@
 
 - 状态：Accepted
 - 日期：2026-08-08
-- 最近更新：2026-09-16
+- 最近更新：2026-09-26
 
 ## 背景
 
@@ -22,7 +22,7 @@
 8. Search Tool 只能调用 `SearchUseCase`。Runtime 要求回退时，由 Agent Orchestration Infrastructure Adapter 调用同一个 Direct Search Use Case，返回 `AGENT_TO_DIRECT_FALLBACK`，不绕过 Search Context。
 9. HTTP 接口继续使用 Spring MVC 同步 JSON。Agent 内部仅在命名、有界线程池中执行模型决策和 Tool；不向 Controller、Context Port 或领域对象暴露 `Mono`/`Flux`。
 10. 首期使用可复现的 `DeterministicSearchLlmClient` 验证编排、追问、工具和 Trace，不把它宣称为真实大模型能力。后续真实模型只新增 `LlmClient` Adapter，不改 Runtime Core。
-11. 技术和业务适配器不由进程宿主持有，但也不额外拆成同级 Infrastructure 模块：Runtime 执行权、取消和 Shadow 配置等通用默认实现归入 `platform/agent-runtime/infrastructure`；Search Agent 的 Runtime 映射、Tool、Direct Search、投影、确定性决策、OpenAI-compatible Provider 和指标归入 `contexts/agent-orchestration-context/infrastructure`。`apps/agent-server` 只保留 `interfaces/rest`、Spring Boot 启动与组合装配；Server 是部署宿主，不是第三个业务层。
+11. 技术和业务适配器不由进程宿主持有。2026-09-26 起，公共 Runtime Core 进一步收缩为零第三方主依赖；Redis 执行权、取消和 Shadow 配置与 Search Agent 的 Runtime 映射、Tool、Direct Search、投影、Provider、MCP 和指标均归入 `contexts/agent-orchestration-context/infrastructure`。Spring Boot 通用装配进入独立、可选且不传递 Spring Boot 的 Auto-configuration 制品；长期发布边界见 [ADR-015](ADR-015-agent-runtime-publication-boundary.md)。`apps/agent-server` 仍只保留 `interfaces/rest`、Spring Boot 启动与最终组合装配。
 12. Context 采用显式 Layer 和无状态 Renderer；完整消息与 Tool Schema 一起计量。长历史只能按完整 turn 以版本化摘要和 inclusive cutoff 压缩，禁止没有覆盖摘要的硬截断。摘要先写 PostgreSQL 共享事实；当前不设置热投影，未来如增加只能在事实提交后更新。
 13. 同步 Provider 只有在任何模型输出产生前的 400/413 上下文溢出才允许强压缩有界重试；结构化输出格式错误由有限 OutputGuard repair/degrade/fail 处理并响应同一取消 token。内容安全是独立业务策略，不由格式 Guard 冒充。
 
@@ -37,7 +37,7 @@ Phase 2 后续完成了 Provider Adapter、Query Mode Router、多轮 `Constrain
 - Agent 运行机制能够独立测试和复用，Search 业务规则仍由 AgentOrchestration/Search Context 所有。
 - Runtime 的领域子模型、领域编排服务、API、Command、业务 SPI、能力 SPI 和默认基础设施 Adapter 具有可见的物理边界；新增实现应落入对应概念，不能重新堆回根包。Domain 可以依赖 Application 中的稳定契约，但不能依赖具体 Infrastructure。
 - 业务接入方既可以调用 Runtime API，也可以实现、替换或装饰 Runtime SPI；默认实现不是业务必须接受的固定行为。
-- Runtime 与自身拥有的通用默认 Adapter 内聚在一个 Maven 模块；Agent Orchestration 与其业务及模型厂商 Adapter 内聚在另一个 Maven 模块。包级依赖规则保证 Domain/Application 不引用 Infrastructure，可部署 Server 只负责接口与装配。
+- Runtime Core 与纯 Java 默认实现内聚在零第三方依赖 Maven 制品；Spring Boot 自动装配是独立薄层。Redis、持久化、Provider、MCP 和观测 Adapter 由宿主拥有且不随公共 Runtime 发布。包级依赖规则保证 Domain/Application 不引用宿主 Infrastructure，可部署 Server 只负责接口与最终装配。
 - Session 真相、执行过程和客户端进度有明确的数据职责，后续恢复与审计可以演进而不破坏 API。
 - 一轮 Assistant/ToolResult 与终态仍在同一 fencing 事务提交，读取方不会观察到孤立 ToolResult 或半轮消息；提交前的模型/Tool 进度由独立 Checkpoint 和 journal 恢复，已完成 Tool 不再要求整轮重跑。两类恢复事实只有在 Outcome/Outbox 同事务成功后才清理。
 - Redis 承担执行权、取消信号、Shadow 开关与热投影；PostgreSQL 保留事实源。多副本恢复正确性由 fencing、强一致重放、事务 Outbox 和故障测试共同保证，而不是只依赖租约。

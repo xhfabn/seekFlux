@@ -1,12 +1,12 @@
-package io.seekflux.platform.agentruntime.infrastructure.redis;
+package io.seekflux.agent.infrastructure.redis;
 
 import io.seekflux.platform.agentruntime.application.spi.capability.execution.CancellationSignalStore;
 import io.seekflux.platform.agentruntime.domain.model.execution.CancellationCause;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.List;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
-import java.util.List;
 
 public final class RedisCancellationSignalStore implements CancellationSignalStore {
 

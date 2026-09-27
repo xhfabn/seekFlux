@@ -56,10 +56,18 @@ contexts/agent-orchestration-context
   infrastructure -> 自身 port/out + Runtime application/api/business SPI/capability SPI + Search port/in + OpenAI-compatible 协议
   domain/application/port -/> Runtime 具体实现、Redis、Micrometer
 
-platform/agent-runtime
+platform/agent-runtime（公开 Core 制品）
   domain/application -> LLM / Session / RuntimeEvent / Clock 等 capability SPI
-  infrastructure -> 自身 application/spi + Runtime 所有的纯 Java/Redis 默认实现
-  domain/application/infrastructure -/> AgentOrchestration domain、Search domain、Elasticsearch
+  infrastructure -> 自身 application/spi + 纯 Java 默认实现
+  main classpath -/> Spring、Redis、JDBC、Jackson、Provider、MCP、Micrometer
+
+platform/agent-runtime-spring-boot-autoconfigure（公开可选制品）
+  -> agent-runtime Core
+  -> Spring Boot optional compile contract（不向消费者传递）
+  -/> Redis、JDBC、Provider、MCP 或业务 Context
+
+contexts/agent-orchestration-context infrastructure
+  -> Runtime SPI + SeekFlux 私有 Redis/Provider/MCP/观测 Adapter
 ```
 
 AgentOrchestration 的 Domain/Application 决定搜索目标、约束修正、追问和业务回退；Runtime 的 Domain/Application 只执行有限步循环、Deadline、取消、Tool 调度与运行事件。跨 Context 适配发生在 `agent-orchestration-context/infrastructure`：`SearchDirectTool` 与确定性回退都调用 Search 的稳定输入 Port。最终实现选择发生在 `agent-server/bootstrap`，但 Server 不拥有 Adapter 实现。Direct Search 不反向依赖 Agent 模块。

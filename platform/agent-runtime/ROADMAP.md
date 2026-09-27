@@ -651,6 +651,70 @@ AR-9 的完成门槛不能共用：AR-9A、9B、9C1、9C2、9C3 各自只在其�
 - 下一步：Agent Runtime 当前无必做阶段；仅在真实父子执行或图编排用例出现后，独立启动 AR-8C
   或 AR-9C，不能把 MCP 完成状态外推为它们已完成。
 - 关联文档/ADR/契约：[`docs/agent-runtime.md`](../../docs/agent-runtime.md)、[ADR-014](../../docs/adr/ADR-014-mcp-tool-source-and-trust-boundary.md)、[`agent-mcp-lifecycle-v1.schema.json`](../../contracts/events/agent-mcp-lifecycle-v1.schema.json)、[`contracts/openapi/seekflux-v1.yaml`](../../contracts/openapi/seekflux-v1.yaml)。
+
+### 2026-09-26：完成 Agent Runtime 公共制品边界与 RC1 打包
+
+- 阶段：AR-1～AR-9B 状态不变；AR-8C、AR-9C 仍为后置可选。本轮是已完成 Runtime
+  的发布边界收敛，不是新的 AR 能力阶段。
+- 本轮范围：将公共制品固定为
+  `io.github.xhfabn.seekflux:seekflux-agent-runtime-core:1.0.0-RC1` 与
+  `io.github.xhfabn.seekflux:seekflux-agent-runtime-spring-boot-autoconfigure:1.0.0-RC1`，
+  增加 Maven Central staging 构建配置和 GitHub Action。
+- 实现事实与关键入口：Core 改为 Java 21 独立 POM 且零第三方主依赖；Redis
+  execution authority、cancellation 和 Shadow Adapter 迁入
+  `contexts/agent-orchestration-context`；Auto-configuration 从宿主 Bean 组装
+  Registry、Context、Runtime、Loop、Executor、Pipeline 与 Router，只传递 Core，Spring Boot
+  依赖为 optional；SeekFlux Agent Server 通过该制品验证现有定制 Bean 的回退语义。
+- 失败/取消/恢复语义：本轮不改变 Runtime 终态或恢复协议。默认注册策略继续拒绝
+  `MUTATING` Tool；缺少 `AgentSessionStore`、`ExecutionAuthorityStore` 或
+  `PromptResolver` 时 Spring Context 启动失败，不用不可靠内存实现伪装成功。
+- 验证命令与结果：`mvn -q test` 全仓 68 个报告、229 个测试通过；Core 136 个
+  主源码文件不包含 JDK/SeekFlux 之外的 import；独立消费者的 offline dependency tree 只有
+  `spring-boot-autoconfigure → core`；Auto-configuration 5 个新测试通过；`central-release`
+  profile 已产出两个主 JAR、sources JAR 和 Javadoc JAR。
+- 剩余边界：尚未实际发布。正式 Central staging 需要所有者选定并添加根
+  `LICENSE`，验证 `io.github.xhfabn` 命名空间，并配置 `CENTRAL_USERNAME`、
+  `CENTRAL_TOKEN`、`GPG_PRIVATE_KEY` 和 `GPG_PASSPHRASE`。JDBC、Redis、Provider、MCP、
+  Micrometer 与业务 Tool 仍只有 SPI，由消费者负责实现与验收。
+- 下一步：先由仓库所有者确认开源许可证；再使用 RC Tag 执行 Central 手工 staging，
+  核对 POM、sources、Javadoc、签名和独立消费者接入后才决定是否 publish。
+- 关联文档/ADR：[ADR-015](../../docs/adr/ADR-015-agent-runtime-publication-boundary.md)、
+  [Core README](README.md)、
+  [Spring Boot Auto-configuration README](../agent-runtime-spring-boot-autoconfigure/README.md)。
+
+---
+
+### 2026-09-27：确定 Apache-2.0 公共制品许可证
+
+- 阶段：不改变 AR-1～AR-9B、AR-8C 或 AR-9C 的状态；这是 RC1 发布准备的许可证决策。
+- 本轮范围与事实：仓库所有者选择 Apache-2.0；根 `LICENSE` 使用官方完整文本，两个公共
+  POM 写入相同的许可证元数据；主 JAR 与 sources JAR 均包含 `META-INF/LICENSE`，发布
+  workflow 会校验两个主 JAR 的许可证。
+- 验证命令与结果：JDK 21 下执行
+  `mvn -q -pl platform/agent-runtime,platform/agent-runtime-spring-boot-autoconfigure -am package -Pcentral-release -Dgpg.skip=true -DskipTests`
+  成功；同范围 `mvn -q ... -am test` 通过，`jar tf` 确认四个 JAR 均含
+  `META-INF/LICENSE`。本轮未变更 Java 逻辑或测试。
+- 剩余边界：尚未在 Central 注册/验证 `io.github.xhfabn` 命名空间、配置 Portal token、
+  GPG 密钥和 GitHub secrets，也没有 staging 或 publish。发布前还需所有者确认拟发布代码的
+  授权归属并做独立消费者验收。
+- 下一步：完成账号与签名配置，按 [发布手册](RELEASING.md)执行 RC Tag staging 和人工发布验收。
+- 关联决策：[ADR-015](../../docs/adr/ADR-015-agent-runtime-publication-boundary.md)。
+
+---
+
+### 2026-09-27：RC1 发布前验收
+
+- 阶段：不改变 Agent Runtime 能力阶段状态；本轮只复核公共制品发布条件。
+- 实现/验收事实：JDK 21 下全仓 `mvn -q test` 产生 68 个报告、229 个测试，
+  failures/errors/skipped 均为 0；两个公共模块的 `central-release` 打包成功，主 JAR、
+  sources JAR、Javadoc JAR 齐全，Core 的 `jdeps` 仅有 `java.base`。
+- 外部前置：Portal 的 `io.github.xhfabn` 显示 Verified；GitHub Actions Repository secrets
+  中存在四个预期名称，仓库所有者确认公钥在 keyserver 可检索。Secret 值不可读取，
+  必须以 CI 实际签名和 Portal 验证结果为准。
+- 剩余边界：发布分支尚未提交/推送，RC1 Tag、Portal staging、人工 publish 与发布后
+  空缓存消费者验收尚未执行；不得提前标记为已对外发布。
+- 下一步：按 [发布手册](RELEASING.md)从已验证分支推送 RC1 Tag，检查部署结果后再决定 Publish。
+
 ---
 
 维护原则：本文会随着代码事实持续调整阶段内部设计，但不会通过改文档提前宣布能力完成。历史交付记录保留当时证据；若后续设计发生变化，新增记录说明原因并链接对应 ADR，而不是静默改写历史。
