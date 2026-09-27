@@ -732,4 +732,19 @@ AR-9 的完成门槛不能共用：AR-9A、9B、9C1、9C2、9C3 各自只在其�
 
 ---
 
+### 2026-09-27：RC1 公开制品与空缓存消费者验收
+
+- 阶段：不改变 Agent Runtime 能力阶段状态；本轮完成 RC1 对外发布验收。
+- 完成证据：仓库所有者确认后已在 Portal 提交最终 Publish；Maven Central 公共仓库的
+  `seekflux-agent-runtime-core:1.0.0-RC1` 与
+  `seekflux-agent-runtime-spring-boot-autoconfigure:1.0.0-RC1` 各自的 POM、主 JAR、sources、
+  Javadoc 和对应签名共 16 个文件均返回 HTTP 200。
+  仓库外空缓存 JDK 21 / Spring Boot 3.5.16 消费者只声明 Boot Starter 与 Auto-configuration，
+  `mvn compile` 成功；依赖树确认 Auto-configuration 传递 Core。
+- 发布终态：Portal deployment `c65b92a7-cd6f-41f4-8a20-f71cbbd6c927` 显示 `PUBLISHED`；
+  公共仓库已可消费。RC1 不可覆盖或删除，后续修订必须提升版本号。
+- 具体坐标和操作见[发布手册](RELEASING.md)。
+
+---
+
 维护原则：本文会随着代码事实持续调整阶段内部设计，但不会通过改文档提前宣布能力完成。历史交付记录保留当时证据；若后续设计发生变化，新增记录说明原因并链接对应 ADR，而不是静默改写历史。

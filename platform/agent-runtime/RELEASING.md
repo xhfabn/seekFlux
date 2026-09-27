@@ -16,7 +16,7 @@ JDBC、Redis、模型 Provider、MCP、Micrometer 和 SeekFlux 业务 Adapter �
 4. GitHub Actions 的 Repository secrets 中已存在 `CENTRAL_USERNAME`、`CENTRAL_TOKEN`、
    `GPG_PRIVATE_KEY` 和 `GPG_PASSPHRASE` 四个名称。Secret 值不可读；RC1 staging 工作流已验证其可用性。
 
-## RC1 当前状态（2026-09-27）
+## RC1 发布结果（2026-09-27）
 
 - 发布分支：`codex/agent-runtime-publishable-v1`；源提交：`e0f2139980028fa9b7215e53ef6bab2110d82cc4`；
   Tag：`agent-runtime-v1.0.0-RC1`。
@@ -24,8 +24,25 @@ JDBC、Redis、模型 Provider、MCP、Micrometer 和 SeekFlux 业务 Adapter �
   GPG 签名和 Central staging。
 - Portal deployment `c65b92a7-cd6f-41f4-8a20-f71cbbd6c927` 显示 `VALIDATED`，两个组件均通过校验；
   每个组件均有 POM、主 JAR、sources JAR、Javadoc JAR、签名和校验和。
-- 尚未点击 Portal 最终 Publish；`1.0.0-RC1` 尚非公开发布。版本正式发布后不可覆盖或删除，
-  后续迭代须使用新的版本号；发布后仍须做空缓存外部消费者验收。
+- 已经人工确认并点击 Portal 最终 Publish；Portal deployment
+  `c65b92a7-cd6f-41f4-8a20-f71cbbd6c927` 最终显示 `PUBLISHED`。两个
+  [Core POM](https://repo.maven.apache.org/maven2/io/github/xhfabn/seekflux/seekflux-agent-runtime-core/1.0.0-RC1/seekflux-agent-runtime-core-1.0.0-RC1.pom)
+  和[自动装配 POM](https://repo.maven.apache.org/maven2/io/github/xhfabn/seekflux/seekflux-agent-runtime-spring-boot-autoconfigure/1.0.0-RC1/seekflux-agent-runtime-spring-boot-autoconfigure-1.0.0-RC1.pom)
+  已从 Maven Central 公共仓库返回 HTTP 200。两个组件各自的 POM、主 JAR、sources JAR、
+  Javadoc JAR 及四个对应 `.asc` 签名，共 16 个公开文件均返回 HTTP 200。
+- 在仓库外以空 Maven 缓存建立 Spring Boot 3.5.16 消费者，只声明 Boot Starter 和本项目的
+  Auto-configuration，不声明 Core；JDK 21 `mvn compile` 成功，依赖树显示 Auto-configuration
+  仅传递 Core。版本已不可覆盖或删除，后续迭代须使用新版本号。
+
+外部消费者的可复现验证命令（先把 `consumer_dir` 指向仓库外的最小 Maven 项目，
+把 `repo_dir` 指向新建空目录）：
+
+```bash
+mvn -f "$consumer_dir/pom.xml" -Dmaven.repo.local="$repo_dir" compile
+mvn -f "$consumer_dir/pom.xml" -Dmaven.repo.local="$repo_dir" \
+  org.apache.maven.plugins:maven-dependency-plugin:3.9.0:tree \
+  -Dincludes=io.github.xhfabn.seekflux
+```
 
 ## 版本更新
 

@@ -65,6 +65,9 @@ Session、执行权、模型、恢复、分布式取消和业务 Tool 的实现�
   [GitHub Actions 运行](https://github.com/xhfabn/seekFlux/actions/runs/36301443634) 已通过签名与
   Central 上传；Portal deployment `c65b92a7-cd6f-41f4-8a20-f71cbbd6c927` 已 `VALIDATED`
   （2/2 组件）。最终人工 Publish 与公开仓库消费者验收仍未完成。
+- 同日仓库所有者确认后人工 Publish；两个 POM 已从 Maven Central 公共仓库返回 HTTP 200，
+  仓库外空缓存 Spring Boot 消费者编译成功，依赖树确认 Auto-configuration 只传递 Core。
+  Portal deployment `c65b92a7-cd6f-41f4-8a20-f71cbbd6c927` 最终显示 `PUBLISHED`。
 
 ## 关联
 

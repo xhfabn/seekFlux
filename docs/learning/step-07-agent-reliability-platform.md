@@ -185,6 +185,12 @@ Phase 2 证明了 Agent 的编排增量，但租约过期、实例退出、重�
   `c65b92a7-cd6f-41f4-8a20-f71cbbd6c927` 为 `VALIDATED`，2/2 组件通过校验，
   每个组件均含 POM、主 JAR、sources、Javadoc、签名及校验和。最终人工 Publish 尚未执行，
   因而未做公开仓库空缓存消费者验收；
+- 2026-09-27 RC1 公开消费验收：仓库所有者确认后已在 Portal 提交最终 Publish；两个
+  Maven Central 公共 POM、主 JAR、sources、Javadoc 及各自签名共 16 个文件均返回 HTTP 200。
+  在仓库外使用空 Maven 缓存，仅声明 Spring Boot
+  Starter 和 Auto-configuration 的 JDK 21 消费者 `mvn compile` 成功，依赖树为
+  `seekflux-agent-runtime-spring-boot-autoconfigure → seekflux-agent-runtime-core`；未给 Core
+  额外引入 Spring Boot、数据库或 Provider。Portal deployment 最终显示 `PUBLISHED`；
 - `agent-reliability-v1` 使用真实 Content → Outbox/Kafka → Worker → Elasticsearch → Agent 链路，12 次请求可用性 `1.0`，P95 `226.402 ms`，Fallback Rate `0.0`；
 - 单写者、fencing 单调、重复请求无额外 Run/Tool 事件、终态 Outbox、幂等审计消费、Shadow 主结果不变和快速关闭全部为 `true`；
 - 固定单测证明旧 owner 不能提交、另一个实例写取消能停止 Loop、模型/Tool 故障稳定回退、Bulkhead 饱和快速拒绝；
@@ -203,9 +209,9 @@ Phase 2 证明了 Agent 的编排增量，但租约过期、实例退出、重�
 
 公共 Core 只承诺 SPI 与运行协议，不承诺任何默认数据库、Redis、模型厂商、MCP 或观测
 Adapter。宿主自行实现持久化时必须保留 fencing、幂等、原子提交、first-writer-wins 和
-未知写结果不重放等不变量。RC1 已完成可发布构建、CI 签名与 Portal staging 校验；
+未知写结果不重放等不变量。RC1 已完成可发布构建、CI 签名、Portal staging 与公开消费验收；
 仓库所有者已于 2026-09-27 选择 Apache-2.0，并补齐根 `LICENSE`、发布 POM 元数据和
-JAR 内许可证。最终人工 Publish 与公开仓库消费者验收仍未完成。
+JAR 内许可证。Portal deployment 已显示 `PUBLISHED`，公共仓库能够解析并编译这两个制品。
 
 ## 如何验证
 

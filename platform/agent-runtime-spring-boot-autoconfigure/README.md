@@ -54,5 +54,5 @@ seekflux:
 
 Set `seekflux.agent.runtime.enabled=false` to disable all automatic assembly.
 
-Release prerequisites and Central staging steps are documented in the
+The publicly available `1.0.0-RC1` release and subsequent release steps are documented in the
 [Agent Runtime release manual](../agent-runtime/RELEASING.md).

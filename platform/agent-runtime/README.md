@@ -38,6 +38,6 @@ mvn -pl platform/agent-runtime test
 
 The `central-release` Maven profile attaches source and Javadoc JARs, signs every artifact and uses
 the Central Publisher Portal plugin. The repository owner selected Apache-2.0; the root
-[LICENSE](../../LICENSE) and both published JARs carry it. Public release is still pending Central
-namespace verification, credentials, signing and independent-consumer acceptance. See the
+[LICENSE](../../LICENSE) and both published JARs carry it. Version `1.0.0-RC1` is publicly
+available from Maven Central and has passed an empty-cache external-consumer compile. See the
 [release manual](RELEASING.md).
