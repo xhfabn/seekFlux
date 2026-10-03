@@ -48,7 +48,7 @@ public class AgentWaitController {
         var session = sessions.restoreFresh(sessionId)
                 .orElseThrow(() -> new ResponseStatusException(
                         HttpStatus.NOT_FOUND, "agent session was not found"));
-        var pending = session.waitState(waitId)
+        var pending = sessions.waitState(session.sessionId(), waitId)
                 .orElseThrow(() -> new ResponseStatusException(
                         HttpStatus.NOT_FOUND, "agent wait was not found"));
         if (!pending.waitId().equals(waitId)

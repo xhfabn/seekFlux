@@ -1,1 +1,2 @@
 io.seekflux.platform.agentruntime.autoconfigure.AgentRuntimeAutoConfiguration
+io.seekflux.platform.agentruntime.autoconfigure.AgentMcpAutoConfiguration

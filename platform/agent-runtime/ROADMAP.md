@@ -168,7 +168,12 @@ flowchart TD
 
 完成门槛：跨进程恢复后的第二轮请求能仅凭 Workspace 事实得到与原执行一致的有序消息历史；Tool Call/Result 不孤悬、不重复，原始/模型/UI 三种视图职责明确，历史兼容旧 Session，未知新字段不会导致旧事件无法重放。
 
-实现说明：本阶段选择在 `appendOutcome` 的同一 fencing 事务内按连续 position 写入本轮 Assistant/ToolResult 和终态，因此外部观察不到“消息已提交、终态未提交”的半轮历史；崩溃发生在该事务前时仍按 AR-3 之前的既有语义重跑整轮。并行 Tool 在内存中并发执行，但消息按稳定 call index 写入。Provider 返回的 reasoning 单独保存，只有显式标记 `reasoningReplayable=true` 才进入下一轮模型上下文；当前 OpenAI-compatible Adapter 固定为不可重放。
+实现说明（2026-10-03 更新）：完整 Assistant 与 DECIDED journal、ToolResult 与 terminal journal
+已改为进行中增量提交，外部可观察到合法的 EXECUTING pending Tool 历史；Outcome/Outbox 仍原子
+收敛。并行调用按稳定 index 收集，单个结果收集后即落库，不等全批完成。execution 内后续模型
+也使用完整消息，不再只依赖 observation recall。reasoning 单独保存，只有显式允许才重放。
+早期批量 Outcome 的历史记录保留在下方交付日志；当前协议见
+[ADR-017](../../docs/adr/ADR-017-agent-event-facts-and-reference-snapshots.md)。
 
 ### AR-3：Checkpoint、pending Tool 与恢复协议
 
@@ -188,7 +193,13 @@ Checkpoint、journal、Workspace/Run 事件的事务边界和写入顺序必须�
 
 完成门槛：在模型完成、Tool 提交前、Tool 进行中、Tool 完成后和 Checkpoint 写入前后等固定崩溃点接管时，系统能确定恢复位置；AR-3 只承诺 `READ_ONLY/IDEMPOTENT` Tool 的自动恢复，`MUTATING` Tool 在 AR-4 完成前必须拒绝自动重试。
 
-实现说明：`RuntimeCheckpoint` 保存 `PRE_TURN/POST_TURN/COMPLETED/SUSPENDED` 四类边界、Workspace cutoff、冻结定义、剩余预算、持久 features、observation、消息、调用指纹、usage 和 Step Trace；终态 Checkpoint 保存完整 Outcome，接管后可直接提交而不重复调用模型。`tool_call_journal` 在模型决策事务中写 `DECIDED`，提交 Tool 前写 `EXECUTING`，接管时原子转为 `UNKNOWN`，结果成功落为终态。当前 Step 的已完成结果直接复用；`READ_ONLY/IDEMPOTENT` 的 `DECIDED/UNKNOWN` 调用使用原 Tool Call ID 恢复，未知 `MUTATING` 调用返回 `FAIL_UNSAFE_PENDING_TOOL`，不进入 Loop。Workspace Outcome/Outbox 提交成功时在同一事务清理 Checkpoint 与 journal。
+实现说明（2026-10-03 更新）：内存 `RuntimeCheckpoint` 仍表示完整可恢复运行态；持久 v2 编码
+只保存坐标和 state/metadata/terminal 事实引用，正文与 Trace 增量追加。journal 使用消息/结果引用，
+旧 v1 内联编码仍可恢复。V16 Session 状态快照默认每 100 个事件，挂起/终态强制保存，队列/等待
+保存引用；恢复从基线后重放。DECIDED/EXECUTING/UNKNOWN/结果复用和写副作用对账规则保持。
+Outcome/Outbox 事务清理临时 Checkpoint/journal，但不删除原始事件、摘要或状态快照。当前边界见
+[持久化 v2 契约](../../contracts/runtime/agent-persistence-v2.md)，本轮验收记录见
+[Step 07](../../docs/learning/step-07-agent-reliability-platform.md)。
 
 ### AR-4：Mutating Tool 副作用账本
 
@@ -748,3 +759,27 @@ AR-9 的完成门槛不能共用：AR-9A、9B、9C1、9C2、9C3 各自只在其�
 ---
 
 维护原则：本文会随着代码事实持续调整阶段内部设计，但不会通过改文档提前宣布能力完成。历史交付记录保留当时证据；若后续设计发生变化，新增记录说明原因并链接对应 ADR，而不是静默改写历史。
+
+### 2026-10-02：默认 MCP Client 迁入公开 Core（已完成）
+
+- 本地发布分支快进合入 main，无冲突；新开发代码仍未提交/推送，未发布新制品。
+- Core `mcp` 包提供默认 Client、连接管理、Proxy 与可替换策略；Spring 公共配置默认关闭，
+  默认 Bean 按宿主实现回退。Domain/Application 与 Loop 不直接依赖 MCP/Jackson。
+- 开发版本统一为 `1.0.0-RC2-SNAPSHOT`，已发布 RC1 保持不变。新的 Jackson 依赖门槛、
+  Host/Client/外部 Server 责任和剩余支持范围见
+  [ADR-016](../../docs/adr/ADR-016-default-mcp-in-runtime-core.md) 与
+  [MCP 接入契约](../../contracts/runtime/agent-mcp-v1.md)。
+- JDK 21 全仓 clean test：70 份报告、251 个测试全通过；源码/Javadoc 打包、Core 字节码边界
+  和仓库外纯 Java/Spring Boot 消费者编译与启动通过。具体命令与证据只记录在
+  [Step 07](../../docs/learning/step-07-agent-reliability-platform.md)。
+- 不改变 AR-8C/AR-9C 后置可选状态；不将现有 Tool 子集外推为完整 MCP 或第三方业务验收。
+
+### 2026-10-03：MCP 包职责分类（已完成）
+
+- 将扁平 MCP 目录整理为 model、spi、connection、exception 与 infrastructure 的
+  HTTP/auth/schema/tool 分类；同步全部调用方、自动配置与测试包。
+- 共享 Schema 结果模型和 Tool 调用接口解耦契约与具体实现；没有改变协议、事件或配置键。
+- JDK 21 全仓 clean test：71 份报告、254 个测试全部通过；打包与收紧后的 Jackson 字节码
+  边界通过。具体命令和仓库外验收证据见 [Step 07](../../docs/learning/step-07-agent-reliability-platform.md)，
+  当前类型归属见 [MCP 契约](../../contracts/runtime/agent-mcp-v1.md)。
+- 仍为未发布的 RC2 开发版本；不改变后置可选阶段状态。

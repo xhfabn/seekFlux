@@ -19,7 +19,14 @@ public record AgentSession(
         long stateVersion,
         Map<String, Object> workspaceState,
         AgentSessionStatus status,
-        List<WorkspaceEvent> events) {
+        List<WorkspaceEvent> events,
+        AgentSessionSnapshot baseline) {
+
+    public AgentSession(String sessionId, String agentId, String agentVersion, long position,
+            long stateVersion, Map<String, Object> workspaceState, AgentSessionStatus status,
+            List<WorkspaceEvent> events) {
+        this(sessionId, agentId, agentVersion, position, stateVersion, workspaceState, status, events, null);
+    }
 
     public AgentSession {
         workspaceState = workspaceState == null ? Map.of() : Map.copyOf(workspaceState);
@@ -34,25 +41,44 @@ public record AgentSession(
                 instanceof WorkspaceEvent.SessionCreated created)) {
             throw new IllegalArgumentException("an agent session must start with SessionCreated");
         }
-        List<WorkspaceEvent> ordered = events.stream()
+        return restore(new AgentSessionSnapshot(1, sessionId, created.agentId(), created.agentVersion(),
+                0, 0, Map.of(), AgentSessionStatus.IDLE, CapabilityActivationState.EMPTY, Set.of(), List.of()),
+                List.of(), events);
+    }
+
+    /** Historical views hydrate references; only the tail is applied to the state reducer. */
+    public static AgentSession restore(AgentSessionSnapshot snapshot,
+            List<WorkspaceEvent> historicalViews, List<WorkspaceEvent> tail) {
+        List<WorkspaceEvent> ordered = tail.stream()
                 .sorted(Comparator.comparingLong(WorkspaceEvent::position))
                 .toList();
-        AgentSessionStatus status = AgentSessionStatus.IDLE;
-        long position = 0;
-        long stateVersion = 0;
-        Map<String, Object> workspaceState = Map.of();
+        AgentSessionStatus status = snapshot.status();
+        long position = snapshot.position();
+        long stateVersion = snapshot.stateVersion();
+        Map<String, Object> workspaceState = snapshot.workspaceState();
         Set<String> messageIds = new HashSet<>();
-        Set<String> toolCalls = new HashSet<>();
+        Set<String> toolCalls = new HashSet<>(snapshot.pendingToolCallIds());
         Set<String> toolResults = new HashSet<>();
         Set<String> suspendedToolCalls = new HashSet<>();
         Map<String, WaitState> pendingWaits = new LinkedHashMap<>();
         Map<String, WorkspaceEvent.QueuedUserMessage> queuedMessages = new LinkedHashMap<>();
+        for (WorkspaceEvent view : historicalViews) {
+            if (view instanceof WorkspaceEvent.WaitSuspended wait
+                    && snapshot.retainedEventPositions().contains(view.position())) {
+                pendingWaits.put(wait.waitState().waitId(), wait.waitState());
+            }
+            if (view instanceof WorkspaceEvent.QueuedUserMessage queued
+                    && snapshot.retainedEventPositions().contains(view.position())) {
+                queuedMessages.put(queued.messageId(), queued);
+            }
+        }
         for (WorkspaceEvent event : ordered) {
             if (event.position() <= position) {
                 throw new IllegalArgumentException("workspace event positions must be strictly increasing");
             }
             position = event.position();
             status = switch (event) {
+                case WorkspaceEvent.ExecutionRecorded ignored -> status;
                 case WorkspaceEvent.SessionCreated ignored -> AgentSessionStatus.IDLE;
                 case WorkspaceEvent.UserMessage message -> {
                     requireUnique(messageIds, message.messageId(), "message");
@@ -120,25 +146,29 @@ public record AgentSession(
             };
         }
         Set<String> temporarilyPending = status == AgentSessionStatus.COMPLETED
-                ? Set.of() : suspendedToolCalls;
+                || status == AgentSessionStatus.IDLE ? Set.of() : toolCalls;
         if (!toolResults.containsAll(toolCalls.stream()
                 .filter(callId -> !temporarilyPending.contains(callId)).toList())) {
             throw new IllegalArgumentException("every assistant tool call must have exactly one tool result");
         }
         return new AgentSession(
-                sessionId,
-                created.agentId(),
-                created.agentVersion(),
+                snapshot.sessionId(),
+                snapshot.agentId(),
+                snapshot.agentVersion(),
                 position,
                 stateVersion,
                 workspaceState,
                 status,
-                ordered);
+                java.util.stream.Stream.concat(historicalViews.stream(), ordered.stream())
+                        .collect(java.util.stream.Collectors.toMap(WorkspaceEvent::position, event -> event,
+                                (left, right) -> right, java.util.TreeMap::new)).values().stream().toList(),
+                snapshot);
     }
 
     public CapabilityActivationState capabilityState() {
-        CapabilityActivationState state = CapabilityActivationState.EMPTY;
+        CapabilityActivationState state = baseline == null ? CapabilityActivationState.EMPTY : baseline.capabilities();
         for (WorkspaceEvent event : events) {
+            if (baseline != null && event.position() <= baseline.position()) continue;
             if (event instanceof WorkspaceEvent.CapabilitiesChanged changed) {
                 if (changed.baseVersion() != state.version()) {
                     throw new IllegalStateException("capability activation versions must be contiguous");
@@ -217,6 +247,39 @@ public record AgentSession(
         return events.stream()
                 .filter(event -> event.position() > cutoff)
                 .allMatch(WorkspaceEvent.QueuedUserMessage.class::isInstance);
+    }
+
+    public boolean hasOnlyExecutionEventsAfter(long cutoff, String requestId) {
+        return events.stream().filter(event -> event.position() > cutoff).allMatch(event ->
+                event instanceof WorkspaceEvent.QueuedUserMessage
+                || event instanceof WorkspaceEvent.ExecutionRecorded execution
+                        && (requestId.equals(execution.requestId()) || execution.state().containsKey("summaryId"))
+                || event instanceof WorkspaceEvent.AssistantMessage assistant && requestId.equals(assistant.message().requestId())
+                || event instanceof WorkspaceEvent.ToolResultMessage tool && requestId.equals(tool.message().requestId()));
+    }
+
+    public AgentSessionSnapshot snapshot() {
+        Set<String> pendingCalls = new HashSet<>(baseline == null ? Set.of() : baseline.pendingToolCallIds());
+        List<Long> retained = new java.util.ArrayList<>();
+        queuedMessages().forEach(event -> retained.add(event.position()));
+        pendingWait().ifPresent(wait -> events.stream()
+                .filter(WorkspaceEvent.WaitSuspended.class::isInstance)
+                .map(WorkspaceEvent.WaitSuspended.class::cast)
+                .filter(event -> event.waitState().waitId().equals(wait.waitId()))
+                .forEach(event -> retained.add(event.position())));
+        promotedQueuedExecution().ifPresent(event -> retained.add(event.position()));
+        events.stream().filter(WorkspaceEvent.UserMessage.class::isInstance)
+                .max(Comparator.comparingLong(WorkspaceEvent::position))
+                .ifPresent(event -> retained.add(event.position()));
+        for (WorkspaceEvent event : events) {
+            if (event instanceof WorkspaceEvent.AssistantMessage assistant) {
+                assistant.message().toolCalls().forEach(call -> pendingCalls.add(call.toolCallId()));
+            } else if (event instanceof WorkspaceEvent.ToolResultMessage result) {
+                pendingCalls.remove(result.message().toolCallId());
+            }
+        }
+        return new AgentSessionSnapshot(1, sessionId, agentId, agentVersion, position, stateVersion,
+                workspaceState, status, capabilityState(), pendingCalls, retained.stream().distinct().sorted().toList());
     }
 
     private static void requireUnique(Set<String> values, String value, String label) {

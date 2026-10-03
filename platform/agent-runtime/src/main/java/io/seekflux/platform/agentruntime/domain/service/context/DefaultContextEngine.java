@@ -301,14 +301,29 @@ public final class DefaultContextEngine implements ContextEngine {
         }
         List<ContextMessage> history = new ArrayList<>();
         for (HistoryTurn turn : historyTurns(session, cutoff)) {
-            turn.entries().forEach(entry -> history.add(entry.message()));
+            turn.entries().stream()
+                    .filter(entry -> decisionContext.messages().stream().noneMatch(message ->
+                            message.messageId().equals(entry.message().messageId())))
+                    .forEach(entry -> history.add(entry.message()));
         }
         layers.add(new ContextLayer(ContextLayer.Type.HISTORY, false, history));
         List<ContextMessage> recall = new ArrayList<>();
-        for (AgentToolObservation observation : decisionContext.observations()) {
-            recall.add(new ContextMessage(
-                    "tool",
-                    observation.toolName() + ":" + observation.result().output()));
+        if (!decisionContext.messages().isEmpty()) {
+            for (var message : decisionContext.messages()) {
+                if (message instanceof io.seekflux.platform.agentruntime.domain.model.message.AgentMessage.Assistant assistant) {
+                    recall.add(new ContextMessage("assistant", assistantContent(assistant),
+                            assistant.messageId(), null, null));
+                } else if (message instanceof io.seekflux.platform.agentruntime.domain.model.message.AgentMessage.ToolResult result) {
+                    recall.add(new ContextMessage("tool", result.modelContent(), result.messageId(),
+                            result.toolCallId(), result.toolName()));
+                }
+            }
+        } else {
+            // Compatibility for planners which supply observations without message facts.
+            for (AgentToolObservation observation : decisionContext.observations()) {
+                recall.add(new ContextMessage(
+                        "tool", observation.toolName() + ":" + observation.result().output()));
+            }
         }
         layers.add(new ContextLayer(ContextLayer.Type.CURRENT_RECALL, true, recall));
         ContextRenderer.RenderedContext rendered = ContextRenderer.render(layers);

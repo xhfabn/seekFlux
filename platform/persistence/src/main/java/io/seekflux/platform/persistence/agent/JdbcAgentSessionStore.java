@@ -37,6 +37,10 @@ import java.nio.charset.StandardCharsets;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.stereotype.Repository;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.annotation.Isolation;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
+import io.seekflux.platform.agentruntime.domain.model.session.AgentSessionSnapshot;
 
 @Repository
 public class JdbcAgentSessionStore implements AgentSessionStore {
@@ -46,14 +50,54 @@ public class JdbcAgentSessionStore implements AgentSessionStore {
     private final JdbcClient jdbcClient;
     private final ObjectMapper objectMapper;
     private final WorkspaceMessageCodec messageCodec = new WorkspaceMessageCodec();
+    private final int snapshotInterval;
 
     public JdbcAgentSessionStore(JdbcClient jdbcClient, ObjectMapper objectMapper) {
+        this(jdbcClient, objectMapper, 100);
+    }
+
+    @Autowired
+    public JdbcAgentSessionStore(JdbcClient jdbcClient, ObjectMapper objectMapper,
+            @Value("${seekflux.agent.session.snapshot-interval-events:100}") int snapshotInterval) {
         this.jdbcClient = jdbcClient;
         this.objectMapper = objectMapper;
+        if (snapshotInterval < 1) throw new IllegalArgumentException("snapshot interval must be positive");
+        this.snapshotInterval = snapshotInterval;
     }
 
     @Override
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public Optional<AgentSession> restoreFresh(String sessionId) {
+        Optional<AgentSessionSnapshot> snapshot = jdbcClient.sql("""
+                SELECT payload::text FROM agent.session_snapshots WHERE session_id = :sessionId
+                ORDER BY event_position DESC LIMIT 1
+                """).param("sessionId", sessionId)
+                .query((row, index) -> objectMapper.convertValue(fromJson(row.getString(1)), AgentSessionSnapshot.class))
+                .optional();
+        if (snapshot.isPresent()) {
+            AgentSessionSnapshot baseline = snapshot.get();
+            long compressedThrough = jdbcClient.sql("""
+                    SELECT COALESCE(MAX(inclusive_cutoff), 0) FROM agent.context_compactions WHERE session_id = :sessionId
+                    """).param("sessionId", sessionId).query(Long.class).single();
+            List<Long> retained = new java.util.ArrayList<>(baseline.retainedEventPositions());
+            retained.add(-1L);
+            List<WorkspaceEvent> views = jdbcClient.sql("""
+                    SELECT event_position, event_type, schema_version, message_id, tool_call_id,
+                           request_id, turn_id, event_time, payload::text
+                    FROM agent.workspace_events WHERE session_id = :sessionId AND event_position <= :position
+                      AND (event_position IN (:retained) OR (event_position > :compressedThrough
+                        AND event_type IN ('USER_MESSAGE', 'ASSISTANT_MESSAGE', 'TOOL_RESULT_MESSAGE')))
+                    ORDER BY event_position
+                    """).param("sessionId", sessionId).param("position", baseline.position())
+                    .param("retained", retained).param("compressedThrough", compressedThrough).query(this::mapEvent).list();
+            List<WorkspaceEvent> tail = jdbcClient.sql("""
+                    SELECT event_position, event_type, schema_version, message_id, tool_call_id,
+                           request_id, turn_id, event_time, payload::text
+                    FROM agent.workspace_events WHERE session_id = :sessionId AND event_position > :position
+                    ORDER BY event_position
+                    """).param("sessionId", sessionId).param("position", baseline.position()).query(this::mapEvent).list();
+            return Optional.of(AgentSession.restore(baseline, views, tail));
+        }
         List<WorkspaceEvent> events = jdbcClient.sql("""
                         SELECT event_position, event_type, schema_version, message_id, tool_call_id,
                                request_id, turn_id, event_time, payload::text
@@ -65,6 +109,32 @@ public class JdbcAgentSessionStore implements AgentSessionStore {
                 .query(this::mapEvent)
                 .list();
         return events.isEmpty() ? Optional.empty() : Optional.of(AgentSession.replay(sessionId, events));
+    }
+
+    @Transactional
+    public void saveSnapshotIfNeeded(String sessionId, boolean force) {
+        long head = jdbcClient.sql("SELECT event_position FROM agent.sessions WHERE session_id = :sessionId FOR UPDATE")
+                .param("sessionId", sessionId).query(Long.class).single();
+        long previous = jdbcClient.sql("SELECT COALESCE(MAX(event_position), 0) FROM agent.session_snapshots WHERE session_id = :sessionId")
+                .param("sessionId", sessionId).query(Long.class).single();
+        if (head <= previous || !force && head - previous < snapshotInterval) return;
+        AgentSessionSnapshot snapshot = restoreFresh(sessionId).orElseThrow().snapshot();
+        if (snapshot.position() != head) throw new IllegalStateException("Session snapshot high-water mismatch");
+        jdbcClient.sql("""
+                INSERT INTO agent.session_snapshots(session_id, event_position, schema_version, payload, created_at)
+                VALUES (:sessionId, :position, 1, CAST(:payload AS jsonb), CURRENT_TIMESTAMP)
+                ON CONFLICT (session_id, event_position) DO NOTHING
+                """).param("sessionId", sessionId).param("position", head)
+                .param("payload", toJson(objectMapper.convertValue(snapshot, MAP_TYPE))).update();
+    }
+
+    @Override
+    public Optional<WaitState> waitState(String sessionId, String waitId) {
+        return jdbcClient.sql("""
+                SELECT payload::text FROM agent.runtime_waits WHERE session_id = :sessionId AND wait_id = :waitId
+                """).param("sessionId", sessionId).param("waitId", UUID.fromString(waitId))
+                .query((row, index) -> new AgentRecoveryCodec(objectMapper).decodeWaitState(fromJson(row.getString(1))))
+                .optional();
     }
 
     @Override
@@ -380,6 +450,7 @@ public class JdbcAgentSessionStore implements AgentSessionStore {
                 request.turnId(),
                 eventTime,
                 payload);
+        saveSnapshotIfNeeded(request.sessionId(), false);
         return QueueCommitResult.committed(queueDepth + 1);
     }
 
@@ -506,18 +577,44 @@ public class JdbcAgentSessionStore implements AgentSessionStore {
     @Transactional
     public void appendOutcome(
             String sessionId, AgentRunResult result, long fencingToken, Instant eventTime) {
+        JdbcWorkspaceFacts facts = new JdbcWorkspaceFacts(jdbcClient, objectMapper);
+        facts.lock(sessionId, fencingToken);
+        String outcomeIdentity = result.state() == AgentTerminalState.WAITING
+                ? result.waitState().waitId() : "outcome:" + sessionId + ":" + result.trace().requestId();
+        UUID outcomeId = eventId(outcomeIdentity);
+        boolean exists = jdbcClient.sql("SELECT EXISTS(SELECT 1 FROM agent.workspace_events WHERE event_id = :eventId)")
+                .param("eventId", outcomeId).query(Boolean.class).single();
         String eventType = switch (result.state()) {
             case CANCELLED -> "RUN_CANCELLED";
             case FAILED -> "RUN_FAILED";
             case WAITING -> "WAIT_SUSPENDED";
             default -> "RUN_COMPLETED";
         };
-        java.util.Set<String> persistedMessageIds = new java.util.HashSet<>(jdbcClient.sql("""
+        if (exists) {
+            Map<String, Object> expected = result.state() == AgentTerminalState.WAITING
+                    ? encodeWaitState(result.waitState())
+                    : new java.util.LinkedHashMap<>(Map.of("agentRunId", result.trace().agentRunId(), "state", result.state().name()));
+            String reason = result.state() == AgentTerminalState.CANCELLED ? result.cancellationReason() : result.fallbackReason();
+            if (result.state() != AgentTerminalState.WAITING && reason != null) expected.put("reason", reason);
+            boolean same = jdbcClient.sql("""
+                    SELECT event_type = :type AND payload = CAST(:payload AS jsonb)
+                    FROM agent.workspace_events WHERE event_id = :eventId
+                    """).param("type", eventType).param("payload", toJson(expected))
+                    .param("eventId", outcomeId).query(Boolean.class).single();
+            if (!same) throw new IllegalStateException("Outcome identity/content conflict");
+            return;
+        }
+        // Complete-message persistence is also available to legacy Loop implementations.
+        for (AgentMessage message : result.messages()) facts.message(sessionId, message, Map.of(), eventTime);
+        List<String> requestedIds = result.messages().stream().map(AgentMessage::messageId).toList();
+        java.util.Set<String> persistedMessageIds = requestedIds.isEmpty() ? java.util.Set.of()
+                : new java.util.HashSet<>(jdbcClient.sql("""
                         SELECT message_id
                         FROM agent.workspace_events
-                        WHERE session_id = :sessionId AND message_id IS NOT NULL
+                        WHERE session_id = :sessionId AND message_id IN (:messageIds)
                         """)
                 .param("sessionId", sessionId)
+                .param("messageIds", requestedIds)
                 .query(String.class)
                 .list());
         List<AgentMessage> newMessages = result.messages().stream()
@@ -543,6 +640,7 @@ public class JdbcAgentSessionStore implements AgentSessionStore {
                     waitState.turnId(),
                     eventTime,
                     encodeWaitState(waitState));
+            saveSnapshotIfNeeded(sessionId, true);
             return;
         }
         Map<String, Object> payload = new java.util.LinkedHashMap<>();
@@ -554,9 +652,11 @@ public class JdbcAgentSessionStore implements AgentSessionStore {
         if (terminalReason != null) {
             payload.put("reason", terminalReason);
         }
-        insertWorkspaceEvent(sessionId, position, eventType, null, null, eventTime, payload);
+        insertWorkspaceEvent(outcomeId, sessionId, position, eventType, 1, null, null,
+                result.trace().requestId(), result.trace().turnId(), eventTime, payload);
         insertOutcomeOutbox(sessionId, position, result, fencingToken, eventTime);
         clearRecoveryState(sessionId, result.trace().requestId(), fencingToken);
+        saveSnapshotIfNeeded(sessionId, true);
     }
 
     private long advancePosition(
@@ -847,6 +947,8 @@ public class JdbcAgentSessionStore implements AgentSessionStore {
         String reason = string(payload, "reason");
         int schemaVersion = row.getInt("schema_version");
         return switch (row.getString("event_type")) {
+            case "EXECUTION_PROGRESS", "EXECUTION_METADATA", "EXECUTION_STEP", "EXECUTION_TERMINAL", "COMPACTION_COMMITTED", "TOOL_DISPATCHED" ->
+                    new WorkspaceEvent.ExecutionRecorded(position, eventTime, row.getString("request_id"), payload);
             case "SESSION_CREATED" -> new WorkspaceEvent.SessionCreated(
                     position,
                     eventTime,

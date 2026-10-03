@@ -11,7 +11,7 @@
 
 > **当前处于：Step 10 已完成，Step 11「多模态媒体理解与跨模态检索」已开始、仍为下一步。**
 
-截至 2026-09-27，已经跑通以下真实链路：
+截至 2026-10-03，已经跑通以下真实链路：
 
 - 内容登记 → PostgreSQL/Outbox → Kafka → Worker 生成画像并发布 → Elasticsearch 建索引；
 - 用户画像保存到 Redis → Search/Feed 使用真实后端数据；
@@ -20,6 +20,11 @@
 - 自研 Agent Runtime 主链路 `Router → FeaturePipeline → SessionExecutor → AgentLoop`，以及有限步、共同 Deadline、Tool Schema、稳定终态和版本冻结；
 - PostgreSQL Session 追加式 User/Assistant/ToolResult 完整消息事件与独立运行事件、Redis 执行权/热投影、重复请求保护和同步取消入口；
 - 受 fencing 保护的 Runtime Checkpoint、pending Tool journal 和有限 ResumeAction；只读/幂等 Tool 可从模型后、执行中或结果后安全恢复，写 Tool 通过持久副作用账本、稳定幂等键、外部回执和 reconciliation 恢复且不盲目重放；
+- 完整 Assistant/ToolResult 已在进行中增量提交为 PostgreSQL 事实；v2 Checkpoint/journal 使用正文引用，
+  Session 按配置事件间隔及挂起/终态创建精简状态快照，恢复只重放基线后的状态事件。
+  execution 内模型输入已包含完整消息；摘要切换只改变投影引用，原始正文保留。真实 PostgreSQL
+  崩溃、部分结果、队列、等待回调、冲突回滚和旧版编码验收见 [Step 07](step-07-agent-reliability-platform.md)，
+  边界见 [ADR-017](../adr/ADR-017-agent-event-facts-and-reference-snapshots.md)；不承诺 token 级持久恢复；
 - 显式 `NEW_EXECUTION/STEER/QUEUE` Ingress、PostgreSQL 有界插话队列、先入队后取消、持权批量 drain、等待态只排队、旧 Steer 信号精确清理和 promotion 崩溃恢复；
 - 两个配置化 AgentDef、Search Tool Adapter、追问、Agent → Direct Fallback、Agent/Search 双 Trace 和 Direct/Agent 对照 Eval；
 - 简单 Query 直达 Search、复杂 Query 进入 Agent 的 AUTO Router，结构化 SearchPlan 与版本化多轮 ConstraintPatch；
@@ -27,7 +32,11 @@
 - OpenAI-compatible `LlmClient` Adapter 与版本化 Prompt；默认确定性 Provider 保留为无 Key 回归基线；
 - Agent Runtime 已拆成可发布的 `seekflux-agent-runtime-core:1.0.0-RC1` 与
   `seekflux-agent-runtime-spring-boot-autoconfigure:1.0.0-RC1`；Core 零第三方主依赖，
-  Auto-configuration 只传递 Core，Redis/JDBC/Provider/MCP 均为宿主实现；
+  Auto-configuration 只传递 Core，Redis/JDBC/Provider/MCP 均为宿主实现（已发布 RC1 历史边界）；
+  当前 `1.0.0-RC2-SNAPSHOT` 源码已将默认 MCP Client/连接管理迁入 Core，MCP 包允许 Jackson，
+  公共 Spring MCP 配置默认关闭，认证/授权/Schema/结果对账/观测可局部替换；开发版本尚未发布；
+  MCP 源码已按 model/spi/connection/exception 与 infrastructure 的 HTTP/认证/Schema/Tool 分类，
+  结构测试固定接口签名与实现边界，不改变现有协议或配置行为；
 - Redis fencing/owner-CAS、失主接管、原因化跨实例取消、模型/Tool 在途取消、优雅停机和旧 owner 提交隔离；取消以 `USER_CANCEL/STEER/AUTHORITY_LOST/SHUTDOWN` 独立落为 `CANCELLED`，不会误触发 fallback；
 - Agent 终态事务 Outbox、Kafka 幂等审计消费、模型/Tool Bulkhead 与固定故障注入；
 - Agent 持久等待已支持类型化 `WAITING/SUSPENDED`、HITL 审批、Async/Waitpoint 回调、独立等待期限、超时/取消 first-writer-wins、恢复后 ToolResult 补偿和等待期间 Queue 的后续 drain；
@@ -48,7 +57,9 @@
 Agent Phase 3 已经完成，Phase 4 的行为事实与实时特征两个深化切片也已完成。Agent Runtime 后续演进中的 AR-1“取消语义闭环”、AR-2“完整消息事件与多轮历史”、AR-3“Checkpoint、pending Tool 与恢复协议”、AR-4“Mutating Tool 副作用账本”、AR-5“Steer Queue/Drain”、AR-6“上下文治理、413 重试和 OutputGuard”、AR-7“流式模型与实时 Push”、AR-8A/AR-8B“持久等待、HITL 与异步恢复”、AR-9A“Skill/ToolGroup 与版本路由”以及 AR-9B“MCP Tool 来源与连接治理”已完成；当前没有必须继续的 Agent Runtime 阶段。AR-8C“Handoff/子 Agent/Fork”和 AR-9C“Chained/Graph”仍因缺少明确产品用例保持后置可选，实施记录见[模块路线](../../platform/agent-runtime/ROADMAP.md)。当前 wait resolution 复用 authority/fencing/Checkpoint 主链，重复回调、timeout 和取消由 PostgreSQL first-writer-wins 仲裁；能力解析则以 AgentDef 为最大权限，在 execution/Checkpoint 中冻结 Catalog、Skill、ToolGroup、实际注册 Tool 和 Tool Schema 版本。MCP 默认关闭且只覆盖 Streamable HTTP Tool 子集，每个第三方业务 server 的 effect、凭据、审批和状态查询仍需单独验收。通用父子协调 SPI 不等于真实父子产品能力，静态 Capability Catalog 也不等于在线配置平台。默认固定评测仍使用可复现的确定性 Provider，已有 LongCat-2.0 单次联调不冒充质量或成本基线。每个真实写 Tool 的外部状态查询或补偿仍必须随具体集成单独验收。Ark-Leto 反向核对矩阵见 [ADR-006](../adr/ADR-006-agent-reliability-fencing-outbox-shadow.md)，流式安全边界见 [ADR-011](../adr/ADR-011-agent-streaming-push-and-eager-tool-safety.md)，持久等待决策见 [ADR-012](../adr/ADR-012-agent-durable-wait-and-resume.md)，能力路由决策见 [ADR-013](../adr/ADR-013-agent-capability-snapshot-and-routing.md)，MCP 信任边界见 [ADR-014](../adr/ADR-014-mcp-tool-source-and-trust-boundary.md)。
 
 Runtime 的公共发布边界已按 [ADR-015](../adr/ADR-015-agent-runtime-publication-boundary.md)
-收敛为纯 Java Core 与可选 Spring Boot 自动装配。仓库所有者已选择 Apache-2.0，根许可证、
+在 RC1 收敛为纯 Java Core 与可选 Spring Boot 自动装配；2026-10-02 的默认 MCP 与 JSON 依赖
+调整见 [ADR-016](../adr/ADR-016-default-mcp-in-runtime-core.md)，本轮证据追加在
+[Step 07](step-07-agent-reliability-platform.md)，不改变当前 Step 11 总路线。仓库所有者已选择 Apache-2.0，根许可证、
 两个发布 POM 的许可证元数据和 JAR 内许可证已配置；Portal 中 `io.github.xhfabn` 已验证，
 GitHub Actions 的四个 Secret 名称已就位，公钥已在 keyserver 可检索。RC1 Tag 已触发
 [发布工作流](https://github.com/xhfabn/seekFlux/actions/runs/36301443634)，实际签名及 Portal

@@ -18,6 +18,11 @@ public interface AgentSessionStore {
 
     Optional<AgentSession> restoreFresh(String sessionId);
 
+    default Optional<io.seekflux.platform.agentruntime.domain.model.wait.WaitState> waitState(
+            String sessionId, String waitId) {
+        return restoreFresh(sessionId).flatMap(session -> session.waitState(waitId));
+    }
+
     AgentSession createIfAbsent(String sessionId, AgentDefinition definition, Instant eventTime);
 
     IngressCommitResult commitIngress(AgentRunRequest request, long fencingToken, Instant eventTime);

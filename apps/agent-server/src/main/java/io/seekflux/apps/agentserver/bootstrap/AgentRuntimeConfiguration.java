@@ -18,11 +18,13 @@ import io.seekflux.agent.infrastructure.observability.MicrometerToolExecutionObs
 import io.seekflux.agent.infrastructure.observability.MicrometerContextEventRecorder;
 import io.seekflux.agent.infrastructure.observability.MicrometerCapabilityEventRecorder;
 import io.seekflux.agent.infrastructure.observability.MicrometerMcpEventRecorder;
-import io.seekflux.agent.infrastructure.mcp.McpConnectionManager;
-import io.seekflux.agent.infrastructure.mcp.McpCredentialProvider;
-import io.seekflux.agent.infrastructure.mcp.McpProxyTool;
-import io.seekflux.agent.infrastructure.mcp.McpSchemaTranslator;
-import io.seekflux.agent.infrastructure.mcp.StreamableHttpMcpClientFactory;
+import io.seekflux.platform.agentruntime.mcp.connection.McpConnectionManager;
+import io.seekflux.platform.agentruntime.autoconfigure.AgentMcpProperties;
+import io.seekflux.platform.agentruntime.mcp.infrastructure.auth.EnvironmentMcpCredentialProvider;
+import io.seekflux.platform.agentruntime.mcp.spi.McpCredentialProvider;
+import io.seekflux.platform.agentruntime.mcp.infrastructure.tool.McpProxyTool;
+import io.seekflux.platform.agentruntime.mcp.infrastructure.schema.McpSchemaTranslator;
+import io.seekflux.platform.agentruntime.mcp.infrastructure.http.StreamableHttpMcpClientFactory;
 import io.seekflux.agent.infrastructure.event.RedisPushEventRelay;
 import io.seekflux.agent.infrastructure.projection.RedisAgentSessionProjection;
 import io.seekflux.agent.infrastructure.runtime.AgentRuntimeExecutionAdapter;
@@ -281,23 +283,7 @@ class AgentRuntimeConfiguration {
 
     @Bean
     McpCredentialProvider agentMcpCredentialProvider() {
-        return credentialRef -> {
-            if (credentialRef == null || credentialRef.isBlank()) {
-                return Map.of();
-            }
-            if (!credentialRef.startsWith("env:")) {
-                throw new IllegalArgumentException("unsupported MCP credential reference");
-            }
-            String environmentName = credentialRef.substring("env:".length());
-            if (!environmentName.matches("[A-Z][A-Z0-9_]{0,127}")) {
-                throw new IllegalArgumentException("invalid MCP credential environment reference");
-            }
-            String secret = System.getenv(environmentName);
-            if (secret == null || secret.isBlank()) {
-                throw new IllegalStateException("configured MCP credential is unavailable");
-            }
-            return Map.of("Authorization", "Bearer " + secret);
-        };
+        return new EnvironmentMcpCredentialProvider();
     }
 
     @Bean(initMethod = "start", destroyMethod = "close")

@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import io.seekflux.agent.infrastructure.tool.SearchDirectTool;
 import io.seekflux.agent.infrastructure.tool.SearchFilteredTool;
 import io.seekflux.platform.agentruntime.application.command.CapabilityRequest;
+import io.seekflux.platform.agentruntime.autoconfigure.AgentMcpProperties;
 import io.seekflux.platform.agentruntime.application.spi.capability.llm.LlmClient;
 import io.seekflux.platform.agentruntime.domain.model.capability.CapabilityActivationState;
 import io.seekflux.platform.agentruntime.domain.model.decision.AgentDecision;

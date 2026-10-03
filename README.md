@@ -49,10 +49,11 @@ Agent Runtime 的详细设计见 [docs/agent-runtime.md](docs/agent-runtime.md)�
 
 ## Agent Runtime 公共制品
 
-可复用 Runtime 按两个 Maven 制品维护：纯 Java、零第三方主依赖的
+可复用 Runtime 按两个 Maven 制品维护：Java 21、包含默认 MCP Client 的
 `seekflux-agent-runtime-core`，以及只传递 Core 的
-`seekflux-agent-runtime-spring-boot-autoconfigure`。持久化、Redis、模型 Provider、MCP 和观测由宿主
-实现 SPI，不作为公共制品依赖。用法见 [Core README](platform/agent-runtime/README.md) 与
+`seekflux-agent-runtime-spring-boot-autoconfigure`。当前开发版本为 `1.0.0-RC2-SNAPSHOT`（未发布），
+Core 允许 MCP 包使用 Jackson；已公开的 RC1 仍是零第三方主依赖且不包含 MCP。
+持久化、Redis、模型 Provider 和观测由宿主实现 SPI，不作为公共制品依赖。用法见 [Core README](platform/agent-runtime/README.md) 与
 [Spring Boot Auto-configuration README](platform/agent-runtime-spring-boot-autoconfigure/README.md)；发布流程见
 [Agent Runtime 发布手册](platform/agent-runtime/RELEASING.md)。
 

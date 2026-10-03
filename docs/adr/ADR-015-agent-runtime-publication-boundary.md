@@ -3,6 +3,10 @@
 - 状态：Accepted
 - 日期：2026-09-26
 
+> 历史发布决定：下面的零第三方依赖与 MCP 私有 Adapter 边界适用于已发布 RC1。
+> 2026-10-02 的开发版本由 [ADR-016](ADR-016-default-mcp-in-runtime-core.md) 部分替代：
+> Core 内置默认 MCP Client，允许受控 Jackson 依赖；两模块与宿主持久化/Provider 边界不变。
+
 ## 背景
 
 Agent Runtime 主链与可靠性协议已经稳定，但原 `platform/agent-runtime` Maven 制品直接依赖

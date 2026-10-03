@@ -11,6 +11,7 @@ import io.seekflux.platform.agentruntime.domain.model.wait.WaitState;
 import java.time.Instant;
 import java.util.List;
 import java.util.Optional;
+import io.seekflux.platform.agentruntime.domain.model.message.AgentMessage;
 
 public interface AgentRecoveryStore {
 
@@ -71,6 +72,13 @@ public interface AgentRecoveryStore {
             ToolCallJournalEntry call,
             long fencingToken,
             Instant eventTime) {
+    }
+
+    /** Commit a terminal Tool journal transition and its complete message atomically. */
+    default void recordToolResult(
+            ToolCallJournalEntry call, AgentMessage.ToolResult message,
+            long fencingToken, Instant eventTime) {
+        recordToolResult(call, fencingToken, eventTime);
     }
 
     default SideEffectLedgerEntry prepareSideEffect(

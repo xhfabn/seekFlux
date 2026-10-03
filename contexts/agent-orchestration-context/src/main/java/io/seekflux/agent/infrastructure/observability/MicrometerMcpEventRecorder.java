@@ -1,8 +1,8 @@
 package io.seekflux.agent.infrastructure.observability;
 
 import io.micrometer.core.instrument.MeterRegistry;
-import io.seekflux.agent.infrastructure.mcp.McpEvent;
-import io.seekflux.agent.infrastructure.mcp.McpEventRecorder;
+import io.seekflux.platform.agentruntime.mcp.model.McpEvent;
+import io.seekflux.platform.agentruntime.mcp.spi.McpEventRecorder;
 
 public final class MicrometerMcpEventRecorder implements McpEventRecorder {
 

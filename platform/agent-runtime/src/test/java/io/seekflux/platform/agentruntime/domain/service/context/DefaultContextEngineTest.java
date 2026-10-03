@@ -48,6 +48,35 @@ import org.junit.jupiter.api.Test;
 class DefaultContextEngineTest {
 
     @Test
+    void includesCurrentExecutionAssistantAndResultsExactlyOnceAfterRecovery() {
+        Instant now = Instant.parse("2026-10-03T00:00:00Z");
+        AgentRunRequest request = new AgentRunRequest("request", "session", "turn", "input", Map.of());
+        var assistant = new AgentMessage.Assistant(1, "assistant", "request", "turn", "attempt", 1,
+                "I will search", "private reasoning", false,
+                List.of(new AgentMessage.ToolCall("call", "search_direct", 0, Map.of("query", "camp"))));
+        var result = new AgentMessage.ToolResult(1, "result", "request", "turn", "attempt", 1,
+                "call", "search_direct", "schema-v1", AgentMessage.ToolResultStatus.SUCCEEDED,
+                "found", Map.of(), Map.of(), Map.of(), List.of(), null, null, false, 1);
+        AgentSession session = AgentSession.replay("session", List.of(
+                new WorkspaceEvent.SessionCreated(1, now, "agent", "v1"),
+                new WorkspaceEvent.UserMessage(2, now, "request", "turn", "input"),
+                new WorkspaceEvent.AssistantMessage(3, now, assistant),
+                new WorkspaceEvent.ToolResultMessage(4, now, result)));
+        var decision = new AgentDecisionContext(request, 2, Duration.ofSeconds(2), List.of(),
+                ignored -> { }, ignored -> { }, "attempt",
+                io.seekflux.platform.agentruntime.application.spi.business.planner.model.EagerToolDispatcher.DISABLED,
+                null, Map.of(), List.of(assistant, result));
+        var assembled = new DefaultContextEngine().assemble(session, runtime(request), decision);
+        assertEquals(1, assembled.messages().stream().filter(message -> "assistant".equals(message.messageId())).count());
+        assertEquals(1, assembled.messages().stream().filter(message -> "result".equals(message.messageId())).count());
+        assertTrue(assembled.messages().stream().anyMatch(message -> message.content().contains("I will search")));
+        assertFalse(assembled.messages().stream().anyMatch(message -> message.content().contains("private reasoning")));
+        assertEquals(List.of("assistant", "tool"), assembled.messages().stream()
+                .filter(message -> "assistant".equals(message.messageId()) || "result".equals(message.messageId()))
+                .map(ContextMessage::role).toList());
+    }
+
+    @Test
     void rendersFrozenSkillLayersAndUsesTheSameEffectiveToolSetAsTheRuntime() {
         AgentTool direct = tool("search_direct");
         AgentTool filtered = tool("search_filtered");

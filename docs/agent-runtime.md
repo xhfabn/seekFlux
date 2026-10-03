@@ -29,15 +29,15 @@ flowchart LR
 
 | 模块 | 已实现职责 | 禁止拥有的职责 |
 | --- | --- | --- |
-| `platform/agent-runtime` | 可发布的 Runtime Core：API/SPI、Domain/Application 和纯 Java默认实现；Java 21、零第三方主依赖 | Spring、Redis、JDBC、Jackson、Provider、MCP、Micrometer 与 Search 业务 |
+| `platform/agent-runtime` | 可发布的 Runtime Core：API/SPI、Domain/Application、Java 默认实现与 MCP Client；Java 21，MCP 包允许 Jackson | Spring、Redis、JDBC、Provider、Micrometer 与 Search 业务 |
 | `platform/agent-runtime-spring-boot-autoconfigure` | 从宿主 Bean 组装 Registry、Context、Runtime、Loop、Executor、Pipeline 与 Router；只传递 Core | 引入 Spring Boot、数据库、Redis、Provider、业务定义或 HTTP API |
-| `contexts/agent-orchestration-context` | SearchGoal/ConstraintPatch、SearchPlan、Query Mode、输入/输出 Port，以及 Runtime/Search/Redis/LLM Provider/MCP/投影/指标宿主 Adapter | Runtime 通用机制、HTTP 接口、直接访问检索索引 |
+| `contexts/agent-orchestration-context` | SearchGoal/ConstraintPatch、SearchPlan、Query Mode、输入/输出 Port，以及 Runtime/Search/Redis/LLM Provider/投影/指标宿主 Adapter | Runtime/MCP 通用机制、HTTP 接口、直接访问检索索引 |
 | `apps/agent-server` | `interfaces/rest`、Spring Boot 启动和最终 Bean 装配 | Runtime/Context/技术 Adapter 的具体实现，在 Controller 内规划或过滤结果 |
 | `platform/persistence` | Session 追加事件、最新投影、Run/RunEvent 持久化 | Agent 业务决策 |
 
 ### 2.1 Runtime 内部 DDD 分层
 
-`platform/agent-runtime` 已按领域、应用和基础设施三层组织；整个公开 Core 主源码不依赖 Spring 或其他第三方库，不再只把限制停留在 Domain/Application。Spring Boot 装配在独立 Auto-configuration 模块，Redis/JDBC/Provider/MCP 等技术实现由宿主模块持有。接口层位于外层应用模块：
+`platform/agent-runtime` 已按领域、应用和基础设施三层组织；Domain/Application 不依赖第三方库，默认 MCP Adapter 与 SPI 位于公开 Core 的 `mcp` 包，仅此包允许 Jackson。Spring Boot 装配在独立 Auto-configuration 模块，Redis/JDBC/Provider 等技术实现仍由宿主模块持有。已发布 RC1 的旧边界保持不变；本开发版本边界见 [ADR-016](adr/ADR-016-default-mcp-in-runtime-core.md)。接口层位于外层应用模块：
 
 ```text
 platform/agent-runtime/.../agentruntime/
@@ -69,6 +69,16 @@ platform/agent-runtime/.../agentruntime/
 │   └── spi/
 │       ├── business/          # 业务可定制：Planner、Tool、FeatureNode、ContextEngine
 │       └── capability/        # Runtime 所需：Session、LLM、执行权、记录与事件
+├── mcp/
+│   ├── model/                 # 配置、Tool、调用/事件与 Schema 转换结果
+│   ├── spi/                   # 可替换接口与 Tool 调用边界
+│   ├── connection/            # 默认连接/发现/生命周期治理
+│   ├── exception/             # 受控 MCP 异常
+│   └── infrastructure/
+│       ├── http/              # Streamable HTTP Client 与工厂
+│       ├── auth/              # 默认凭据解析
+│       ├── schema/            # 受限 Schema 默认转换
+│       └── tool/              # Proxy 与默认结果映射
 └── infrastructure/
     ├── event/                 # 默认 PushEvent publisher
     ├── llm/                   # Shadow LLM 装饰器
@@ -78,6 +88,8 @@ platform/agent-runtime/.../agentruntime/
 platform/agent-runtime-spring-boot-autoconfigure/
 ├── AgentRuntimeAutoConfiguration.java  # 通用条件装配
 ├── AgentRuntimeProperties.java         # 有界线程池、上下文与取消配置
+├── AgentMcpAutoConfiguration.java       # 默认关闭的 MCP 条件装配
+├── AgentMcpProperties.java              # 公共 Server/Tool 配置
 └── META-INF/spring/...AutoConfiguration.imports
 
 contexts/agent-orchestration-context/
@@ -89,7 +101,6 @@ contexts/agent-orchestration-context/
     ├── session/、projection/  # 会话目标和 Redis 热投影
     ├── llm/                   # 确定性决策与 OpenAI-compatible LlmClient Adapter
     ├── redis/                 # 执行权、取消、Shadow 配置的 SeekFlux 私有实现
-    ├── mcp/                   # MCP Tool Source 与连接治理
     └── observability/         # Agent 执行指标
 
 apps/agent-server/.../agentserver/
@@ -100,14 +111,15 @@ apps/agent-server/.../agentserver/
 
 `application` 是 Runtime 的纯契约面，不保存业务编排：业务通过 `application/api` 调用 Runtime，通过 `application/command` 传入请求；Runtime 通过 `application/spi` 调用由业务或运行环境提供的能力。API/SPI 专属 DTO 与对应契约就近放置，不再建立笼统的 `application/model`、`application/port` 或 `application/service`。
 
-`spi/business` 承载 Agent Planner、Tool、Feature 和上下文组装等业务扩展；`spi/capability` 承载 LLM、Session、执行权、记录和事件发布等运行能力。`domain/model` 保存各组件自身的状态与规则，`domain/service` 保存 Runtime、Router、Loop、Feature、Context、Tool、执行权和 Shadow 之间的编排。Runtime 的 `infrastructure` 只保留纯 Java 默认实现；模型厂商协议、Redis、数据库、MCP 及其业务 Decision 转换由宿主 Infrastructure 实现对应 SPI。
+`spi/business` 承载 Agent Planner、Tool、Feature 和上下文组装等业务扩展；`spi/capability` 承载 LLM、Session、执行权、记录和事件发布等运行能力。`domain/model` 保存各组件自身的状态与规则，`domain/service` 保存 Runtime、Router、Loop、Feature、Context、Tool、执行权和 Shadow 之间的编排。Runtime 的 `infrastructure` 保留 Java 默认实现，`mcp` 提供通用协议 Adapter 与扩展 SPI；模型厂商协议、Redis、数据库及业务 Decision 转换由宿主 Infrastructure 实现对应 SPI。
 
 ### 2.2 公共 Maven 制品
 
 普通 Java 宿主使用 `io.github.xhfabn.seekflux:seekflux-agent-runtime-core:1.0.0-RC1` 并手工装配。
 已有 Spring Boot 的宿主只声明 `seekflux-agent-runtime-spring-boot-autoconfigure`：它传递 Core，但
-Spring Boot 依赖标记为 optional，不会把 Spring Boot、Redis、JDBC、Jackson、模型 Provider 或 MCP
-带给消费者。完整接入、必需端口和配置示例分别见 [Core README](../platform/agent-runtime/README.md)
+Spring Boot 依赖标记为 optional，不会把 Spring Boot、Redis、JDBC 或模型 Provider
+带给消费者。RC1 不含 MCP/Jackson；当前 `1.0.0-RC2-SNAPSHOT` 源码包含默认 MCP 与 Jackson，尚未发布。
+完整接入、必需端口和配置示例分别见 [Core README](../platform/agent-runtime/README.md)
 与 [Auto-configuration README](../platform/agent-runtime-spring-boot-autoconfigure/README.md)。
 
 具体调用关系是：`业务/interfaces → Context 输入 Port → Context 应用服务 → Context 输出 Port ← Context infrastructure → Runtime application/api`；Runtime 的 `domain/service → application/spi ← Runtime infrastructure`。Domain/Application 不依赖具体 Infrastructure，实现依赖由组合根注入。`apps/agent-server` 只是可部署宿主和组合根，不是第三层业务逻辑；它选择实现并管理 Spring/线程池生命周期。此次调整改变了 Java 包名和仓库内调用方，但没有改变方法体、HTTP/OpenAPI 契约、事件 Schema 或运行语义。
@@ -188,17 +200,38 @@ FeatureNode 不依赖 Spring 扫描顺序，装配层明确传入列表，Pipeli
 | `AgentRunEvent` | PostgreSQL 独立运行表 | 诊断每次 Decision、Tool 和终态，关联版本及 Search Trace ID |
 | `PushEvent` | 有界内存 history + Redis Pub/Sub relay；不持久化 | 客户端过程投影；SSE 按 Session sequence 增量消费和断线重连 |
 
-PostgreSQL 的 `agent.sessions` 保存最新版本、状态版本、事件位置、快照和当前 fencing token，`agent.workspace_events` 以 `(session_id, event_position)` 排序。UserMessage 的 `(session_id, request_id)` 部分唯一索引保证 Ingress 幂等，同一 request 下允许追加多个 Assistant/ToolResult；每条消息还有全局唯一 `message_id`、Schema 版本和可选 `tool_call_id`。状态补丁和 UserMessage 在同一事务中提交，旧 `baseVersion` 不能覆盖新目标。本轮 Assistant/ToolResult、终态 WorkspaceEvent 与 `outbox.events` 在同一 fencing 事务中按连续 position 提交，外部不会看到半轮历史。Worker 按确定性 `eventId` 幂等写入 `agent.audit_events`。`agent.runs` 与 `agent.run_events` 记录每个失主/接管 attempt，但不参与 Workspace 重放。Redis 只保存热投影、执行权、取消信号和 Shadow 开关，不是 Session 真相源。
+PostgreSQL 的 `agent.sessions` 保存最新版本、状态版本、事件位置、业务状态和当前 fencing token，
+`agent.workspace_events` 是追加式完整消息/执行事实源。状态补丁和 UserMessage 在同一事务提交；
+Assistant 与 DECIDED journal、ToolResult 与 terminal journal 在进行中按持权 Session 行锁事务
+增量提交，不再等 segment 结束。V16 对每个 Tool Call 的结果增加唯一约束，相同事件 ID 的不同
+内容失败关闭。Outcome 另以稳定 ID 在同一事务追加终态/Outbox 并清理临时恢复状态。
+Worker 仍按确定性 eventId 幂等写审计；run_events 是 attempt 诊断日志，不替代完整消息。
+Redis 仍提供执行权、取消信号、业务结果缓存和 Shadow 开关，不是 Session 真相源。
 
 `ChatChunk` 把 Provider 流统一为 content/reasoning/usage/finish/tool-call delta；Tool Call 按 index 严格组装，chunk sequence 不连续会失败关闭。`DefaultPushEventStream` 把 Runtime 事件包装成 `PushFrame`，Redis `INCR` 分配跨实例 Session sequence，Pub/Sub frame 使用 `sourceId` 防回环。内存 history、每订阅者队列、Session 数量和 SSE 执行器均有硬上限；慢消费者溢出即断开。`POST /v1/agent/search:stream` 仅在没有 `Last-Event-ID` 时创建执行，重连只 replay/订阅，避免重复请求。逻辑契约见 [`agent-push-frame-v1.schema.json`](../contracts/events/agent-push-frame-v1.schema.json)，安全边界见 [ADR-011](adr/ADR-011-agent-streaming-push-and-eager-tool-safety.md)。
 
 STEER/QUEUE 的接收事实同样写入 `workspace_events`，事件类型为 `QUEUED_USER_MESSAGE`。V12 以 `(message_id, event_type)` 保证排队与正式 UserMessage 各自唯一，并以 `(session_id, event_type, event_position)` 支持 FIFO 读取；相同 request 在 pending 和 consumed 两个生命周期都保持幂等。队列默认每个 Session 最多 32 条，可用 `seekflux.agent.steer.queue-max-depth` 调整。逻辑契约见 [`agent-steer-queue-v1.schema.json`](../contracts/events/agent-steer-queue-v1.schema.json)。
 
-`agent.runtime_checkpoints` 和 `agent.tool_call_journal` 是执行恢复事实，不替代 Workspace。Checkpoint 使用 Workspace `messageCutoff` 防止旧运行态覆盖新历史；journal 使用稳定 Tool Call ID、参数 SHA-256 摘要、effect、attempt 和状态判断一次调用是否从未提交、正在进行、结果已知或状态不明。Outcome/Outbox 成功提交后，这两类临时恢复事实在同一数据库事务删除。
+`agent.runtime_checkpoints` v2 只保存运行坐标与 Workspace state/metadata/terminal position 引用；
+消息、observations 与 Trace 从已提交事实解析为内存 DTO，不再反复内嵌大正文。
+Journal v2 使用 Assistant message ID / ToolResult call ID 引用，仍以参数摘要、effect、attempt
+和状态判断 pending 调用。旧 v1 自包含编码保持可读。Outcome/Outbox 成功后清理临时游标/journal，
+原始消息、执行事实和副作用账本保留。
+
+V16 的 `agent.session_snapshots` 保存聚合状态、能力状态、pending call ID 和队列/等待/当前输入
+引用，默认每 100 个事件及挂起/终态创建；`seekflux.agent.session.snapshot-interval-events` 可配置。
+恢复先读状态基线，只对其 position 后的事件执行 reducer；模型历史正文按最新摘要 cutoff 和必要
+引用读取。execution 内新消息经 `AgentDecisionContext.messages` 加入每次 assemble，并按 ID
+去除与恢复历史的重叠；摘要切换不删除原文。决策见 [ADR-017](adr/ADR-017-agent-event-facts-and-reference-snapshots.md)，
+持久结构与兼容约束见 [v2 契约](../contracts/runtime/agent-persistence-v2.md)。
 
 `agent.tool_side_effect_ledger` 是长期保留的写副作用事实，不随 Session Outcome 清理。它只服务 `MUTATING` Tool：以稳定 Tool Call ID 派生全局唯一幂等键，在外部请求前依次持久化 `PREPARED` 和 `EXECUTING`，外部返回后先保存 `SUCCEEDED/FAILED`、结果摘要和外部回执，再推进 Tool journal、Checkpoint 与 Session。接管或取消把遗留 `EXECUTING` 收敛为 `UNKNOWN`；Runtime 不会重放该写操作，而是调用 Tool 的 `AgentToolReconciler` 查询外部状态或执行 Tool 自己定义的补偿，成功判定后写 `RECONCILED`。无 reconciler 或外部仍无法判定时抛出 `MUTATING_TOOL_STATE_UNKNOWN` 并保留账本，交由人工处理。逻辑契约见 [`agent-tool-side-effect-ledger-v1.schema.json`](../contracts/events/agent-tool-side-effect-ledger-v1.schema.json)。
 
-Assistant 正文、reasoning 和 tool calls 分字段持久化；当前 Provider reasoning 默认不可重放，只有事件显式允许时 ContextEngine 才把它加入后续模型输入。ToolResult 以 toolCallId 与 Assistant 调用一一对应，状态覆盖 `SUCCEEDED/FAILED/CANCELLED/TIMED_OUT/WAITING`，同时保存不可变 raw contents、模型文本、UI display contents、structured data、resources 和错误/Trace 信息。Session 重放拒绝孤立、重复或缺失的 ToolResult，并把 Clarification 终态投影为 `SUSPENDED`。逻辑契约见 [`agent-workspace-message-v1.schema.json`](../contracts/events/agent-workspace-message-v1.schema.json)。
+Assistant 正文、reasoning 和 tool calls 分字段持久化；Provider reasoning 默认不可重放，只有事件
+显式允许才进入模型输入。ToolResult 以 callId 配对，保存 raw/model/UI/structured 视图及错误/Trace。
+EXECUTING/SUSPENDED 允许尚未完成的 Tool Call，COMPLETED 不允许缺结果；孤立和重复结果仍失败。
+等待由独立 WaitState 表达，回调补终态 ToolResult。消息结构见
+[`agent-workspace-message-v1.schema.json`](../contracts/events/agent-workspace-message-v1.schema.json)。
 
 ## 6. 有限步 AgentLoop
 
@@ -294,7 +327,7 @@ Schema、执行策略和副作用安全检查。Context 分别渲染 ephemeral�
 
 ### 6.6 MCP Tool 来源与连接治理
 
-MCP 以 Agent Orchestration Infrastructure Adapter 接入，不改变 Loop。`McpConnectionManager` 只实现
+MCP 以 Core 的 `mcp` 默认 Adapter 接入，不改变 Loop。`McpConnectionManager` 只实现
 协议版本 `2025-11-25` 的 Streamable HTTP Tool 子集，启动时尽力发现、断线后懒重连，并按
 `mcp:{serverId}` 原子替换或摘除来源；远端 Tool 映射为 `{serverId}__{remoteToolName}`，跨来源冲突
 直接拒绝。本地 Search Tool 和其他 MCP server 不受单一 server 故障影响。
@@ -315,7 +348,9 @@ Schema 和 status Tool Schema hash。断线或热更后旧 execution 不会静�
 AR-4 ledger；未知结果不因重连重放原调用，只能通过显式配置且经过 Schema 校验的只读 status Tool
 按 `idempotencyKey/toolCallId` 对账，否则保持 `UNKNOWN`。Actuator health 和
 `seekflux.agent.mcp.*` Metrics 只暴露受控状态/版本/原因。完整取舍见
-[ADR-014](adr/ADR-014-mcp-tool-source-and-trust-boundary.md)，事件契约见
+[ADR-014](adr/ADR-014-mcp-tool-source-and-trust-boundary.md) 与
+[ADR-016](adr/ADR-016-default-mcp-in-runtime-core.md)，扩展契约见
+[MCP 公共接入契约](../contracts/runtime/agent-mcp-v1.md)，事件契约见
 [`agent-mcp-lifecycle-v1.schema.json`](../contracts/events/agent-mcp-lifecycle-v1.schema.json)。
 
 最小配置示例（默认 `enabled=false`）：

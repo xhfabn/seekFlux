@@ -3,6 +3,10 @@
 - 状态：Accepted
 - 日期：2026-09-19
 
+> 2026-10-02：协议适配器的模块归属与可替换业务映射由
+> [ADR-016](ADR-016-default-mcp-in-runtime-core.md) 更新为公开 Core 默认实现。
+> 本 ADR 的信任边界、source 隔离、版本冻结与 UNKNOWN 写结果不重放约束继续有效。
+
 ## 背景
 
 AR-9A 已经把 AgentDef、Skill、ToolGroup 和 Tool Schema 冻结进 execution 快照，但原有

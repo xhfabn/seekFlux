@@ -46,12 +46,16 @@ mvn -f "$consumer_dir/pom.xml" -Dmaven.repo.local="$repo_dir" \
 
 ## 版本更新
 
+当前 main 源码为 `1.0.0-RC2-SNAPSHOT`，包含 Core 默认 MCP 与受控 Jackson 依赖；尚未发布。
+RC1 的 Tag/源提交/制品保持不变。Snapshot 仅用于本地安装开发；正式发布前选择新的非 Snapshot
+版本并完成本手册验收，不在本轮自动创建 Tag、推送或上传。
+
 每次发布前保持以下位置的版本完全一致：
 
 - `platform/agent-runtime/pom.xml`
 - `platform/agent-runtime-spring-boot-autoconfigure/pom.xml`
 - 根 `pom.xml` 的 `seekflux.agent-runtime.version`
-- 两个模块 README 中的消费者示例
+- 两个模块 README 中的当前开发/新发布消费者示例（历史 RC1 示例须明确标注）
 
 Central 上的版本不可覆盖。发现问题时必须使用新版本，不能重新发布同一 GAV。
 
@@ -63,11 +67,12 @@ Central 上的版本不可覆盖。发现问题时必须使用新版本，不能
 mvn -q test
 mvn -pl platform/agent-runtime,platform/agent-runtime-spring-boot-autoconfigure \
   -am package -Pcentral-release -Dgpg.skip=true -DskipTests
-jdeps --multi-release 21 --recursive -s \
-  platform/agent-runtime/target/seekflux-agent-runtime-core-1.0.0-RC1.jar
+bash tools/agent-runtime/verify-core-boundary.sh \
+  platform/agent-runtime/target/seekflux-agent-runtime-core-1.0.0-RC2-SNAPSHOT.jar
 ```
 
-`jdeps` 结果必须只有 `core JAR -> java.base`。Auto-configuration JAR 必须同时包含：
+当前源码的字节码只允许 Core/JDK 引用，以及 MCP 包内的 Jackson 引用；不能再使用 RC1 的
+`core JAR -> java.base` 门槛。Auto-configuration JAR 必须同时包含：
 
 - `META-INF/spring-configuration-metadata.json`
 - `META-INF/spring/org.springframework.boot.autoconfigure.AutoConfiguration.imports`
@@ -75,7 +80,8 @@ jdeps --multi-release 21 --recursive -s \
 两个主 JAR 还必须包含 `META-INF/LICENSE`，两个发布 POM 的许可证元数据必须一致。
 
 再把两个制品安装到本地仓库，从独立消费者 POM 只引入 Auto-configuration；compile
-dependency tree 必须只有 `auto-configuration -> core`。
+dependency tree 必须为 `auto-configuration -> core -> Jackson`，不传递 Spring Boot、Redis、JDBC、
+Provider 或业务 Context。新发布版本的 MCP 默认发现/调用与扩展接口需同时验收。
 
 ## GitHub 与 Central 流程
 

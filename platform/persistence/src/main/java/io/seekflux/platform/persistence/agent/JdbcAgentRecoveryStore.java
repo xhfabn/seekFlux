@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import io.seekflux.platform.agentruntime.application.spi.capability.session.AgentRecoveryStore;
 import io.seekflux.platform.agentruntime.domain.exception.AgentExecutionFencedException;
 import io.seekflux.platform.agentruntime.domain.model.recovery.CheckpointBoundary;
+import io.seekflux.platform.agentruntime.domain.model.message.AgentMessage;
 import io.seekflux.platform.agentruntime.domain.model.recovery.RecoveryPlan;
 import io.seekflux.platform.agentruntime.domain.model.recovery.ResumeAction;
 import io.seekflux.platform.agentruntime.domain.model.recovery.ResumeIngress;
@@ -41,11 +42,20 @@ public class JdbcAgentRecoveryStore implements AgentRecoveryStore {
     private final JdbcClient jdbcClient;
     private final ObjectMapper objectMapper;
     private final AgentRecoveryCodec codec;
+    private final JdbcWorkspaceFacts facts;
+    private final JdbcAgentSessionStore sessions;
 
     public JdbcAgentRecoveryStore(JdbcClient jdbcClient, ObjectMapper objectMapper) {
+        this(jdbcClient, objectMapper, new JdbcAgentSessionStore(jdbcClient, objectMapper));
+    }
+
+    @org.springframework.beans.factory.annotation.Autowired
+    public JdbcAgentRecoveryStore(JdbcClient jdbcClient, ObjectMapper objectMapper, JdbcAgentSessionStore sessions) {
         this.jdbcClient = jdbcClient;
         this.objectMapper = objectMapper;
         this.codec = new AgentRecoveryCodec(objectMapper);
+        this.facts = new JdbcWorkspaceFacts(jdbcClient, objectMapper);
+        this.sessions = sessions;
     }
 
     @Override
@@ -181,7 +191,10 @@ public class JdbcAgentRecoveryStore implements AgentRecoveryStore {
     @Transactional
     public void saveCheckpoint(
             RuntimeCheckpoint checkpoint, long fencingToken, Instant eventTime) {
-        String payload = toJson(codec.encodeCheckpoint(checkpoint));
+        facts.lock(checkpoint.sessionId(), fencingToken);
+        Map<String, Object> references = persistCheckpointFacts(checkpoint, eventTime);
+        long cutoff = ((Number) references.get("statePosition")).longValue();
+        String payload = toJson(references);
         int rows = jdbcClient.sql("""
                         INSERT INTO agent.runtime_checkpoints (
                             checkpoint_id, schema_version, session_id, request_id, turn_id,
@@ -212,14 +225,14 @@ public class JdbcAgentRecoveryStore implements AgentRecoveryStore {
                         WHERE agent.runtime_checkpoints.fencing_token <= EXCLUDED.fencing_token
                         """)
                 .param("checkpointId", UUID.fromString(checkpoint.checkpointId()))
-                .param("schemaVersion", checkpoint.schemaVersion())
+                .param("schemaVersion", 2)
                 .param("sessionId", checkpoint.sessionId())
                 .param("requestId", checkpoint.requestId())
                 .param("turnId", checkpoint.turnId())
                 .param("attemptId", UUID.fromString(checkpoint.attemptId()))
                 .param("boundary", checkpoint.boundary().name())
                 .param("fencingToken", fencingToken)
-                .param("messageCutoff", checkpoint.messageCutoff())
+                .param("messageCutoff", cutoff)
                 .param("nextStep", checkpoint.nextStep())
                 .param("toolCallCount", checkpoint.toolCallCount())
                 .param("remainingBudgetMillis", checkpoint.remainingBudgetMillis())
@@ -230,6 +243,7 @@ public class JdbcAgentRecoveryStore implements AgentRecoveryStore {
         if (rows != 1) {
             throw new AgentExecutionFencedException(checkpoint.sessionId(), fencingToken);
         }
+        sessions.saveSnapshotIfNeeded(checkpoint.sessionId(), false);
     }
 
     @Override
@@ -239,6 +253,10 @@ public class JdbcAgentRecoveryStore implements AgentRecoveryStore {
             List<ToolCallJournalEntry> calls,
             long fencingToken,
             Instant eventTime) {
+        facts.lock(checkpoint.sessionId(), fencingToken);
+        for (ToolCallJournalEntry call : calls) {
+            facts.message(checkpoint.sessionId(), call.assistantMessage(), Map.of(), eventTime);
+        }
         saveCheckpoint(checkpoint, fencingToken, eventTime);
         for (ToolCallJournalEntry call : calls) {
             int rows = jdbcClient.sql("""
@@ -258,7 +276,7 @@ public class JdbcAgentRecoveryStore implements AgentRecoveryStore {
                             ON CONFLICT (tool_call_id) DO NOTHING
                             """)
                     .param("toolCallId", call.toolCallId())
-                    .param("schemaVersion", call.schemaVersion())
+                    .param("schemaVersion", 2)
                     .param("sessionId", call.sessionId())
                     .param("requestId", call.requestId())
                     .param("turnId", call.turnId())
@@ -270,7 +288,7 @@ public class JdbcAgentRecoveryStore implements AgentRecoveryStore {
                     .param("effect", call.effect().name())
                     .param("argumentsDigest", call.argumentsDigest())
                     .param("fencingToken", fencingToken)
-                    .param("payload", toJson(codec.encodeJournal(call)))
+                    .param("payload", toJson(codec.encodeJournalReferences(call)))
                     .param("eventTime", databaseTime(eventTime))
                     .update();
             if (rows != 1) {
@@ -487,6 +505,9 @@ public class JdbcAgentRecoveryStore implements AgentRecoveryStore {
                             "Tool journal was not dispatchable: " + toolCallId);
                 }
             }
+            facts.fact(sessionId, "tool-dispatch:" + toolCallId + ":" + attemptId,
+                    "TOOL_DISPATCHED", requestId, null,
+                    Map.of("toolCallId", toolCallId, "attemptId", attemptId, "fencingToken", fencingToken), eventTime);
         }
     }
 
@@ -494,13 +515,27 @@ public class JdbcAgentRecoveryStore implements AgentRecoveryStore {
     @Transactional
     public void recordToolResult(
             ToolCallJournalEntry call, long fencingToken, Instant eventTime) {
+        recordToolResult(call, resultMessage(call), fencingToken, eventTime);
+    }
+
+    @Override
+    @Transactional
+    public void recordToolResult(ToolCallJournalEntry call, AgentMessage.ToolResult message,
+                                 long fencingToken, Instant eventTime) {
         if (!call.status().terminal()) {
             throw new IllegalArgumentException("Tool result journal state must be terminal");
         }
-        String payload = toJson(codec.encodeJournal(call));
+        facts.lock(call.sessionId(), fencingToken);
+        if (!message.toolCallId().equals(call.toolCallId())) {
+            throw new IllegalArgumentException("Tool message and journal identity differ");
+        }
+        facts.message(call.sessionId(), message,
+                Map.of("observation", codec.encodeObservationMetadata(call.observation())), eventTime);
+        String payload = toJson(codec.encodeJournalReferences(call));
         int rows = jdbcClient.sql("""
                         UPDATE agent.tool_call_journal journal
                         SET status = :status,
+                            schema_version = 2,
                             attempt_id = :attemptId,
                             fencing_token = :fencingToken,
                             payload = CAST(:payload AS jsonb),
@@ -994,6 +1029,7 @@ public class JdbcAgentRecoveryStore implements AgentRecoveryStore {
     }
 
     private void assertAuthority(String sessionId, long fencingToken) {
+        facts.lock(sessionId, fencingToken);
         boolean held = jdbcClient.sql("""
                         SELECT EXISTS (
                             SELECT 1 FROM agent.sessions
@@ -1012,6 +1048,10 @@ public class JdbcAgentRecoveryStore implements AgentRecoveryStore {
     }
 
     private RuntimeCheckpoint mapCheckpoint(ResultSet row, int rowNumber) throws SQLException {
+        Map<String, Object> payload = fromJson(row.getString("payload"));
+        if (payload.containsKey("statePosition")) {
+            payload = hydrateCheckpoint(row, payload);
+        }
         return codec.decodeCheckpoint(
                 row.getInt("schema_version"),
                 row.getObject("checkpoint_id", UUID.class).toString(),
@@ -1026,10 +1066,19 @@ public class JdbcAgentRecoveryStore implements AgentRecoveryStore {
                 row.getInt("tool_call_count"),
                 row.getLong("remaining_budget_ms"),
                 row.getObject("created_at", OffsetDateTime.class).toInstant(),
-                fromJson(row.getString("payload")));
+                payload);
     }
 
     private ToolCallJournalEntry mapJournal(ResultSet row, int rowNumber) throws SQLException {
+        Map<String, Object> payload = new java.util.LinkedHashMap<>(fromJson(row.getString("payload")));
+        if (payload.containsKey("assistantMessageId")) {
+            payload.put("assistantMessage", loadMessage(row.getString("session_id"),
+                    String.valueOf(payload.get("assistantMessageId"))));
+            if (payload.containsKey("observationToolCallId")) {
+                payload.put("observation", loadObservation(row.getString("session_id"),
+                        String.valueOf(payload.get("observationToolCallId"))));
+            }
+        }
         return codec.decodeJournal(
                 row.getInt("schema_version"),
                 row.getString("session_id"),
@@ -1045,7 +1094,149 @@ public class JdbcAgentRecoveryStore implements AgentRecoveryStore {
                 row.getString("status"),
                 row.getString("arguments_digest"),
                 row.getObject("updated_at", OffsetDateTime.class).toInstant(),
-                fromJson(row.getString("payload")));
+                payload);
+    }
+
+    private Map<String, Object> persistCheckpointFacts(RuntimeCheckpoint checkpoint, Instant time) {
+        String prefix = checkpoint.sessionId() + ":" + checkpoint.requestId();
+        // Old v1 checkpoints are hydrated in memory and migrate by appending missing facts once.
+        java.util.Set<String> existingMessageIds = new java.util.HashSet<>(jdbcClient.sql("""
+                SELECT message_id FROM agent.workspace_events
+                WHERE session_id = :sessionId AND request_id = :requestId AND message_id IS NOT NULL
+                """).param("sessionId", checkpoint.sessionId()).param("requestId", checkpoint.requestId())
+                .query(String.class).list());
+        for (AgentMessage message : checkpoint.messages()) {
+            if (existingMessageIds.contains(message.messageId())) continue;
+            Map<String, Object> extra = checkpoint.observations().stream()
+                    .filter(observation -> message instanceof AgentMessage.ToolResult result
+                            && observation.toolCallId().equals(result.toolCallId()))
+                    .findFirst().map(observation -> Map.of("observation", (Object) codec.encodeObservationMetadata(observation)))
+                    .orElse(Map.of());
+            facts.message(checkpoint.sessionId(), message, extra, time);
+        }
+        int existingSteps = jdbcClient.sql("""
+                SELECT COUNT(*) FROM agent.workspace_events
+                WHERE session_id = :sessionId AND request_id = :requestId AND event_type = 'EXECUTION_STEP'
+                """).param("sessionId", checkpoint.sessionId()).param("requestId", checkpoint.requestId())
+                .query(Integer.class).single();
+        for (int index = existingSteps; index < checkpoint.steps().size(); index++) {
+            facts.fact(checkpoint.sessionId(), prefix + ":trace:" + index,
+                    "EXECUTION_STEP", checkpoint.requestId(), checkpoint.turnId(),
+                    Map.of("index", index, "step", objectMapper.convertValue(checkpoint.steps().get(index), MAP_TYPE)), time);
+        }
+        Map<String, Object> metadata = new java.util.LinkedHashMap<>();
+        metadata.put("definition", objectMapper.convertValue(checkpoint.definition(), MAP_TYPE));
+        metadata.put("persistentFeatures", checkpoint.persistentFeatures());
+        long metadataPosition = facts.fact(checkpoint.sessionId(), prefix + ":metadata:"
+                        + UUID.nameUUIDFromBytes(toJson(metadata).getBytes(StandardCharsets.UTF_8)),
+                "EXECUTION_METADATA", checkpoint.requestId(), checkpoint.turnId(), metadata, time);
+        Map<String, Object> references = new java.util.LinkedHashMap<>();
+        references.put("metadataPosition", metadataPosition);
+        if (checkpoint.terminalResult() != null) {
+            long terminalPosition = facts.fact(checkpoint.sessionId(),
+                    prefix + ":terminal:" + checkpoint.checkpointId() + ":" + checkpoint.attemptId(),
+                    "EXECUTION_TERMINAL", checkpoint.requestId(), checkpoint.turnId(),
+                    codec.encodeTerminal(checkpoint.terminalResult()), time);
+            references.put("terminalPosition", terminalPosition);
+        }
+        long head = jdbcClient.sql("SELECT event_position FROM agent.sessions WHERE session_id = :sessionId")
+                .param("sessionId", checkpoint.sessionId()).query(Long.class).single();
+        Map<String, Object> state = new java.util.LinkedHashMap<>(codec.encodeState(checkpoint));
+        state.putAll(references);
+        long position = facts.fact(checkpoint.sessionId(), prefix + ":state:" + checkpoint.checkpointId()
+                        + ":" + checkpoint.attemptId() + ":" + head,
+                "EXECUTION_PROGRESS", checkpoint.requestId(), checkpoint.turnId(), state, time);
+        references.put("statePosition", position);
+        return references;
+    }
+
+    private Map<String, Object> hydrateCheckpoint(ResultSet row, Map<String, Object> references) throws SQLException {
+        String sessionId = row.getString("session_id");
+        String requestId = row.getString("request_id");
+        long cutoff = row.getLong("message_cutoff");
+        long statePosition = ((Number) references.get("statePosition")).longValue();
+        if (cutoff != statePosition) throw new IllegalStateException("checkpoint cursor/reference mismatch");
+        Map<String, Object> payload = new java.util.LinkedHashMap<>(facts.payload(sessionId, statePosition));
+        payload.putAll(facts.payload(sessionId, ((Number) references.get("metadataPosition")).longValue()));
+        int stepLimit = row.getString("boundary").equals("PRE_TURN") ? row.getInt("next_step") - 1 : Integer.MAX_VALUE;
+        List<Map<String, Object>> messages = jdbcClient.sql("""
+                SELECT event_type, schema_version, message_id, tool_call_id, request_id, turn_id, payload::text
+                FROM agent.workspace_events WHERE session_id = :sessionId AND request_id = :requestId
+                  AND event_position <= :cutoff AND event_type IN ('ASSISTANT_MESSAGE', 'TOOL_RESULT_MESSAGE')
+                  AND (payload ->> 'step')::int <= :stepLimit ORDER BY event_position
+                """).param("sessionId", sessionId).param("requestId", requestId).param("cutoff", cutoff)
+                .param("stepLimit", stepLimit).query(this::encodedMessage).list();
+        payload.put("messages", messages);
+        payload.put("observations", messages.stream().filter(message ->
+                        "TOOL_RESULT_MESSAGE".equals(message.get("eventType")))
+                .map(message -> {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> messagePayload = (Map<String, Object>) message.get("payload");
+                    return codec.observationFromMessage(messagePayload);
+                })
+                .filter(java.util.Objects::nonNull).toList());
+        List<Map<String, Object>> steps = jdbcClient.sql("""
+                SELECT payload::text FROM agent.workspace_events
+                WHERE session_id = :sessionId AND request_id = :requestId AND event_type = 'EXECUTION_STEP'
+                  AND event_position <= :cutoff ORDER BY (payload ->> 'index')::int
+                """).param("sessionId", sessionId).param("requestId", requestId).param("cutoff", cutoff)
+                .query((value, index) -> fromJson(value.getString(1))).list();
+        payload.put("steps", steps.stream().map(step -> step.get("step")).toList());
+        if (references.containsKey("terminalPosition")) {
+            Map<String, Object> terminal = new java.util.LinkedHashMap<>(facts.payload(sessionId,
+                    ((Number) references.get("terminalPosition")).longValue()));
+            terminal.put("messages", messages);
+            @SuppressWarnings("unchecked")
+            Map<String, Object> trace = new java.util.LinkedHashMap<>((Map<String, Object>) terminal.get("trace"));
+            trace.put("steps", payload.get("steps"));
+            trace.put("definition", payload.get("definition"));
+            terminal.put("trace", trace);
+            payload.put("terminalResult", terminal);
+        }
+        return payload;
+    }
+
+    private Map<String, Object> encodedMessage(ResultSet row, int index) throws SQLException {
+        Map<String, Object> value = new java.util.LinkedHashMap<>();
+        value.put("eventType", row.getString("event_type"));
+        value.put("schemaVersion", row.getInt("schema_version"));
+        value.put("messageId", row.getString("message_id"));
+        value.put("toolCallId", row.getString("tool_call_id"));
+        value.put("requestId", row.getString("request_id"));
+        value.put("turnId", row.getString("turn_id"));
+        value.put("payload", fromJson(row.getString("payload")));
+        return value;
+    }
+
+    private Map<String, Object> loadMessage(String sessionId, String messageId) {
+        return jdbcClient.sql("""
+                SELECT event_type, schema_version, message_id, tool_call_id, request_id, turn_id, payload::text
+                FROM agent.workspace_events WHERE session_id = :sessionId AND message_id = :messageId
+                  AND event_type IN ('ASSISTANT_MESSAGE', 'TOOL_RESULT_MESSAGE')
+                """).param("sessionId", sessionId).param("messageId", messageId).query(this::encodedMessage).single();
+    }
+
+    private Object loadObservation(String sessionId, String callId) {
+        return jdbcClient.sql("""
+                SELECT payload::text FROM agent.workspace_events WHERE session_id = :sessionId
+                  AND tool_call_id = :callId AND event_type = 'TOOL_RESULT_MESSAGE'
+                """).param("sessionId", sessionId).param("callId", callId)
+                .query((row, index) -> codec.observationFromMessage(fromJson(row.getString(1)))).single();
+    }
+
+    private static AgentMessage.ToolResult resultMessage(ToolCallJournalEntry call) {
+        var observation = call.observation();
+        AgentMessage.ToolResultStatus status = AgentMessage.ToolResultStatus.valueOf(call.status().name());
+        String identity = call.sessionId() + ":" + call.requestId() + ":" + call.turnId()
+                + ":tool-result:" + call.toolCallId();
+        String content = status == AgentMessage.ToolResultStatus.SUCCEEDED
+                ? call.toolName() + ":" + new java.util.TreeMap<>(observation.result().output())
+                : call.toolName() + ":" + status.name() + ":" + observation.result().errorCode();
+        return new AgentMessage.ToolResult(1, UUID.nameUUIDFromBytes(identity.getBytes(StandardCharsets.UTF_8)).toString(),
+                call.requestId(), call.turnId(), call.attemptId(), call.step(), call.toolCallId(), call.toolName(),
+                call.toolSchemaVersion(), status, content, observation.result().output(), observation.result().output(),
+                observation.result().output(), List.of(), observation.result().errorCode(), observation.result().linkedTraceId(),
+                call.argumentsRepaired(), observation.tookMillis());
     }
 
     private String toJson(Object value) {

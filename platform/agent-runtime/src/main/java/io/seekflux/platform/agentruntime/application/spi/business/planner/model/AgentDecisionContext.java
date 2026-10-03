@@ -20,7 +20,18 @@ public record AgentDecisionContext(
         String agentRunId,
         EagerToolDispatcher eagerToolDispatcher,
         CapabilitySnapshot capabilities,
-        Map<String, String> toolSchemaVersions) {
+        Map<String, String> toolSchemaVersions,
+        List<io.seekflux.platform.agentruntime.domain.model.message.AgentMessage> messages) {
+
+    public AgentDecisionContext(
+            AgentRunRequest request, int step, Duration remaining,
+            List<AgentToolObservation> observations, Consumer<LlmUsage> usageRecorder,
+            Consumer<AgentAssistantContent> assistantContentRecorder, String agentRunId,
+            EagerToolDispatcher eagerToolDispatcher, CapabilitySnapshot capabilities,
+            Map<String, String> toolSchemaVersions) {
+        this(request, step, remaining, observations, usageRecorder, assistantContentRecorder,
+                agentRunId, eagerToolDispatcher, capabilities, toolSchemaVersions, List.of());
+    }
 
     public AgentDecisionContext(
             AgentRunRequest request,
@@ -92,6 +103,7 @@ public record AgentDecisionContext(
     }
 
     public AgentDecisionContext {
+        messages = messages == null ? List.of() : List.copyOf(messages);
         observations = observations == null ? List.of() : List.copyOf(observations);
         usageRecorder = usageRecorder == null ? ignored -> { } : usageRecorder;
         assistantContentRecorder = assistantContentRecorder == null ? ignored -> { } : assistantContentRecorder;

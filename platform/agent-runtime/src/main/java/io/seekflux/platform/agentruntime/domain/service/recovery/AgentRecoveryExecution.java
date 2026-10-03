@@ -108,6 +108,12 @@ public final class AgentRecoveryExecution {
         faultInjector.at(RecoveryPoint.AFTER_TOOL_RESULT_COMMIT);
     }
 
+    public void recordToolResult(ToolCallJournalEntry call,
+            io.seekflux.platform.agentruntime.domain.model.message.AgentMessage.ToolResult message) {
+        store.recordToolResult(call, message, fencingToken, clock.instant());
+        faultInjector.at(RecoveryPoint.AFTER_TOOL_RESULT_COMMIT);
+    }
+
     public SideEffectLedgerEntry prepareSideEffect(SideEffectLedgerEntry entry) {
         SideEffectLedgerEntry prepared = store.prepareSideEffect(
                 entry, fencingToken, clock.instant());

@@ -85,6 +85,12 @@ public class JdbcContextCompactionStore implements ContextCompactionStore {
                 .param("createdAt", summary.createdAt().atOffset(ZoneOffset.UTC))
                 .update();
         if (inserted == 1) {
+            var mapper = new com.fasterxml.jackson.databind.ObjectMapper();
+            new JdbcWorkspaceFacts(jdbcClient, mapper).fact(summary.sessionId(),
+                    "compaction:" + summary.summaryId(), "COMPACTION_COMMITTED", null, null,
+                    java.util.Map.of("summaryId", summary.summaryId(), "fromExclusive", summary.fromExclusive(),
+                            "inclusiveCutoff", summary.inclusiveCutoff(), "strategyVersion", summary.strategyVersion()),
+                    summary.createdAt());
             return summary;
         }
         return latest(summary.sessionId())

@@ -59,18 +59,28 @@ contexts/agent-orchestration-context
 platform/agent-runtime（公开 Core 制品）
   domain/application -> LLM / Session / RuntimeEvent / Clock 等 capability SPI
   infrastructure -> 自身 application/spi + 纯 Java 默认实现
-  main classpath -/> Spring、Redis、JDBC、Jackson、Provider、MCP、Micrometer
+  mcp.model/spi -> JDK + Runtime 契约（不暴露 Jackson）
+  mcp.connection -> mcp.spi/model + 默认实现（配置式装配入口）
+  mcp.infrastructure.http/schema -> Runtime Tool SPI + JDK HTTP + Jackson
+  mcp.infrastructure.auth/tool -> Runtime 契约 + mcp.spi/model（无 Jackson）
+  domain/application -/> MCP 或 Jackson
+  main classpath -/> Spring、Redis、JDBC、Provider、Micrometer、业务 Context
 
 platform/agent-runtime-spring-boot-autoconfigure（公开可选制品）
   -> agent-runtime Core
   -> Spring Boot optional compile contract（不向消费者传递）
-  -/> Redis、JDBC、Provider、MCP 或业务 Context
+  -> Core MCP 默认实现的条件装配（默认关闭）
+  -/> Redis、JDBC、Provider 或业务 Context
 
 contexts/agent-orchestration-context infrastructure
-  -> Runtime SPI + SeekFlux 私有 Redis/Provider/MCP/观测 Adapter
+  -> Runtime SPI + SeekFlux 私有 Redis/Provider/观测 Adapter
 ```
 
 AgentOrchestration 的 Domain/Application 决定搜索目标、约束修正、追问和业务回退；Runtime 的 Domain/Application 只执行有限步循环、Deadline、取消、Tool 调度与运行事件。跨 Context 适配发生在 `agent-orchestration-context/infrastructure`：`SearchDirectTool` 与确定性回退都调用 Search 的稳定输入 Port。最终实现选择发生在 `agent-server/bootstrap`，但 Server 不拥有 Adapter 实现。Direct Search 不反向依赖 Agent 模块。
+
+MCP 默认实现自 `1.0.0-RC2-SNAPSHOT` 起进入 Core；已发布 RC1 的零第三方依赖边界不变。
+当前边界见 [ADR-016](adr/ADR-016-default-mcp-in-runtime-core.md)，字节码门槛由
+[`verify-core-boundary.sh`](../tools/agent-runtime/verify-core-boundary.sh) 验证。
 
 ## 物理部署基线
 

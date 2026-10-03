@@ -316,7 +316,8 @@ public final class AgentRuntime {
                         run.runId,
                         eager,
                         run.capabilities(),
-                        run.snapshot.toolSchemaVersions());
+                        run.snapshot.toolSchemaVersions(),
+                        run.messages);
                 decision = invoke(
                         () -> callGuard.execute(AgentCallGuard.CallType.MODEL, () -> planner.decide(context)),
                         deadlineNanos,
@@ -482,6 +483,15 @@ public final class AgentRuntime {
                             ? AgentMessage.ToolResultStatus.TIMED_OUT
                             : AgentMessage.ToolResultStatus.CANCELLED;
                     for (PreparedToolCall call : prepared) {
+                        AgentToolObservation durable = run.durableResults.get(call.toolCallId());
+                        if (durable != null) {
+                            run.recordToolResult(step, durable);
+                            run.steps.add(new AgentRunTrace.StepTrace(step, "CALL_TOOL",
+                                    durable.result().success() ? "SUCCEEDED" : "FAILED",
+                                    call.toolCallId(), call.tool().name(), durable.result().linkedTraceId(),
+                                    durable.tookMillis(), durable.result().errorCode()));
+                            continue;
+                        }
                         run.steps.add(new AgentRunTrace.StepTrace(
                                 step,
                                 "CALL_TOOL",
@@ -516,6 +526,15 @@ public final class AgentRuntime {
             CancellationCause afterTools = cancellationToken.cause();
             if (afterTools != null) {
                 for (PreparedToolCall call : prepared) {
+                    AgentToolObservation durable = run.durableResults.get(call.toolCallId());
+                    if (durable != null) {
+                        run.recordToolResult(step, durable);
+                        run.steps.add(new AgentRunTrace.StepTrace(step, "CALL_TOOL",
+                                durable.result().success() ? "SUCCEEDED" : "FAILED",
+                                call.toolCallId(), call.tool().name(), durable.result().linkedTraceId(),
+                                durable.tookMillis(), durable.result().errorCode()));
+                        continue;
+                    }
                     run.steps.add(new AgentRunTrace.StepTrace(
                             step, "CALL_TOOL", "CANCELLED", call.toolCallId(),
                             call.tool().name(), null, 0, afterTools.name()));
@@ -848,6 +867,7 @@ public final class AgentRuntime {
             throw new IllegalStateException("pending Tool recovery requires journal entries");
         }
         int step = journalEntries.getFirst().step();
+        journalEntries.forEach(entry -> run.decisions.put(entry.toolCallId(), entry));
         if (journalEntries.stream().anyMatch(entry -> entry.step() != step)) {
             throw new IllegalStateException("a recovery batch cannot span multiple steps");
         }
@@ -906,6 +926,7 @@ public final class AgentRuntime {
                     newlyCompleted.put(observation.toolCallId(), observation);
                 }
             } catch (CallFailure failure) {
+                newlyCompleted.putAll(run.durableResults);
                 batchFailure = failure;
             }
         }
@@ -1326,14 +1347,22 @@ public final class AgentRuntime {
                     result.success() ? ToolExecutionObserver.Phase.AFTER : ToolExecutionObserver.Phase.FAILURE,
                     tookMillis,
                     result.success() ? "SUCCEEDED" : result.errorCode());
-            observations.add(new AgentToolObservation(
+            AgentToolObservation observation = new AgentToolObservation(
                     call.toolCallId(),
                     call.tool().name(),
                     call.tool().schema().version(),
                     call.arguments(),
                     call.argumentsRepaired(),
                     result,
-                    tookMillis));
+                    tookMillis);
+            if (!result.waiting()) {
+                ToolCallJournalEntry decision = run.decisions.get(call.toolCallId());
+                if (decision != null) {
+                    run.recordJournalResult(decision.forAttempt(run.runId,
+                            recoveredJournalStatus(result), observation, clock.instant()));
+                }
+            }
+            observations.add(observation);
         }
         return List.copyOf(observations);
     }
@@ -1817,6 +1846,8 @@ public final class AgentRuntime {
     }
 
     private final class RunState {
+        private final Map<String, ToolCallJournalEntry> decisions = new HashMap<>();
+        private final Map<String, AgentToolObservation> durableResults = new HashMap<>();
         private final String runId;
         private final AgentRunRequest request;
         private AgentRunTrace.DefinitionSnapshot snapshot;
@@ -1995,11 +2026,27 @@ public final class AgentRuntime {
         private void recordToolDecision(
                 RuntimeCheckpoint checkpoint,
                 List<ToolCallJournalEntry> calls) {
-            recovery.recordToolDecision(checkpoint, calls);
+            RuntimeCheckpoint decisionState = checkpoint(CheckpointBoundary.PRE_TURN,
+                    checkpoint.nextStep(), checkpoint.toolCallCount(), checkpoint.observations(),
+                    checkpoint.completedInvocations(), null);
+            recovery.recordToolDecision(decisionState, calls);
+            calls.forEach(call -> decisions.put(call.toolCallId(), call));
         }
 
         private void recordJournalResult(ToolCallJournalEntry call) {
-            recovery.recordToolResult(call);
+            if (durableResults.containsKey(call.toolCallId())) return;
+            AgentMessage.ToolResult message = messages.stream()
+                    .filter(AgentMessage.ToolResult.class::isInstance)
+                    .map(AgentMessage.ToolResult.class::cast)
+                    .filter(result -> result.toolCallId().equals(call.toolCallId()))
+                    .findFirst().orElseGet(() -> toolResultMessage(
+                            call.attemptId(), call.step(), call.toolCallId(), call.toolName(),
+                            call.toolSchemaVersion(), messageStatus(call.status()),
+                            call.observation().result().output(), call.observation().result().errorCode(),
+                            call.observation().result().linkedTraceId(), call.argumentsRepaired(),
+                            call.observation().tookMillis()));
+            recovery.recordToolResult(call, message);
+            durableResults.put(call.toolCallId(), call.observation());
         }
 
         private void savePostTurn(
@@ -2104,9 +2151,7 @@ public final class AgentRuntime {
         }
 
         private void recordToolResult(int step, AgentToolObservation observation) {
-            AgentMessage.ToolResultStatus status = observation.result().success()
-                    ? AgentMessage.ToolResultStatus.SUCCEEDED
-                    : AgentMessage.ToolResultStatus.FAILED;
+            AgentMessage.ToolResultStatus status = messageStatus(recoveredJournalStatus(observation.result()));
             messages.add(toolResultMessage(
                     step,
                     observation.toolCallId(),

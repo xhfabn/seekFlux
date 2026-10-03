@@ -6,7 +6,7 @@
 
     <groupId>io.github.xhfabn.seekflux</groupId>
     <artifactId>seekflux-agent-runtime-core</artifactId>
-    <version>1.0.0-RC1</version>
+    <version>1.0.0-RC2-SNAPSHOT</version>
     <packaging>jar</packaging>
 
     <name>SeekFlux Agent Runtime Core</name>
@@ -40,6 +40,7 @@
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
         <junit.version>5.13.4</junit.version>
         <assertj.version>3.27.4</assertj.version>
+        <jackson.version>2.19.4</jackson.version>
     </properties>
 
     <dependencyManagement>
@@ -55,6 +56,11 @@
     </dependencyManagement>
 
     <dependencies>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+            <version>${jackson.version}</version>
+        </dependency>
         <dependency>
             <groupId>org.junit.jupiter</groupId>
             <artifactId>junit-jupiter</artifactId>

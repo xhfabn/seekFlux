@@ -4,6 +4,10 @@ This module assembles the provider-neutral Runtime from host-provided Spring bea
 `seekflux-agent-runtime-core`; its Spring Boot dependencies are optional and therefore are not
 transitive to consumers.
 
+Current source is `1.0.0-RC2-SNAPSHOT` (not published), with opt-in default MCP assembly.
+The published RC1 example below does not include MCP. For local development install current
+modules and select the snapshot version; no public snapshot repository is configured.
+
 ```xml
 <dependency>
     <groupId>io.github.xhfabn.seekflux</groupId>
@@ -52,7 +56,49 @@ seekflux:
         overflow-retry-limit: 1
 ```
 
-Set `seekflux.agent.runtime.enabled=false` to disable all automatic assembly.
+Set `seekflux.agent.runtime.enabled=false` to disable Runtime automatic assembly.
+MCP assembly is independently opt-in and requires an existing `AgentToolRegistry`.
 
 The publicly available `1.0.0-RC1` release and subsequent release steps are documented in the
 [Agent Runtime release manual](../agent-runtime/RELEASING.md).
+
+## Default MCP assembly (current development source)
+
+```yaml
+seekflux:
+  agent:
+    mcp:
+      enabled: true
+      servers:
+        - id: docs
+          endpoint: https://example.test/mcp
+          credential-ref: env:DOCS_MCP_TOKEN
+          config-version: config-v1
+          transport: STREAMABLE_HTTP
+          protocol-version: 2025-11-25
+          connect-timeout: 2s
+          request-timeout: 5s
+          max-concurrent-calls: 8
+          tools:
+            - remote-name: lookup
+              policy-version: policy-v1
+              effect: READ_ONLY
+              approval-required: false
+```
+
+No MCP beans or network connections are created by default. Once enabled, the manager starts
+discovery and closes with the context. Discovery failure leaves the individual source disconnected;
+local tools remain usable. Agent definitions/capability catalogs still decide whether a registered
+tool is available to a particular Agent; registering it does not grant every Agent access.
+
+Supply `McpClientFactory`, `McpCredentialProvider`, `McpToolAuthorizer`, `McpToolSchemaAdapter`,
+`McpToolResultAdapter`, `McpEventRecorder` or `McpConnectionManager` beans to replace corresponding
+defaults. No `ObjectMapper` bean is required. A custom authorizer only adds restrictions to local
+allowlists. A custom client may support `CUSTOM` transport or another protocol version; the default
+factory rejects unsupported choices. Changing semantics must bump local policy/config versions.
+
+Extension interfaces are in `io.seekflux.platform.agentruntime.mcp.spi`; configuration/result
+models are in `mcp.model`, the manager in `mcp.connection`, and defaults in the corresponding
+`mcp.infrastructure` subpackages. Spring property names and replacement behavior are unchanged.
+
+Defaults and limitations are defined in the [MCP contract](../../contracts/runtime/agent-mcp-v1.md).

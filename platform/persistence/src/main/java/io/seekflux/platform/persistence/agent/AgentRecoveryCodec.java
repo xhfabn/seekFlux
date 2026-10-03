@@ -50,6 +50,57 @@ final class AgentRecoveryCodec {
         return payload;
     }
 
+    /** Persistence v2: state only; large bodies live in immutable Workspace facts. */
+    Map<String, Object> encodeState(RuntimeCheckpoint checkpoint) {
+        Map<String, Object> state = new LinkedHashMap<>();
+        state.put("completedInvocations", checkpoint.completedInvocations());
+        state.put("llmUsage", objectMapper.convertValue(checkpoint.llmUsage(), MAP));
+        state.put("checkpointId", checkpoint.checkpointId());
+        state.put("boundary", checkpoint.boundary().name());
+        state.put("attemptId", checkpoint.attemptId());
+        state.put("nextStep", checkpoint.nextStep());
+        state.put("toolCallCount", checkpoint.toolCallCount());
+        state.put("remainingBudgetMillis", checkpoint.remainingBudgetMillis());
+        state.put("fencingToken", checkpoint.fencingToken());
+        return state;
+    }
+
+    Map<String, Object> encodeTerminal(AgentRunResult result) {
+        Map<String, Object> value = encodeResult(result);
+        value.remove("messages");
+        Map<String, Object> trace = new LinkedHashMap<>(objectMapper.convertValue(result.trace(), MAP));
+        trace.remove("steps");
+        trace.remove("definition");
+        value.put("trace", trace);
+        return value;
+    }
+
+    Map<String, Object> encodeJournalReferences(ToolCallJournalEntry entry) {
+        Map<String, Object> value = new LinkedHashMap<>();
+        value.put("arguments", entry.arguments());
+        value.put("argumentsRepaired", entry.argumentsRepaired());
+        value.put("assistantMessageId", entry.assistantMessage().messageId());
+        if (entry.observation() != null) value.put("observationToolCallId", entry.toolCallId());
+        return value;
+    }
+
+    Map<String, Object> encodeObservationMetadata(AgentToolObservation observation) {
+        Map<String, Object> value = new LinkedHashMap<>(objectMapper.convertValue(observation, MAP));
+        Map<String, Object> result = new LinkedHashMap<>(objectMapper.convertValue(observation.result(), MAP));
+        result.remove("output");
+        value.put("result", result);
+        return value;
+    }
+
+    Object observationFromMessage(Map<String, Object> payload) {
+        if (!(payload.get("observation") instanceof Map<?, ?>)) return null;
+        Map<String, Object> value = new LinkedHashMap<>(object(payload, "observation"));
+        Map<String, Object> result = new LinkedHashMap<>(object(value, "result"));
+        result.putIfAbsent("output", payload.getOrDefault("rawContents", Map.of()));
+        value.put("result", result);
+        return value;
+    }
+
     RuntimeCheckpoint decodeCheckpoint(
             int schemaVersion,
             String checkpointId,
@@ -205,7 +256,7 @@ final class AgentRecoveryCodec {
         return objectMapper.convertValue(encoded, WaitResolution.class);
     }
 
-    private Map<String, Object> encodeMessage(AgentMessage message) {
+    Map<String, Object> encodeMessage(AgentMessage message) {
         WorkspaceMessageCodec.EncodedMessage encoded = messageCodec.encode(message);
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("eventType", encoded.eventType());
@@ -218,7 +269,7 @@ final class AgentRecoveryCodec {
         return result;
     }
 
-    private AgentMessage decodeMessage(Object value) {
+    AgentMessage decodeMessage(Object value) {
         if (!(value instanceof Map<?, ?> values)) {
             throw new IllegalStateException("checkpoint message is not an object");
         }

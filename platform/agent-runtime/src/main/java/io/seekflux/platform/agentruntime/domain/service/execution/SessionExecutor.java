@@ -363,7 +363,8 @@ public final class SessionExecutor implements AutoCloseable {
                     && recoveryPlan.checkpoint().messageCutoff() != fresh.position()
                     && recoveryPlan.checkpoint().boundary()
                             != io.seekflux.platform.agentruntime.domain.model.recovery.CheckpointBoundary.SUSPENDED
-                    && !fresh.hasOnlyQueuedEventsAfter(recoveryPlan.checkpoint().messageCutoff())) {
+                    && !fresh.hasOnlyExecutionEventsAfter(recoveryPlan.checkpoint().messageCutoff(),
+                            context.request().requestId())) {
                 throw new IllegalStateException(
                         "checkpoint message cutoff no longer matches the Workspace high-water mark");
             }

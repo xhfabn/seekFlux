@@ -60,7 +60,9 @@ Phase 2 证明了 Agent 的编排增量，但租约过期、实例退出、重�
   `contexts/agent-orchestration-context/infrastructure`；新增的
   `seekflux-agent-runtime-spring-boot-autoconfigure` 只传递 Core，Spring Boot 依赖为 optional。
   Runtime/Context 映射、Search Tool、Direct Fallback、投影、Provider、MCP 和指标仍由
-  SeekFlux 宿主 Adapter 持有；Agent Server 继续只保留 REST、启动和组合装配；
+  SeekFlux 宿主 Adapter 持有（RC1 历史边界）；2026-10-02 开发版本将通用 MCP 迁入 Core，
+  允许受控 Jackson 依赖，见 [ADR-016](../adr/ADR-016-default-mcp-in-runtime-core.md)；
+  Agent Server 继续只保留 REST、启动和组合装配；
 - C 端新增任务型 AI 搜索界面，通过同源 Bridge 直连 Agent Server，支持多轮 Goal 版本、追问、取消、降级提示和真实 Search 候选展示；
 - macOS 中间件改由 launchd 托管，解决启动命令结束后 Kafka/ES/MinIO 退出的问题；
 - 自带样本发布、索引等待、清理和数据库断言的可靠性 Eval。
@@ -132,12 +134,13 @@ Phase 2 证明了 Agent 的编排增量，但租约过期、实例退出、重�
 | `platform/agent-runtime/.../domain/service/execution/AgentCallGuard.java` | 模型/Tool Bulkhead 与故障注入边界 |
 | `platform/agent-runtime/.../infrastructure/llm/ShadowingLlmClient.java` | 不影响主链的 Shadow 执行 |
 | `contexts/agent-orchestration-context/.../infrastructure/redis/RedisShadowSettingsStore.java` | SeekFlux 宿主的跨实例 Shadow 开关 |
-| `platform/agent-runtime/pom.xml` | 可独立发布、零第三方主依赖的 Core 制品 |
+| `platform/agent-runtime/pom.xml` | 可独立发布的 Core；开发版 MCP 包允许 Jackson，RC1 历史制品零第三方主依赖 |
 | `platform/agent-runtime-spring-boot-autoconfigure/` | 从宿主 Bean 组装 Runtime，只传递 Core |
 | `.github/workflows/agent-runtime-release.yml` | 验证、签名并暂存两个 Maven Central 制品，不自动发布 |
 | `contexts/agent-orchestration-context/.../infrastructure/runtime/AgentRuntimeExecutionAdapter.java` | Context 输出 Port 与 Runtime API 的业务映射 |
-| `contexts/agent-orchestration-context/.../infrastructure/mcp/` | Streamable HTTP client、发现/连接治理、受限 Schema 和 MCP Proxy Tool |
-| `apps/agent-server/.../bootstrap/AgentMcpProperties.java` | 默认关闭的 MCP server/Tool 本地策略与凭据引用配置 |
+| `platform/agent-runtime/.../mcp/` | 默认 Streamable HTTP Client、连接治理、受限 Schema、Proxy 与扩展 SPI |
+| `platform/agent-runtime-spring-boot-autoconfigure/.../AgentMcpProperties.java` | 公共、默认关闭的 MCP server/Tool 策略配置 |
+| `platform/agent-runtime-spring-boot-autoconfigure/.../AgentMcpAutoConfiguration.java` | 按配置装配默认实现，宿主扩展 Bean 回退 |
 | `apps/worker-runner/.../AgentOutcomeAuditWorker.java` | 幂等 Agent 终态审计消费者 |
 | `evals/run_agent_reliability_eval.py` | 真实链路可靠性/SLO 固定评测 |
 
@@ -207,13 +210,40 @@ Phase 2 证明了 Agent 的编排增量，但租约过期、实例退出、重�
 
 真实 Provider 已做单次本地功能联调，但 Token/成本/质量基线仍未建立。仓库已经具备计量、定价、Trace、Metrics 与报告字段；后续必须用固定数据集、固定 Provider/模型/Prompt 版本另生成可复现的运行环境基线，不能用一次成功请求替代评测。
 
-公共 Core 只承诺 SPI 与运行协议，不承诺任何默认数据库、Redis、模型厂商、MCP 或观测
+公共 Core 提供 SPI、运行协议与默认 MCP Tool Client，不承诺默认数据库、Redis、模型厂商或观测
 Adapter。宿主自行实现持久化时必须保留 fencing、幂等、原子提交、first-writer-wins 和
 未知写结果不重放等不变量。RC1 已完成可发布构建、CI 签名、Portal staging 与公开消费验收；
 仓库所有者已于 2026-09-27 选择 Apache-2.0，并补齐根 `LICENSE`、发布 POM 元数据和
 JAR 内许可证。Portal deployment 已显示 `PUBLISHED`，公共仓库能够解析并编译这两个制品。
 
 ## 如何验证
+
+### 2026-10-02：默认 MCP 迁入公开 Core（已完成）
+
+- 分支事实：本地 `main` 从 `e689c9b` 快进合入 `codex/agent-runtime-publishable-v1` 到 `4b0eda0`，
+  无冲突；新实现保留为 main 工作区未提交修改，没有推送、Tag 或新版本发布。
+- 入口：Core 的 `mcp/` 保存默认 Client/Manager/Proxy 与可替换认证、附加授权、Schema、
+  参数/结果/对账及事件接口；公共 `AgentMcpProperties/AgentMcpAutoConfiguration` 保存默认关闭
+  的配置与 Bean 回退。业务 Context 不再持有协议实现，仍持有 Micrometer 适配。
+- 失败/降级：发现失败只摘除对应 source；allowlist 不能被附加授权绕过；缺失凭据失败关闭；
+  不支持的 Schema 类型/校验关键字明确拒绝；已取消调用不发送，重连发现复用原取消 token，
+  调用预算计入发现和排队耗时；关闭后禁止重连。未知写结果仍不重放，业务回执/状态约定可替换。
+- 版本：两个公共模块与根版本属性统一为 `1.0.0-RC2-SNAPSHOT`；MCP 包允许 Jackson，
+  Domain/Application 仍不引用 MCP/Jackson。历史 RC1 的 Tag 和 Central 制品不变。
+- 完成证据：JDK 21 `mvn -q clean test` 为 70 份报告、251 个测试，无失败、错误或跳过；
+  其中 Core MCP 26 个测试包含本机真实 HTTP 交换、默认配置接入、取消通知、超大输出、
+  扩展策略、Schema 指纹/约束与未知写结果不重放，公共自动配置含 8 个 MCP 装配测试。
+  `mvn -q -pl platform/agent-runtime,platform/agent-runtime-spring-boot-autoconfigure -am install
+  -Pcentral-release -Dgpg.skip=true -DskipTests` 成功；主包、sources、Javadoc 产出且许可证在主包中。
+  `verify-core-boundary.sh` 通过；公共 MCP 自动装配类、Spring 元数据与 imports 清单在发布包中。
+- 仓库外验收：纯 Java 消费者仅依赖 Core，编译/启动输出 `CORE_CONSUMER_OK`；
+  Spring Boot 3.5.16 消费者仅声明 Boot Starter 与 Auto-configuration，实际自动发现并启动
+  MCP Manager，输出 `BOOT_CONSUMER_OK`。它们使用本地开发快照与当前 Maven 缓存，
+  不冒充 Central 新发布或空缓存验收；发现/调用的固定协议服务证据来自 Core HTTP 测试。
+- 剩余边界与 API 责任见 [ADR-016](../adr/ADR-016-default-mcp-in-runtime-core.md) 和
+  [MCP 接入契约](../../contracts/runtime/agent-mcp-v1.md)；未新增完整 MCP、OAuth、STDIO、
+  Server 服务或第三方写工具幂等保证。未重跑检索/Agent 效果 Eval，不声称质量提升。
+  本轮未开始新 Step，当前总体路线仍见[学习入口](README.md)。
 
 ```bash
 mvn -pl platform/agent-runtime,platform/agent-runtime-spring-boot-autoconfigure,contexts/agent-orchestration-context,apps/agent-server,apps/worker-runner -am test
@@ -225,6 +255,57 @@ bash -n deploy/local/stack.sh
 python3 evals/run_agent_reliability_eval.py
 git diff --check
 ```
+
+## 2026-10-03：MCP 包职责分类（已完成）
+
+- 入口：`platform/agent-runtime/.../mcp/model|spi|connection|exception` 与
+  `infrastructure/http|auth|schema|tool`；测试按组件对应分包，跨组件默认能力测试放 integration，
+  新增 `architecture/McpPackageStructureTest` 固定包归属与契约签名。
+- 结构变化：Schema SPI 返回独立 `McpTranslatedTool`；Proxy 使用 `McpToolCallGateway`，
+  不依赖具体 Manager 类型；配置、Tool 策略、调用/事件数据和错误各有独立归属。
+  Jackson 字节码门槛收紧到 HTTP/Schema 默认实现。
+- 行为不变：Spring 属性键、协议版本、allowlist、取消、source 隔离、版本冻结与 UNKNOWN
+  不重放规则保持原有语义；没有增加完整 MCP 能力。包名变化仅作用于未发布 RC2，RC1 不受影响。
+- 验证：JDK 21 `mvn -q clean test` 产出 71 份报告、254 个测试，零失败、错误或跳过；
+  现有协议级 HTTP 与故障测试继续通过。`install -Pcentral-release -Dgpg.skip=true -DskipTests`
+  完成主包、源码与 Javadoc 构建，新包布局的 `verify-core-boundary.sh` 通过。
+  仓库外 Java 与 Spring Boot 消费者更新 import 后重新编译/启动通过；只验证本地开发快照，
+  不冒充 Central 发布或第三方 Server 验收。
+- 当前类型归属见 [MCP 公共接入契约](../../contracts/runtime/agent-mcp-v1.md)，长期边界见
+  [ADR-016](../adr/ADR-016-default-mcp-in-runtime-core.md)。未开始新 Step，未提交、推送或发布；
+  当前总体进度仍以[学习入口](README.md)为准。
+
+## 2026-10-03：增量消息事实、引用式恢复与状态基线（已完成）
+
+- 核心入口：`AgentRuntime.recordToolDecision/recordJournalResult`、`AgentDecisionContext.messages`、
+  `DefaultContextEngine`、`AgentSession.restore/snapshot`；宿主入口：`JdbcWorkspaceFacts`、
+  `JdbcAgentRecoveryStore`、`JdbcAgentSessionStore.saveSnapshotIfNeeded`、V16。
+- 进行中的 Assistant 与 DECIDED journal、ToolResult 与 terminal journal 在持权 Session 行锁事务
+  中提交。结果按稳定 index 收集后逐个落库，不再等待批次全部返回；取消保留已提交的真实结果。
+  内存 DTO 仍含已解析历史，但 Checkpoint v2 payload 仅含 state/metadata/terminal position；
+  大正文、StepTrace 只追加一次，Journal 不再复制 Assistant/结果，Outcome/Outbox 仍原子收敛。
+- `session_snapshots` 保存聚合状态、pending call IDs 和 Queue/Wait/当前输入的引用；默认每 100
+  个事件，正整数 `seekflux.agent.session.snapshot-interval-events` 可调整，挂起/终态强制保存。
+  冷恢复只对基线后的 tail 执行 reducer，历史正文按最新摘要 cutoff 和 pending 引用读取。
+  Queue/promotion 崩溃恢复、历史 Wait 查询仍以持久数据为准，不绑定具体实例。
+- 模型每轮可见 execution 内完整 Assistant/ToolResult，并按 message ID 排除与恢复 Session 的
+  重复事实；不再重复注入 observations 文本。摘要正文与覆盖引用在同一事务提交后才切换，
+  原文不删除；Redis 仍是 authority/cancel 与业务结果缓存，没有增加 Runtime 共享投影缓存。
+- 失败边界：相同事件/Outcome ID 的不同内容失败；旧 fence 和 journal 失败事务不会留下半条
+  消息；模型决策已提交或 Tool 结果已提交时不重复调用；模型返回但未提交任何事实时仍可重算。
+  v1 自包含 Checkpoint/journal 继续兼容，不盲删旧 payload；写副作用仍必须走账本与对账。
+- 验证：JDK 21 全仓 `mvn -q test -Dseekflux.test.jdbc-url=jdbc:postgresql://127.0.0.1:55437/seekflux_agent_facts_v2`
+  为 73 份报告、268 个测试，零失败/错误/跳过；其中 11 个新 PostgreSQL 集成验收实际执行
+  V1～V16、事务代理、进行中崩溃、部分并行完成、等待回调、队列/升格、压缩原文保留、冲突回滚
+  和旧编码恢复。另有 3 个新增 Core 快照/上下文固定测试。数据库是本轮独立临时实例，未连接
+  产品数据库；样本 v2 Checkpoint 引用 payload 最大 68 字节，不是容量/吞吐压测承诺。
+- 发布边界复核：Core/自动装配的 `central-release` 打包（跳过签名、不 deploy）通过；
+  `verify-core-boundary.sh` 检查 Core JAR 通过，仍不传递 JDBC/Redis/Spring。
+  本轮文档本地链接和 `git diff --check` 通过；数据库变更只在隔离验收库执行。
+- 长期事实来源：[ADR-017](../adr/ADR-017-agent-event-facts-and-reference-snapshots.md)、
+  [持久化 v2 契约](../../contracts/runtime/agent-persistence-v2.md)。未做 token delta 落库、当前
+  protected turn 激进压缩、归档、快照 GC 或性能 SLO；未重跑检索效果 Eval，不声称质量变化。
+  未开始新 Step，未提交、推送或发布。当前总路线仍以[学习入口](README.md)为准。
 
 ## 本阶段可以学到什么
 

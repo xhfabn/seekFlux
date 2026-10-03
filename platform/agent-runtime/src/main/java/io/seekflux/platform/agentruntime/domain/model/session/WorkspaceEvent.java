@@ -17,6 +17,14 @@ public sealed interface WorkspaceEvent {
 
     Instant eventTime();
 
+    /** Durable execution coordinates/trace deltas; never a provider message. */
+    record ExecutionRecorded(long position, Instant eventTime, String requestId,
+                             Map<String, Object> state) implements WorkspaceEvent {
+        public ExecutionRecorded {
+            state = java.util.Collections.unmodifiableMap(new java.util.LinkedHashMap<>(state));
+        }
+    }
+
     record SessionCreated(
             long position,
             Instant eventTime,
