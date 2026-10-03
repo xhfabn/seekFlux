@@ -109,17 +109,24 @@ public final class McpSchemaTranslator implements McpToolSchemaAdapter {
                 default -> throw new IllegalArgumentException(
                         "unsupported MCP Tool property type: " + type);
             };
-            parameters.put(name, translated);
+            Object description = property.get("description");
+            if (description != null && !(description instanceof String)) {
+                throw new IllegalArgumentException("MCP parameter description must be a string");
+            }
+            parameters.put(name, translated.withDescription((String) description));
         });
-        StringBuilder version = new StringBuilder("mcp-")
-                .append(server.configVersion()).append('-')
-                .append(policy.policyVersion()).append('-')
-                .append(schemaHash);
-        if (reconciliationSchemaHash != null && !reconciliationSchemaHash.isBlank()) {
-            version.append("-reconcile-").append(reconciliationSchemaHash);
+        String version;
+        try {
+            // Fixed-size identity covers guidance as well as validation/reconciliation semantics.
+            // Do not concatenate multiple 64-character hashes into a database version column.
+            version = "mcp-" + sha256(objectMapper.writeValueAsString(List.of(
+                    server.configVersion(), policy.policyVersion(), schemaHash, remote.description(),
+                    reconciliationSchemaHash == null ? "" : reconciliationSchemaHash)));
+        } catch (JsonProcessingException invalid) {
+            throw new IllegalArgumentException("MCP Tool definition is not serializable", invalid);
         }
         return new McpTranslatedTool(
-                new AgentToolSchema(version.toString(), parameters),
+                new AgentToolSchema(version, parameters),
                 schemaHash,
                 remote.description());
     }

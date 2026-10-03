@@ -232,6 +232,11 @@ public final class AgentRuntime {
             }
             for (Map.Entry<String, String> frozen : snapshot.toolSchemaVersions().entrySet()) {
                 tools.require(frozen.getKey(), frozen.getValue());
+                var definitionMetadata = snapshot.toolDefinitions().get(frozen.getKey());
+                if (definitionMetadata != null
+                        && !definitionMetadata.equals(tools.definitionFor(frozen.getKey(), frozen.getValue()))) {
+                    throw new IllegalStateException("frozen Tool definition has changed: " + frozen.getKey());
+                }
             }
         }
         if (tools.containsMutating(
@@ -317,7 +322,8 @@ public final class AgentRuntime {
                         eager,
                         run.capabilities(),
                         run.snapshot.toolSchemaVersions(),
-                        run.messages);
+                        run.messages,
+                        run.snapshot.toolDefinitions());
                 decision = invoke(
                         () -> callGuard.execute(AgentCallGuard.CallType.MODEL, () -> planner.decide(context)),
                         deadlineNanos,
@@ -1521,6 +1527,9 @@ public final class AgentRuntime {
 
     private AgentRunTrace.DefinitionSnapshot definitionSnapshot(
             AgentDefinition definition, CapabilitySnapshot capabilities) {
+        var definitions = tools.definitionsFor(capabilities.registeredTools());
+        Map<String, String> versions = new java.util.LinkedHashMap<>();
+        definitions.forEach((name, tool) -> versions.put(name, tool.schema().version()));
         return new AgentRunTrace.DefinitionSnapshot(
                 definition.id(),
                 definition.version(),
@@ -1530,8 +1539,9 @@ public final class AgentRuntime {
                 definition.maxSteps(),
                 definition.maxToolCalls(),
                 definition.timeout().toMillis(),
-                tools.versionsFor(capabilities.registeredTools()),
-                capabilities);
+                versions,
+                capabilities,
+                definitions);
     }
 
     private <T> T invoke(
@@ -1931,7 +1941,7 @@ public final class AgentRuntime {
                     snapshot.id(), snapshot.version(), snapshot.plannerVersion(),
                     snapshot.promptVersion(), snapshot.decisionProviderVersion(),
                     snapshot.maxSteps(), snapshot.maxToolCalls(), snapshot.timeoutMillis(),
-                    snapshot.toolSchemaVersions(), updated);
+                    snapshot.toolSchemaVersions(), updated, snapshot.toolDefinitions());
             capabilityResolver.recordToolGroupSwitch(snapshot.id(), updated);
             record(AgentRunEvent.Type.CAPABILITIES_CHANGED, Map.of(
                     "catalogVersion", updated.catalogVersion(),

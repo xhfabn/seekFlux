@@ -60,6 +60,30 @@ class AgentRuntimeRecoveryTest {
     }
 
     @Test
+    void rejectsChangedDescriptionOnRestartBeforeAnyModelOrToolCall() {
+        var store = new InMemoryRecoveryStore();
+        var modelCalls = new AtomicInteger();
+        var toolCalls = new AtomicInteger();
+        var original = runtime(toolCalls, AgentTool.Effect.READ_ONLY, "original usage guidance");
+        assertThrows(SimulatedCrash.class, () -> original.run(definition(), request(), planner(modelCalls),
+                new CancellationToken(), execution(store, RecoveryPlan.START_NEW,
+                        new CrashOnce(RecoveryPoint.AFTER_PRE_TURN_CHECKPOINT))));
+        var plan = store.commitResume(resumeIngress(), 2, CLOCK.instant());
+        assertEquals("original usage guidance", plan.checkpoint().definition().toolDefinitions().get("search").description());
+        var changed = runtime(toolCalls, AgentTool.Effect.READ_ONLY, "changed usage with the same version");
+        var failure = assertThrows(IllegalStateException.class, () -> changed.run(definition(), request(),
+                planner(modelCalls), new CancellationToken(), execution(store, plan, ignored -> { })));
+        assertEquals("frozen Tool definition has changed: search", failure.getMessage());
+        assertEquals(0, modelCalls.get());
+        assertEquals(0, toolCalls.get());
+        var recovered = original.run(definition(), request(), context -> {
+            assertEquals("original usage guidance", context.toolDefinitions().get("search").description());
+            return planner(modelCalls).decide(context);
+        }, new CancellationToken(), execution(store, plan, ignored -> { }));
+        assertEquals(AgentTerminalState.RESULTS_READY, recovered.state());
+    }
+
+    @Test
     void resumesDecisionCommittedBeforeToolSubmissionWithoutRepeatingModel() {
         ScenarioResult result = recoverAfter(RecoveryPoint.AFTER_MODEL_DECISION_COMMIT);
 
@@ -212,8 +236,13 @@ class AgentRuntimeRecoveryTest {
     }
 
     private AgentRuntime runtime(AtomicInteger toolCalls, AgentTool.Effect effect) {
+        return runtime(toolCalls, effect, "");
+    }
+
+    private AgentRuntime runtime(AtomicInteger toolCalls, AgentTool.Effect effect, String description) {
         AgentTool tool = new AgentTool() {
             @Override public String name() { return "search"; }
+            @Override public String description() { return description; }
             @Override public AgentToolSchema schema() {
                 return new AgentToolSchema(
                         "search-v1", Map.of("query", AgentToolParameter.requiredString(100)));

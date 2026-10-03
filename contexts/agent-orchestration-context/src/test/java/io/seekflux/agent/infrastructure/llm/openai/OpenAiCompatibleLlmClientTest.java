@@ -22,6 +22,21 @@ import io.seekflux.platform.agentruntime.application.spi.business.output.OutputG
 import io.seekflux.platform.agentruntime.domain.model.context.ContextEvent;
 import io.seekflux.platform.agentruntime.domain.model.execution.CancellationCause;
 import io.seekflux.platform.agentruntime.domain.model.execution.CancellationToken;
+import io.seekflux.platform.agentruntime.domain.model.agent.definition.AgentDefinition;
+import io.seekflux.platform.agentruntime.domain.model.feature.RuntimeContext;
+import io.seekflux.platform.agentruntime.domain.model.session.AgentSession;
+import io.seekflux.platform.agentruntime.domain.model.session.WorkspaceEvent;
+import io.seekflux.platform.agentruntime.domain.service.context.DefaultContextEngine;
+import io.seekflux.platform.agentruntime.domain.service.tool.AgentToolRegistry;
+import io.seekflux.platform.agentruntime.infrastructure.prompt.MapPromptResolver;
+import io.seekflux.platform.agentruntime.application.spi.business.tool.AgentTool;
+import io.seekflux.platform.agentruntime.mcp.infrastructure.schema.McpSchemaTranslator;
+import io.seekflux.platform.agentruntime.mcp.infrastructure.tool.McpProxyTool;
+import io.seekflux.platform.agentruntime.mcp.model.McpRemoteTool;
+import io.seekflux.platform.agentruntime.mcp.model.McpServerConfig;
+import io.seekflux.platform.agentruntime.mcp.model.McpToolPolicy;
+import io.seekflux.platform.agentruntime.mcp.model.McpCallResult;
+import io.seekflux.platform.agentruntime.mcp.spi.McpToolCallGateway;
 import java.net.InetSocketAddress;
 import java.net.http.HttpClient;
 import java.time.Duration;
@@ -31,6 +46,7 @@ import java.time.ZoneOffset;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -40,6 +56,60 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.Test;
 
 class OpenAiCompatibleLlmClientTest {
+
+    @Test
+    void sendsMcpDescriptionsFromRegisteredToolThroughContextAssemblyToTheHttpRequest() throws Exception {
+        ObjectMapper mapper = new ObjectMapper();
+        AtomicReference<String> body = new AtomicReference<>();
+        HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+        server.createContext("/v1/chat/completions", exchange -> {
+            body.set(new String(exchange.getRequestBody().readAllBytes(), java.nio.charset.StandardCharsets.UTF_8));
+            byte[] response = mapper.writeValueAsBytes(Map.of("choices", List.of(Map.of("message",
+                    Map.of("content", "{\"action\":\"clarify\",\"question\":\"Which document?\"}")))));
+            exchange.sendResponseHeaders(200, response.length);
+            exchange.getResponseBody().write(response);
+            exchange.close();
+        });
+        server.start();
+        try {
+            var policy = new McpToolPolicy("lookup", "v1", AgentTool.Effect.READ_ONLY, false, Set.of(), "");
+            var config = McpServerConfig.streamableHttp("docs", java.net.URI.create("https://example.test/mcp"), Map.of("lookup", policy));
+            var remote = new McpRemoteTool("lookup", "Read matching documents; never modify them", Map.of("type", "object",
+                    "properties", Map.of("query", Map.of("type", "string", "description", "Exact user search terms")),
+                    "required", List.of("query")));
+            var translated = new McpSchemaTranslator(mapper).translate(config, remote, policy, null);
+            var gateway = new McpToolCallGateway() {
+                @Override public McpCallResult call(String serverId, String localName, String version, String remoteName,
+                        Map<String, Object> arguments, Duration remaining, CancellationToken token) {
+                    throw new AssertionError("assembly must not call the remote Tool");
+                }
+                @Override public void recordPolicyRejection(String serverId, String name, String reason) { }
+            };
+            var proxy = new McpProxyTool(config, policy, translated, gateway);
+            assertThat(proxy.description()).isEqualTo(remote.description());
+            var registry = new AgentToolRegistry(List.of(proxy));
+            var request = new AgentRunRequest("r", "s", "t", "find", Map.of());
+            var definition = new AgentDefinition("agent", "v1", "loop", "prompt", "provider",
+                    Set.of(proxy.name()), 3, 2, Duration.ofSeconds(2), true);
+            var session = AgentSession.replay("s", List.of(new WorkspaceEvent.SessionCreated(1, Instant.EPOCH, "agent", "v1")));
+            var engine = new DefaultContextEngine(new MapPromptResolver(Map.of("prompt", "Follow the user task")), registry);
+            var decision = new AgentDecisionContext(request, 1, Duration.ofSeconds(2), List.of(), null, null,
+                    "run", null, null, registry.versionsFor(Set.of(proxy.name())), List.of(), registry.definitionsFor(Set.of(proxy.name())));
+            var assembled = engine.assemble(session, new RuntimeContext(definition, request, null, Map.of()), decision);
+            assertThat(client(server, mapper, Duration.ofSeconds(2)).chat(assembled))
+                    .isEqualTo(new AgentDecision.Clarify("Which document?"));
+            var wire = mapper.readTree(body.get());
+            var function = wire.path("tools").get(0).path("function");
+            assertThat(function.path("name").asText()).isEqualTo("docs__lookup");
+            assertThat(function.path("description").asText()).isEqualTo(remote.description());
+            assertThat(function.path("parameters").path("properties").path("query").path("description").asText())
+                    .isEqualTo("Exact user search terms");
+            assertThat(wire.path("messages").toString()).contains(remote.description(), "Exact user search terms");
+            assertThat(body.get()).doesNotContain("SeekFlux Tool schema");
+        } finally {
+            server.stop(0);
+        }
+    }
 
     @Test
     void callsChatCompletionsAndParsesStructuredDecision() throws Exception {

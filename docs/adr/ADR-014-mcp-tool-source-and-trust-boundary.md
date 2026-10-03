@@ -6,6 +6,9 @@
 > 2026-10-02：协议适配器的模块归属与可替换业务映射由
 > [ADR-016](ADR-016-default-mcp-in-runtime-core.md) 更新为公开 Core 默认实现。
 > 本 ADR 的信任边界、source 隔离、版本冻结与 UNKNOWN 写结果不重放约束继续有效。
+>
+> 2026-10-03：模型可见用途和参数说明已补齐，默认 MCP 版本身份纳入描述并采用固定长度 hash。
+> 当前定义冻结与升级边界见 [ADR-018](ADR-018-tool-descriptions-and-frozen-model-definitions.md)。
 
 ## 背景
 

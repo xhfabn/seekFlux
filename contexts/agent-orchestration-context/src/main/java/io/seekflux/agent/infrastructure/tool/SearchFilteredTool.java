@@ -16,12 +16,13 @@ public final class SearchFilteredTool implements AgentTool {
 
     public static final String NAME = "search_filtered";
     private static final AgentToolSchema SCHEMA = new AgentToolSchema(
-            "search-filtered-tool-v1",
+            "search-filtered-tool-v2",
             Map.of(
-                    "query", AgentToolParameter.requiredString(500),
-                    "page", AgentToolParameter.optionalInteger(0, 199),
-                    "size", AgentToolParameter.optionalInteger(1, 50),
-                    "required_tags", AgentToolParameter.optionalStringList(10, 64)));
+                    "query", AgentToolParameter.requiredString(500).withDescription("用户要搜索的关键词或主题，不得编造目标。"),
+                    "page", AgentToolParameter.optionalInteger(0, 199).withDescription("从 0 开始的页码，省略时为 0。"),
+                    "size", AgentToolParameter.optionalInteger(1, 50).withDescription("每页候选数量，省略时为 12。"),
+                    "required_tags", AgentToolParameter.optionalStringList(10, 64)
+                            .withDescription("从用户需求中确定的标签过滤条件，不得臆造标签；省略时不增加标签约束。")));
 
     private final SearchUseCase search;
 
@@ -32,6 +33,11 @@ public final class SearchFilteredTool implements AgentTool {
     @Override
     public String name() {
         return NAME;
+    }
+
+    @Override
+    public String description() {
+        return "面向明确标签约束的内容搜索，使用用户提供的关键词与标签条件。与通用搜索共用 SearchUseCase，返回真实候选和 Search Trace，不自行重排结果。";
     }
 
     @Override

@@ -50,6 +50,10 @@
   CapabilitySnapshot、下一模型轮切组以及 Context/Trace/Push/Metrics 已实现；
 - MCP Streamable HTTP Tool 来源、受限 Schema、本地策略、连接隔离、取消、版本冻结和写操作
   UNKNOWN 对账边界已实现；Resources/Prompts/Sampling 不在当前范围；
+- 2026-10-03：工具/参数描述已从本地与 MCP 定义自动进入模型输入，ToolGroup 用途按权限过滤；
+  新 execution 冻结完整模型定义，热更/恢复拒绝同版本漂移。决定见
+  [ADR-018](../../docs/adr/ADR-018-tool-descriptions-and-frozen-model-definitions.md)，验收见
+  [Step 07](../../docs/learning/step-07-agent-reliability-platform.md)；不改变已发布 RC1。
 - Chained 和 Graph 尚未实现。
 
 ## 3. 实施顺序与依赖

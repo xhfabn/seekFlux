@@ -56,6 +56,19 @@ available from Maven Central and has passed an empty-cache external-consumer com
 
 ## Default MCP client (current development source)
 
+Tool usage guidance is supplied by `AgentTool.description()`, not independently maintained in
+Agent prompts. Legacy implementations default to an empty description. Parameters use
+`AgentToolParameter.requiredString(500).withDescription("User search terms")`; the old factories
+and six-argument constructor remain available. Registry captures immutable definitions, Runtime
+freezes them for execution/recovery, and Context Engine projects them into native `tools` and text
+context. MCP descriptions are forwarded automatically. Local semantic changes must bump the
+Tool schema/definition version; same-version definition drift is rejected. See the
+[Tool definition contract](../../contracts/runtime/agent-tool-definition-v1.md).
+
+The built-in Search and SwitchToolGroups definitions are now v2. MCP version identities now cover
+descriptions and are fixed-size hashes. Before deployment, finish older executions or retain their
+exact old implementations; an unavailable frozen version fails closed, not silently upgraded.
+
 The Core supplies the client and host-side connection manager; MCP servers remain external services.
 It currently supports the `2025-11-25` Streamable HTTP Tool subset, not every MCP capability.
 To try current source locally, install both modules and use `1.0.0-RC2-SNAPSHOT`:

@@ -48,6 +48,14 @@ Spring 提供对应 Bean 时默认实现回退。Manager 也可整体替换；�
 自定义 Schema/授权/结果策略发生语义变化时必须同步提升本地 `policyVersion`/`configVersion`，
 否则运行恢复不能证明使用了同一策略。
 
+## 工具说明与冻结定义（2026-10-03）
+
+默认 Proxy 通过 `AgentTool.description()` 暴露远端用途，Translator 保留受支持参数的 description；
+两者经 Registry/Context 自动进入模型的 `tools` 和文本能力层，不要求宿主再手写到 Prompt。
+默认 MCP 定义版本改为固定长度 hash，包含工具说明、输入 Schema、配置/策略版本和对账 Schema；
+描述单独变化也触发新版本。旧开发版冻结版本不可静默升级。
+字段、兼容方式和信任边界见 [工具定义契约](agent-tool-definition-v1.md)。
+
 ## 失败与副作用
 
 - 发现失败不拖垮其他来源；缺失凭据、Schema 拒绝或注册策略拒绝会留下 DISCONNECTED。

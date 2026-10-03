@@ -4,6 +4,7 @@ import io.seekflux.platform.agentruntime.application.command.AgentRunRequest;
 import io.seekflux.platform.agentruntime.domain.model.message.AgentAssistantContent;
 import io.seekflux.platform.agentruntime.domain.model.run.LlmUsage;
 import io.seekflux.platform.agentruntime.domain.model.tool.AgentToolObservation;
+import io.seekflux.platform.agentruntime.domain.model.tool.AgentToolDefinition;
 import java.time.Duration;
 import java.util.List;
 import java.util.Map;
@@ -21,7 +22,18 @@ public record AgentDecisionContext(
         EagerToolDispatcher eagerToolDispatcher,
         CapabilitySnapshot capabilities,
         Map<String, String> toolSchemaVersions,
-        List<io.seekflux.platform.agentruntime.domain.model.message.AgentMessage> messages) {
+        List<io.seekflux.platform.agentruntime.domain.model.message.AgentMessage> messages,
+        Map<String, AgentToolDefinition> toolDefinitions) {
+
+    public AgentDecisionContext(AgentRunRequest request, int step, Duration remaining,
+            List<AgentToolObservation> observations, Consumer<LlmUsage> usageRecorder,
+            Consumer<AgentAssistantContent> assistantContentRecorder, String agentRunId,
+            EagerToolDispatcher eagerToolDispatcher, CapabilitySnapshot capabilities,
+            Map<String, String> toolSchemaVersions,
+            List<io.seekflux.platform.agentruntime.domain.model.message.AgentMessage> messages) {
+        this(request, step, remaining, observations, usageRecorder, assistantContentRecorder,
+                agentRunId, eagerToolDispatcher, capabilities, toolSchemaVersions, messages, Map.of());
+    }
 
     public AgentDecisionContext(
             AgentRunRequest request, int step, Duration remaining,
@@ -103,6 +115,7 @@ public record AgentDecisionContext(
     }
 
     public AgentDecisionContext {
+        toolDefinitions = toolDefinitions == null ? Map.of() : Map.copyOf(toolDefinitions);
         messages = messages == null ? List.of() : List.copyOf(messages);
         observations = observations == null ? List.of() : List.copyOf(observations);
         usageRecorder = usageRecorder == null ? ignored -> { } : usageRecorder;

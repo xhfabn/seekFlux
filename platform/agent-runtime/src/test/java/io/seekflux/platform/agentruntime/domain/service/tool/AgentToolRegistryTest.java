@@ -8,11 +8,46 @@ import io.seekflux.platform.agentruntime.application.spi.business.tool.AgentTool
 import io.seekflux.platform.agentruntime.application.spi.business.tool.model.AgentToolContext;
 import io.seekflux.platform.agentruntime.domain.model.tool.AgentToolResult;
 import io.seekflux.platform.agentruntime.domain.model.tool.AgentToolSchema;
+import io.seekflux.platform.agentruntime.domain.model.tool.AgentToolParameter;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 
 class AgentToolRegistryTest {
+
+    @Test
+    void rejectsDescriptionAndParameterChangesWithoutVersionBumpAtomically() {
+        AgentToolRegistry registry = new AgentToolRegistry(List.of());
+        var original = new DescribedTool("v1", "original", "original query");
+        registry.replaceSource("mcp:docs", List.of(original));
+        for (var changed : List.of(new DescribedTool("v1", "different", "original query"),
+                new DescribedTool("v1", "original", "different query"))) {
+            assertThatThrownBy(() -> registry.replaceSource("mcp:docs", List.of(changed)))
+                    .hasMessageContaining("without a version change");
+            assertThat(registry.require("docs__read")).isSameAs(original);
+        }
+        registry.replaceSource("mcp:docs", List.of(new DescribedTool("v2", "different", "different query")));
+        assertThat(registry.definitionFor("docs__read", "v1").description()).isEqualTo("original");
+        assertThat(registry.definitionFor("docs__read", null).description()).isEqualTo("different");
+    }
+
+    @Test
+    void rejectsOversizedToolAndParameterDescriptions() {
+        assertThatThrownBy(() -> new AgentToolRegistry(List.of(new DescribedTool("v1", "x".repeat(2049), "query"))))
+                .hasMessageContaining("description exceeds 2048");
+        assertThatThrownBy(() -> AgentToolParameter.requiredString(10).withDescription("x".repeat(2049)))
+                .hasMessageContaining("description exceeds 2048");
+    }
+
+    private record DescribedTool(String version, String description, String queryDescription) implements AgentTool {
+        @Override public String name() { return "docs__read"; }
+        @Override public String source() { return "mcp:docs"; }
+        @Override public Effect effect() { return Effect.READ_ONLY; }
+        @Override public AgentToolSchema schema() {
+            return new AgentToolSchema(version, Map.of("query", AgentToolParameter.requiredString(100).withDescription(queryDescription)));
+        }
+        @Override public AgentToolResult execute(AgentToolContext context) { throw new AssertionError("no execution"); }
+    }
 
     @Test
     void atomicallyReplacesOneSourceAndKeepsFrozenVersionsAddressable() {

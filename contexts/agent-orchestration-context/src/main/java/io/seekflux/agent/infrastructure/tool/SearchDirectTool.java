@@ -16,12 +16,13 @@ public final class SearchDirectTool implements AgentTool {
 
     public static final String NAME = "search_direct";
     private static final AgentToolSchema SCHEMA = new AgentToolSchema(
-            "search-direct-tool-v1",
+            "search-direct-tool-v2",
             Map.of(
-                    "query", AgentToolParameter.requiredString(500),
-                    "page", AgentToolParameter.optionalInteger(0, 199),
-                    "size", AgentToolParameter.optionalInteger(1, 50),
-                    "required_tags", AgentToolParameter.optionalStringList(10, 64)));
+                    "query", AgentToolParameter.requiredString(500).withDescription("用户要搜索的关键词或主题，不得编造目标。"),
+                    "page", AgentToolParameter.optionalInteger(0, 199).withDescription("从 0 开始的页码，省略时为 0。"),
+                    "size", AgentToolParameter.optionalInteger(1, 50).withDescription("每页候选数量，省略时为 12。"),
+                    "required_tags", AgentToolParameter.optionalStringList(10, 64)
+                            .withDescription("用户明确要求的标签过滤条件；省略时不增加标签约束。")));
 
     private final SearchUseCase search;
 
@@ -32,6 +33,11 @@ public final class SearchDirectTool implements AgentTool {
     @Override
     public String name() {
         return NAME;
+    }
+
+    @Override
+    public String description() {
+        return "通用内容搜索，适合关键词和宽泛探索，支持分页与可选标签过滤。返回真实候选和 Search Trace，保留搜索服务的排序与降级语义。";
     }
 
     @Override

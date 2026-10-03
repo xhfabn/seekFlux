@@ -27,9 +27,14 @@ public final class SwitchToolGroupsTool implements AgentTool {
     }
 
     @Override
+    public String description() {
+        return "替换当前激活的工具组集合，从下一模型轮生效。只能使用上下文中允许的组 ID，不授予额外权限；alwaysActive 组保持有效。";
+    }
+
+    @Override
     public AgentToolSchema schema() {
         return new AgentToolSchema(
-                "switch-tool-groups-v1",
+                "switch-tool-groups-v2",
                 Map.of(ACTIVE_GROUPS,
                         new AgentToolParameter(
                                 AgentToolParameter.Type.STRING_LIST,
@@ -37,7 +42,7 @@ public final class SwitchToolGroupsTool implements AgentTool {
                                 128,
                                 64,
                                 null,
-                                null)));
+                                null).withDescription("希望激活的完整工具组 ID 列表，而不是增量；必须至少提供一个允许的组。")));
     }
 
     @Override

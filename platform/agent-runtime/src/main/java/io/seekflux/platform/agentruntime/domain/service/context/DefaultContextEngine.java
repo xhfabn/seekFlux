@@ -18,6 +18,7 @@ import io.seekflux.platform.agentruntime.domain.model.feature.RuntimeContext;
 import io.seekflux.platform.agentruntime.domain.model.session.AgentSession;
 import io.seekflux.platform.agentruntime.domain.model.session.WorkspaceEvent;
 import io.seekflux.platform.agentruntime.domain.model.tool.AgentToolObservation;
+import io.seekflux.platform.agentruntime.domain.model.tool.AgentToolDefinition;
 import io.seekflux.platform.agentruntime.domain.service.tool.AgentToolRegistry;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -480,11 +481,28 @@ public final class DefaultContextEngine implements ContextEngine {
         for (String name : effectiveTools(runtimeContext, decisionContext)) {
             value.append("- ").append(name);
             if (tools != null) {
-                var schema = tool(name, decisionContext).schema();
+                var definition = toolDefinition(name, decisionContext);
+                var schema = definition.schema();
                 value.append('@').append(schema.version())
+                        .append(" description=").append(definition.description())
                         .append(" parameters=").append(new java.util.TreeMap<>(schema.parameters()));
             }
             value.append('\n');
+        }
+        var capabilities = capabilities(runtimeContext, decisionContext);
+        var groups = capabilities.toolGroups().values().stream()
+                .filter(group -> !group.toolIds().isEmpty())
+                .filter(group -> capabilities.definitionAllowedTools().containsAll(group.toolIds()))
+                .filter(group -> capabilities.registeredTools().containsAll(group.toolIds()))
+                .filter(group -> !capabilities.toolRestrictionEnabled()
+                        || capabilities.requestedTools().containsAll(group.toolIds()))
+                .sorted(java.util.Comparator.comparing(group -> group.groupId())).toList();
+        if (!groups.isEmpty()) {
+            value.append("tool_groups (availability does not grant execution permission):\n");
+            groups.forEach(group -> value.append("- ").append(group.groupId()).append('@').append(group.version())
+                    .append(" active=").append(group.alwaysActive() || capabilities.activeToolGroups().contains(group.groupId()))
+                    .append(" description=").append(group.description())
+                    .append(" tools=").append(new java.util.TreeSet<>(group.toolIds())).append('\n'));
         }
         return value.toString();
     }
@@ -501,7 +519,8 @@ public final class DefaultContextEngine implements ContextEngine {
             return List.of();
         }
         return effectiveTools(runtimeContext, decisionContext).stream().map(name -> {
-            var schema = tool(name, decisionContext).schema();
+            var definition = toolDefinition(name, decisionContext);
+            var schema = definition.schema();
             Map<String, Object> properties = new java.util.LinkedHashMap<>();
             List<String> required = new ArrayList<>();
             schema.parameters().entrySet().stream()
@@ -509,6 +528,9 @@ public final class DefaultContextEngine implements ContextEngine {
                     .forEach(entry -> {
                         var parameter = entry.getValue();
                         Map<String, Object> property = new java.util.LinkedHashMap<>();
+                        if (!parameter.description().isEmpty()) {
+                            property.put("description", parameter.description());
+                        }
                         switch (parameter.type()) {
                             case STRING -> property.put("type", "string");
                             case INTEGER -> property.put("type", "integer");
@@ -549,15 +571,20 @@ public final class DefaultContextEngine implements ContextEngine {
             inputSchema.put("required", List.copyOf(required));
             inputSchema.put("additionalProperties", false);
             return new ChatToolDefinition(
-                    name, "SeekFlux Tool schema " + schema.version(), inputSchema);
+                    name, definition.description(), inputSchema);
         }).toList();
     }
 
-    private io.seekflux.platform.agentruntime.application.spi.business.tool.AgentTool tool(
+    private AgentToolDefinition toolDefinition(
             String name,
             AgentDecisionContext decisionContext) {
+        if (!decisionContext.toolDefinitions().isEmpty()) {
+            var definition = decisionContext.toolDefinitions().get(name);
+            if (definition == null) throw new IllegalStateException("missing frozen Tool definition: " + name);
+            return definition;
+        }
         String frozen = decisionContext.toolSchemaVersions().get(name);
-        return frozen == null ? tools.require(name) : tools.require(name, frozen);
+        return tools.definitionFor(name, frozen);
     }
 
     private static Map<String, Object> modelVisibleAttributes(Map<String, Object> attributes) {

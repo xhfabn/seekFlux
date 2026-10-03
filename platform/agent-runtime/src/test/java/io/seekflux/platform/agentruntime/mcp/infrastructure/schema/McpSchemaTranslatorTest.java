@@ -22,6 +22,30 @@ class McpSchemaTranslatorTest {
     private final McpSchemaTranslator translator = new McpSchemaTranslator(new ObjectMapper());
 
     @Test
+    void retainsParameterDescriptionsAndVersionsDescriptionOnlyChanges() {
+        var policy = new McpToolPolicy("find", "v1", AgentTool.Effect.READ_ONLY, false, Set.of(), "");
+        var input = Map.<String, Object>of("type", "object", "properties",
+                Map.of("query", Map.of("type", "string", "description", "Literal search text")));
+        var first = translator.translate(config(policy), new McpRemoteTool("find", "Find documents", input), policy, null);
+        var second = translator.translate(config(policy), new McpRemoteTool("find", "Read documents", input), policy, null);
+        assertThat(first.description()).isEqualTo("Find documents");
+        assertThat(first.schema().parameters().get("query").description()).isEqualTo("Literal search text");
+        assertThat(first.remoteSchemaHash()).isEqualTo(second.remoteSchemaHash());
+        assertThat(first.schema().version()).isNotEqualTo(second.schema().version());
+    }
+
+    @Test
+    void rejectsMalformedOrOversizedParameterDescriptionsInsteadOfDiscardingThem() {
+        var policy = new McpToolPolicy("find", "v1", AgentTool.Effect.READ_ONLY, false, Set.of(), "");
+        for (Object description : java.util.List.of(123, "x".repeat(2049))) {
+            var remote = new McpRemoteTool("find", "Find", Map.of("type", "object", "properties",
+                    Map.of("query", Map.of("type", "string", "description", description))));
+            assertThatThrownBy(() -> translator.translate(config(policy), remote, policy, null))
+                    .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("description");
+        }
+    }
+
+    @Test
     void canonicalHashPreservesTypesAndListBoundaries() {
         assertThat(translator.schemaHash(new McpRemoteTool("find", "", Map.of("example", "1"))))
                 .isNotEqualTo(translator.schemaHash(new McpRemoteTool("find", "", Map.of("example", 1))));
@@ -57,7 +81,12 @@ class McpSchemaTranslatorTest {
                 config(localPolicy), remote, localPolicy, null);
 
         assertThat(translated.schema().version())
-                .startsWith("mcp-config-v3-policy-v7-");
+                .startsWith("mcp-").hasSize(68);
+        var changedPolicy = new McpToolPolicy("find", "policy-v8", AgentTool.Effect.READ_ONLY, true, Set.of("tenant-a"), "");
+        assertThat(translator.translate(config(changedPolicy), remote, changedPolicy, null).schema().version())
+                .isNotEqualTo(translated.schema().version());
+        assertThat(translator.translate(config(localPolicy), remote, localPolicy, "a".repeat(64)).schema().version())
+                .hasSize(68).isNotEqualTo(translated.schema().version());
         assertThat(translated.schema().parameters().get("query").maxLength()).isEqualTo(4_096);
         assertThat(translated.schema().parameters().get("tags").maxItems()).isEqualTo(64);
         assertThat(translated.schema().parameters().get("limit").type())

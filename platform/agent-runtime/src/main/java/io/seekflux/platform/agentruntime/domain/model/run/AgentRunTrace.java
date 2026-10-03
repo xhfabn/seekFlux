@@ -4,6 +4,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import io.seekflux.platform.agentruntime.domain.model.capability.CapabilitySnapshot;
+import io.seekflux.platform.agentruntime.domain.model.tool.AgentToolDefinition;
 
 public record AgentRunTrace(
         String agentRunId,
@@ -77,7 +78,15 @@ public record AgentRunTrace(
             int maxToolCalls,
             long timeoutMillis,
             Map<String, String> toolSchemaVersions,
-            CapabilitySnapshot capabilities) {
+            CapabilitySnapshot capabilities,
+            Map<String, AgentToolDefinition> toolDefinitions) {
+
+        public DefinitionSnapshot(String id, String version, String plannerVersion, String promptVersion,
+                String decisionProviderVersion, int maxSteps, int maxToolCalls, long timeoutMillis,
+                Map<String, String> toolSchemaVersions, CapabilitySnapshot capabilities) {
+            this(id, version, plannerVersion, promptVersion, decisionProviderVersion, maxSteps, maxToolCalls,
+                    timeoutMillis, toolSchemaVersions, capabilities, Map.of());
+        }
 
         public DefinitionSnapshot(
                 String id,
@@ -97,6 +106,16 @@ public record AgentRunTrace(
 
         public DefinitionSnapshot {
             toolSchemaVersions = toolSchemaVersions == null ? Map.of() : Map.copyOf(toolSchemaVersions);
+            toolDefinitions = toolDefinitions == null ? Map.of() : Map.copyOf(toolDefinitions);
+            if (!toolDefinitions.isEmpty() && !toolDefinitions.keySet().equals(toolSchemaVersions.keySet())) {
+                throw new IllegalArgumentException("frozen Tool definitions must match Tool versions");
+            }
+            for (var entry : toolDefinitions.entrySet()) {
+                if (!entry.getKey().equals(entry.getValue().name())
+                        || !entry.getValue().schema().version().equals(toolSchemaVersions.get(entry.getKey()))) {
+                    throw new IllegalArgumentException("frozen Tool definition identity/version mismatch");
+                }
+            }
             capabilities = capabilities == null
                     ? CapabilitySnapshot.legacy(toolSchemaVersions.keySet()) : capabilities;
         }

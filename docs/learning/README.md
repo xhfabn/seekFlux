@@ -37,6 +37,10 @@
   公共 Spring MCP 配置默认关闭，认证/授权/Schema/结果对账/观测可局部替换；开发版本尚未发布；
   MCP 源码已按 model/spi/connection/exception 与 infrastructure 的 HTTP/认证/Schema/Tool 分类，
   结构测试固定接口签名与实现边界，不改变现有协议或配置行为；
+- 本地/MCP 工具用途和参数说明已通过统一定义自动进入结构化及文本模型输入，ToolGroup 描述
+  按能力范围展示；新执行持久冻结完整模型定义，同版本漂移在热更/恢复时拒绝。HTTP 请求与
+  PostgreSQL 固定验收见 [Step 07](step-07-agent-reliability-platform.md)，
+  升级边界见 [ADR-018](../adr/ADR-018-tool-descriptions-and-frozen-model-definitions.md)；不声称模型选择质量提升；
 - Redis fencing/owner-CAS、失主接管、原因化跨实例取消、模型/Tool 在途取消、优雅停机和旧 owner 提交隔离；取消以 `USER_CANCEL/STEER/AUTHORITY_LOST/SHUTDOWN` 独立落为 `CANCELLED`，不会误触发 fallback；
 - Agent 终态事务 Outbox、Kafka 幂等审计消费、模型/Tool Bulkhead 与固定故障注入；
 - Agent 持久等待已支持类型化 `WAITING/SUSPENDED`、HITL 审批、Async/Waitpoint 回调、独立等待期限、超时/取消 first-writer-wins、恢复后 ToolResult 补偿和等待期间 Queue 的后续 drain；

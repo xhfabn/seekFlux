@@ -2,6 +2,7 @@ package io.seekflux.platform.agentruntime.domain.service.tool;
 
 import io.seekflux.platform.agentruntime.application.spi.business.tool.AgentTool;
 import io.seekflux.platform.agentruntime.application.spi.business.tool.AgentToolRegistrationPolicy;
+import io.seekflux.platform.agentruntime.domain.model.tool.AgentToolDefinition;
 import java.util.Collection;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -31,7 +32,9 @@ public final class AgentToolRegistry {
         Map<String, AgentTool> indexed = index(tools, null);
         Map<ToolVersion, AgentTool> versioned = new LinkedHashMap<>();
         indexed.values().forEach(tool -> versioned.put(version(tool), tool));
-        this.state = new RegistryState(Map.copyOf(indexed), Map.copyOf(versioned));
+        Map<ToolVersion, AgentToolDefinition> definitions = new LinkedHashMap<>();
+        versioned.forEach((key, tool) -> definitions.put(key, describe(tool)));
+        this.state = new RegistryState(Map.copyOf(indexed), Map.copyOf(versioned), Map.copyOf(definitions));
     }
 
     public boolean containsMutating() {
@@ -81,6 +84,32 @@ public final class AgentToolRegistry {
         return Map.copyOf(versions);
     }
 
+    public AgentToolDefinition definitionFor(String name, String schemaVersion) {
+        RegistryState published = state;
+        AgentTool current = published.current().get(name);
+        if (schemaVersion == null && current == null) {
+            throw new IllegalArgumentException("unknown agent tool: " + name);
+        }
+        ToolVersion key = new ToolVersion(name, schemaVersion == null ? current.schema().version() : schemaVersion);
+        AgentToolDefinition definition = published.definitions().get(key);
+        if (definition == null) {
+            throw new IllegalStateException("frozen Tool definition is unavailable: " + name + "@" + key.schemaVersion());
+        }
+        return definition;
+    }
+
+    /** Captures all definitions from one atomically published registry state. */
+    public Map<String, AgentToolDefinition> definitionsFor(Collection<String> names) {
+        RegistryState published = state;
+        Map<String, AgentToolDefinition> definitions = new LinkedHashMap<>();
+        for (String name : names) {
+            AgentTool tool = published.current().get(name);
+            if (tool == null) throw new IllegalArgumentException("unknown agent tool: " + name);
+            definitions.put(name, published.definitions().get(version(tool)));
+        }
+        return Map.copyOf(definitions);
+    }
+
     public Set<String> names() {
         return state.current().keySet();
     }
@@ -117,9 +146,19 @@ public final class AgentToolRegistry {
             }
         }
         Map<ToolVersion, AgentTool> versions = new LinkedHashMap<>(previous.versioned());
-        nextSource.values().forEach(tool -> versions.put(version(tool), tool));
+        Map<ToolVersion, AgentToolDefinition> definitions = new LinkedHashMap<>(previous.definitions());
+        nextSource.values().forEach(tool -> {
+            ToolVersion key = version(tool);
+            AgentToolDefinition definition = describe(tool);
+            AgentToolDefinition existing = definitions.putIfAbsent(key, definition);
+            if (existing != null && !existing.equals(definition)) {
+                throw new IllegalArgumentException("Tool definition changed without a version change: " + tool.name());
+            }
+            versions.put(key, tool);
+        });
         trimHistory(versions, next);
-        state = new RegistryState(Map.copyOf(next), Map.copyOf(versions));
+        definitions.keySet().retainAll(versions.keySet());
+        state = new RegistryState(Map.copyOf(next), Map.copyOf(versions), Map.copyOf(definitions));
         return Set.copyOf(nextSource.keySet());
     }
 
@@ -136,7 +175,7 @@ public final class AgentToolRegistry {
                 next.put(name, tool);
             }
         });
-        state = new RegistryState(Map.copyOf(next), previous.versioned());
+        state = new RegistryState(Map.copyOf(next), previous.versioned(), previous.definitions());
         return Set.copyOf(removed);
     }
 
@@ -196,6 +235,10 @@ public final class AgentToolRegistry {
         return new ToolVersion(tool.name(), tool.schema().version());
     }
 
+    private static AgentToolDefinition describe(AgentTool tool) {
+        return new AgentToolDefinition(tool.name(), tool.description(), tool.schema());
+    }
+
     private static String requireDynamicSource(String source) {
         String normalized = requireSource(source);
         if (AgentTool.LOCAL_SOURCE.equals(normalized)) {
@@ -216,6 +259,7 @@ public final class AgentToolRegistry {
 
     private record RegistryState(
             Map<String, AgentTool> current,
-            Map<ToolVersion, AgentTool> versioned) {
+            Map<ToolVersion, AgentTool> versioned,
+            Map<ToolVersion, AgentToolDefinition> definitions) {
     }
 }

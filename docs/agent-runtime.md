@@ -235,6 +235,14 @@ EXECUTING/SUSPENDED 允许尚未完成的 Tool Call，COMPLETED 不允许缺结�
 
 ## 6. 有限步 AgentLoop
 
+工具用途和参数说明由工具模块提供，不在 Agent Prompt 中重复维护。`AgentTool.description()`
+保留兼容空默认值，`AgentToolParameter.withDescription` 声明参数语义；Registry 捕获不可变
+`AgentToolDefinition`。新 execution 在 DefinitionSnapshot 冻结完整定义，Context Engine 从
+同一份定义生成结构化 `tools` 和文本能力层；MCP Proxy 透传发现到的用途。可见 ToolGroup
+的说明也来自冻结 Catalog，并按 AgentDef/注册范围/请求限制过滤。描述不授予执行权限。
+同版本定义改动在热更/恢复时失败关闭；升级规则见 [ADR-018](adr/ADR-018-tool-descriptions-and-frozen-model-definitions.md)
+和[工具定义契约](../contracts/runtime/agent-tool-definition-v1.md)。
+
 `AgentRuntime` 对每次运行建立共同 Deadline，并冻结以下版本：Agent、Planner、Prompt、Decision Provider、请求级 Tool Schema 子集。每一步接受以下结构化 Decision：
 
 - `CallTool`：先校验 Tool 是否允许、参数 Schema、Tool 次数和 Deadline，再由 ToolExecutor 执行；

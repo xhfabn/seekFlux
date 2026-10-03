@@ -15,6 +15,10 @@ import io.seekflux.platform.agentruntime.domain.model.run.AgentRunTrace;
 import io.seekflux.platform.agentruntime.domain.model.run.AgentTerminalState;
 import io.seekflux.platform.agentruntime.domain.model.run.LlmUsage;
 import io.seekflux.platform.agentruntime.domain.model.tool.AgentToolObservation;
+import io.seekflux.platform.agentruntime.domain.model.tool.AgentToolDefinition;
+import io.seekflux.platform.agentruntime.domain.model.tool.AgentToolSchema;
+import io.seekflux.platform.agentruntime.domain.model.tool.AgentToolParameter;
+import io.seekflux.platform.agentruntime.domain.model.capability.CapabilitySnapshot;
 import io.seekflux.platform.agentruntime.domain.model.tool.AgentToolResult;
 import io.seekflux.platform.agentruntime.domain.model.wait.WaitResolution;
 import io.seekflux.platform.agentruntime.domain.model.wait.WaitState;
@@ -31,6 +35,19 @@ class AgentRecoveryCodecTest {
 
     private final ObjectMapper objectMapper = new ObjectMapper().findAndRegisterModules();
     private final AgentRecoveryCodec codec = new AgentRecoveryCodec(objectMapper);
+
+    @Test
+    void readsLegacyDefinitionsAndParametersWithoutDescriptionFields() {
+        var definition = objectMapper.convertValue(Map.of("id", "agent", "version", "v1", "plannerVersion", "loop-v1",
+                "promptVersion", "prompt-v1", "decisionProviderVersion", "provider-v1", "maxSteps", 3,
+                "maxToolCalls", 2, "timeoutMillis", 2000, "toolSchemaVersions", Map.of("search", "search-v1")),
+                AgentRunTrace.DefinitionSnapshot.class);
+        assertEquals(Map.of(), definition.toolDefinitions());
+        var parameter = objectMapper.convertValue(Map.of("type", "STRING", "required", true, "maxLength", 100),
+                AgentToolParameter.class);
+        assertEquals("", parameter.description());
+        assertEquals(100, parameter.maxLength());
+    }
 
     @Test
     void roundTripsTerminalCheckpointAcrossJsonBoundary() throws Exception {
@@ -163,7 +180,9 @@ class AgentRecoveryCodecTest {
                 "request", "session", "turn",
                 new AgentRunTrace.DefinitionSnapshot(
                         "agent", "v1", "loop-v1", "prompt-v1", "provider-v1",
-                        3, 2, 2000, Map.of("search", "search-v1")),
+                        3, 2, 2000, Map.of("search", "search-v1"), CapabilitySnapshot.legacy(Set.of("search")),
+                        Map.of("search", new AgentToolDefinition("search", "Search actual documents", new AgentToolSchema(
+                                "search-v1", Map.of("query", AgentToolParameter.requiredString(100).withDescription("Literal search text")))))),
                 NOW, 12, AgentTerminalState.RESULTS_READY, "AGENT", null,
                 new LlmUsage(10, 5, 15, 3, true), steps);
     }

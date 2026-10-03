@@ -307,6 +307,33 @@ git diff --check
   protected turn 激进压缩、归档、快照 GC 或性能 SLO；未重跑检索效果 Eval，不声称质量变化。
   未开始新 Step，未提交、推送或发布。当前总路线仍以[学习入口](README.md)为准。
 
+## 2026-10-03：工具说明出口与冻结模型定义（已完成）
+
+- 修复事实：`AgentTool.description()` 兼容默认空串，本地工具主动声明用途；
+  `McpProxyTool` 透传 translated.description，MCP Translator 保留参数说明。
+  `AgentToolParameter` 保留旧构造/factory，并新增 `withDescription`；说明均有长度边界。
+- 单一来源：Registry 捕获不可变 `AgentToolDefinition`，Context Engine 同源生成模型 `tools`
+  与文本能力层，删除占位用途；ToolGroup 用途/active/成员来自冻结快照并按允许范围过滤。
+  工具注册不等于 Agent 授权，说明不覆盖 effect、审批或副作用策略。
+- 恢复事实：新 DefinitionSnapshot/DecisionContext 携带完整模型定义，切组不丢失；恢复校验
+  同版本定义一致，热更冲突原子拒绝。冻结定义经现有 EXECUTION_METADATA 持久化，Checkpoint
+  仍只引用事实，不新增表。旧 Snapshot/参数 JSON 缺字段和旧 Java 构造器继续兼容。
+- 升级：本地 Search/SwitchToolGroups 定义升 v2；MCP 版本是覆盖说明/Schema/配置/策略/对账
+  的固定 68 字符 hash。旧开发版本不可静默替换，需先收敛旧执行或保留确切旧实现；
+  RC1 公开制品不变。本轮未安装 SNAPSHOT 到 m2、未提交/推送/发布。
+- 验证：JDK 21 全仓 `mvn -q test -Dseekflux.test.jdbc-url=jdbc:postgresql://127.0.0.1:55437/seekflux_agent_facts_v2`
+  共 73 份报告、278 项测试，无失败/错误/跳过，含 11 项真实隔离 PostgreSQL 验收。
+  新增 10 项测试，覆盖描述/参数投影、空描述兼容、热更冲突、长度/类型拒绝、恢复防漂移、
+  旧 JSON 和真实 HTTP 模型请求；PG 增加非空说明持久恢复断言，修复固定 resolution ID 导致
+  重复运行验收的唯一键冲突。未连接产品数据库，未重跑真实模型选择/检索质量 Eval。
+- 发布边界复核：Core/自动装配 `central-release` 打包通过（跳过签名、不 deploy），
+  Core JAR 的 `verify-core-boundary.sh` 通过；Markdown 本地链接、连续 Step 编号及
+  `git diff --check` 通过。临时 PostgreSQL 验收实例在验证后关闭。
+- 长期事实来源：[ADR-018](../adr/ADR-018-tool-descriptions-and-frozen-model-definitions.md)、
+  [工具定义契约](../../contracts/runtime/agent-tool-definition-v1.md)。自定义 MCP Schema Adapter
+  仍需自行覆盖模型语义版本；没有新增工具工厂、注解解析器、Prompt 注入检测器或在线版本仓库。
+  当前总路线仍以[学习入口](README.md)为准，不创建新 Step。
+
 ## 本阶段可以学到什么
 
 - 租约解决“谁现在可以执行”，fencing 才解决“旧 owner 还能否晚到提交”；

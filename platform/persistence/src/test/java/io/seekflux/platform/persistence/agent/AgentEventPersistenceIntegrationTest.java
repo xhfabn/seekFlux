@@ -84,8 +84,9 @@ class AgentEventPersistenceIntegrationTest {
     private AgentRuntime runtime(java.util.function.Function<AgentToolContext, AgentToolResult> action) {
         AgentTool tool = new AgentTool() {
             public String name() { return "search"; }
+            public String description() { return "Search actual records"; }
             public AgentToolSchema schema() { return new AgentToolSchema("search-v1",
-                    Map.of("query", AgentToolParameter.requiredString(100))); }
+                    Map.of("query", AgentToolParameter.requiredString(100).withDescription("Literal user query"))); }
             public Effect effect() { return Effect.READ_ONLY; }
             public AgentToolResult execute(AgentToolContext context) {
                 toolCalls.incrementAndGet();
@@ -133,7 +134,11 @@ class AgentEventPersistenceIntegrationTest {
         assertEquals(1, count("ASSISTANT_MESSAGE"));
         assertEquals(0, toolCalls.get());
         assertEquals(AgentSessionStatus.EXECUTING, sessions.restoreFresh(request.sessionId()).orElseThrow().status());
-        var result = runtime.run(definition, request, planner(1), new CancellationToken(), execution(resume(), RecoveryFaultInjector.NONE));
+        var plan = resume();
+        var frozen = plan.checkpoint().definition().toolDefinitions().get("search");
+        assertEquals("Search actual records", frozen.description());
+        assertEquals("Literal user query", frozen.schema().parameters().get("query").description());
+        var result = runtime.run(definition, request, planner(1), new CancellationToken(), execution(plan, RecoveryFaultInjector.NONE));
         assertEquals(2, modelCalls.get());
         assertEquals(1, toolCalls.get());
         assertEquals(3, result.messages().size());
@@ -246,7 +251,7 @@ class AgentEventPersistenceIntegrationTest {
         assertEquals(AgentTerminalState.WAITING, waiting.state());
         sessions.appendOutcome(request.sessionId(), waiting, 1, Instant.now());
         assertEquals(waiting.waitState(), sessions.restoreFresh(request.sessionId()).orElseThrow().pendingWait().orElseThrow());
-        var resolution = new io.seekflux.platform.agentruntime.domain.model.wait.WaitResolution(1, "resolution",
+        var resolution = new io.seekflux.platform.agentruntime.domain.model.wait.WaitResolution(1, "resolution-" + UUID.randomUUID(),
                 waiting.waitState().waitId(), request.sessionId(), request.requestId(), request.turnId(),
                 io.seekflux.platform.agentruntime.domain.model.wait.WaitResolution.Outcome.COMPLETED,
                 Map.of("answer", "callback-result"), null, Instant.now());

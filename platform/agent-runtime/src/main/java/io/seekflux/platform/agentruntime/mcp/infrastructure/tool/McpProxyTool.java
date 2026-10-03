@@ -57,6 +57,11 @@ public final class McpProxyTool implements AgentTool, AgentToolReconciler {
     }
 
     @Override
+    public String description() {
+        return translated.description();
+    }
+
+    @Override
     public AgentToolSchema schema() {
         return translated.schema();
     }

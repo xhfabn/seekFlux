@@ -12,6 +12,11 @@ public interface AgentTool {
 
     String name();
 
+    /** Model-visible usage guidance, not an authorization policy. Empty for legacy Tools. */
+    default String description() {
+        return "";
+    }
+
     AgentToolSchema schema();
 
     default Effect effect() {

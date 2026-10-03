@@ -6,7 +6,13 @@ public record AgentToolParameter(
         Integer maxLength,
         Integer maxItems,
         Long minimum,
-        Long maximum) {
+        Long maximum,
+        String description) {
+
+    public AgentToolParameter(Type type, boolean required, Integer maxLength, Integer maxItems,
+            Long minimum, Long maximum) {
+        this(type, required, maxLength, maxItems, minimum, maximum, "");
+    }
 
     public enum Type {
         STRING,
@@ -19,6 +25,14 @@ public record AgentToolParameter(
         if (type == null) {
             throw new IllegalArgumentException("tool parameter type must not be null");
         }
+        description = description == null ? "" : description.trim();
+        if (description.length() > 2_048) {
+            throw new IllegalArgumentException("tool parameter description exceeds 2048 characters");
+        }
+    }
+
+    public AgentToolParameter withDescription(String description) {
+        return new AgentToolParameter(type, required, maxLength, maxItems, minimum, maximum, description);
     }
 
     public static AgentToolParameter requiredString(int maxLength) {

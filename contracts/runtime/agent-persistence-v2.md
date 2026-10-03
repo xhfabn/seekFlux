@@ -34,6 +34,10 @@ Journal v2 payload 保留 arguments/argumentsRepaired、assistantMessageId，以
 observationToolCallId。数据库列继续保留身份、effect、状态、参数摘要和 fencing。
 旧 v1 内联 payload 仍能读取；不能删除其内容后再尝试从尚未追加的消息恢复。
 
+冻结 definition 新增 `toolDefinitions`：名称、说明与完整参数 Schema（含参数说明）。该映射进入
+`EXECUTION_METADATA`，不是每个 Checkpoint 内联副本；老字段缺失仍可读取。恢复/版本检查见
+[工具定义契约](agent-tool-definition-v1.md)。本轮不新增持久表或更改 V16。
+
 ## Session 状态快照
 
 V16 新增 `session_snapshots`，主键为 `(session_id,event_position)`。payload 保存

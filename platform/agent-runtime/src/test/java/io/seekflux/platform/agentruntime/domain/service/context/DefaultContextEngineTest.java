@@ -3,6 +3,7 @@ package io.seekflux.platform.agentruntime.domain.service.context;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import io.seekflux.platform.agentruntime.application.spi.capability.llm.model.AssembledContext;
 import io.seekflux.platform.agentruntime.application.spi.capability.llm.model.ContextMessage;
@@ -13,6 +14,7 @@ import io.seekflux.platform.agentruntime.domain.model.agent.definition.AgentDefi
 import io.seekflux.platform.agentruntime.application.command.AgentRunRequest;
 import io.seekflux.platform.agentruntime.application.spi.business.tool.AgentTool;
 import io.seekflux.platform.agentruntime.domain.model.tool.AgentToolParameter;
+import io.seekflux.platform.agentruntime.domain.model.tool.AgentToolDefinition;
 import io.seekflux.platform.agentruntime.domain.service.tool.AgentToolRegistry;
 import io.seekflux.platform.agentruntime.domain.model.tool.AgentToolResult;
 import io.seekflux.platform.agentruntime.domain.model.tool.AgentToolSchema;
@@ -46,6 +48,73 @@ import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 
 class DefaultContextEngineTest {
+
+    @Test
+    void projectsToolAndParameterDescriptionsIntoNativeToolsAndTextContext() {
+        AgentTool described = describedTool("schema-v2", "Search actual content; never invent results", "User search terms");
+        var request = new AgentRunRequest("r", "s", "t", "find", Map.of());
+        var session = AgentSession.replay("s", List.of(new WorkspaceEvent.SessionCreated(1, Instant.EPOCH, "agent", "v1")));
+        var assembled = new DefaultContextEngine(new MapPromptResolver(Map.of("prompt-v2", "stable prompt")),
+                new AgentToolRegistry(List.of(described))).assemble(session, runtime(request),
+                new AgentDecisionContext(request, 1, Duration.ofSeconds(1), List.of()));
+        var definition = assembled.tools().getFirst();
+        assertEquals(described.description(), definition.description());
+        var query = (Map<?, ?>) ((Map<?, ?>) definition.inputSchema().get("properties")).get("query");
+        assertEquals("User search terms", query.get("description"));
+        assertEquals(500, query.get("maxLength"));
+        assertEquals(List.of("query"), definition.inputSchema().get("required"));
+        assertTrue(assembled.messages().stream().anyMatch(message -> message.content().contains(described.description())
+                && message.content().contains("User search terms")));
+        assertFalse(assembled.tools().stream().anyMatch(tool -> tool.description().contains("SeekFlux Tool schema")));
+    }
+
+    @Test
+    void legacyToolsKeepEmptyDescriptionsWithoutFabricatedGuidance() {
+        var request = new AgentRunRequest("r", "s", "t", "find", Map.of());
+        var session = AgentSession.replay("s", List.of(new WorkspaceEvent.SessionCreated(1, Instant.EPOCH, "agent", "v1")));
+        var assembled = new DefaultContextEngine(new MapPromptResolver(Map.of("prompt-v2", "stable prompt")),
+                new AgentToolRegistry(List.of(tool("search_direct")))).assemble(session, runtime(request),
+                new AgentDecisionContext(request, 1, Duration.ofSeconds(1), List.of()));
+        assertEquals("", assembled.tools().getFirst().description());
+        var query = (Map<?, ?>) ((Map<?, ?>) assembled.tools().getFirst().inputSchema().get("properties")).get("query");
+        assertFalse(query.containsKey("description"));
+    }
+
+    @Test
+    void frozenDefinitionSurvivesRegistryReplacementAndMissingDefinitionFailsClosed() {
+        var registry = new AgentToolRegistry(List.of());
+        registry.replaceSource("mcp:test", List.of(describedTool("v1", "original description", "original parameter")));
+        var frozen = registry.definitionsFor(Set.of("search_direct"));
+        registry.replaceSource("mcp:test", List.of(describedTool("v2", "new description", "new parameter")));
+        var request = new AgentRunRequest("r", "s", "t", "find", Map.of());
+        var session = AgentSession.replay("s", List.of(new WorkspaceEvent.SessionCreated(1, Instant.EPOCH, "agent", "v1")));
+        var engine = new DefaultContextEngine(new MapPromptResolver(Map.of("prompt-v2", "stable prompt")), registry);
+        var decision = new AgentDecisionContext(request, 1, Duration.ofSeconds(1), List.of(), null, null,
+                "run", null, null, Map.of("search_direct", "v1"), List.of(), frozen);
+        var assembled = engine.assemble(session, runtime(request), decision);
+        assertEquals("original description", assembled.tools().getFirst().description());
+        assertFalse(assembled.messages().stream().anyMatch(message -> message.content().contains("new description")));
+        var incomplete = new AgentDecisionContext(request, 1, Duration.ofSeconds(1), List.of(), null, null,
+                "run", null, null, Map.of(), List.of(), Map.of("other",
+                new AgentToolDefinition("other", "other", new AgentToolSchema("v1", Map.of()))));
+        assertThrows(IllegalStateException.class, () -> engine.assemble(session, runtime(request), incomplete));
+    }
+
+    private static AgentTool describedTool(String version, String description, String parameterDescription) {
+        return new AgentTool() {
+            @Override public String name() { return "search_direct"; }
+            @Override public String description() { return description; }
+            @Override public String source() { return "mcp:test"; }
+            @Override public Effect effect() { return Effect.READ_ONLY; }
+            @Override public AgentToolSchema schema() {
+                return new AgentToolSchema(version, Map.of("query",
+                        AgentToolParameter.requiredString(500).withDescription(parameterDescription)));
+            }
+            @Override public AgentToolResult execute(io.seekflux.platform.agentruntime.application.spi.business.tool.model.AgentToolContext context) {
+                throw new AssertionError("assembly must not execute Tools");
+            }
+        };
+    }
 
     @Test
     void includesCurrentExecutionAssistantAndResultsExactlyOnceAfterRecovery() {
@@ -94,9 +163,11 @@ class DefaultContextEngineTest {
                                 Set.of("precise"), false)),
                 List.of(
                         new ToolGroupDefinition(
-                                "broad", "broad-v1", "broad", Set.of("search_direct"), false),
+                                "broad", "broad-v1", "Broad search group guidance", Set.of("search_direct"), false),
                         new ToolGroupDefinition(
-                                "precise", "precise-v1", "precise", Set.of("search_filtered"), false)),
+                                "precise", "precise-v1", "Precise group guidance", Set.of("search_filtered"), false),
+                        new ToolGroupDefinition("hidden", "hidden-v1", "secret forbidden group",
+                                Set.of("admin_delete"), false)),
                 Set.of("broad"));
         AgentDefinition definition = new AgentDefinition(
                 "search-assistant", "v2", "planner-v1", "prompt-v2", "provider-v1",
@@ -131,6 +202,9 @@ class DefaultContextEngineTest {
                         || message.content().contains("user-secret")));
         assertEquals(List.of("search_direct"),
                 assembled.tools().stream().map(tool -> tool.name()).toList());
+        assertTrue(assembled.messages().stream().anyMatch(message -> message.content().contains("Broad search group guidance")
+                && message.content().contains("Precise group guidance")));
+        assertFalse(assembled.messages().stream().anyMatch(message -> message.content().contains("secret forbidden group")));
     }
 
     @Test
