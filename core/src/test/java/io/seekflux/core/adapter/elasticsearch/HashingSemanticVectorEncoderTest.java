@@ -1,4 +1,4 @@
-package io.seekflux.platform.retrieval.semantic;
+package io.seekflux.core.adapter.elasticsearch;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;

@@ -1,4 +1,4 @@
-package io.seekflux.platform.persistence.content;
+package io.seekflux.content.adapter;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.core.type.TypeReference;

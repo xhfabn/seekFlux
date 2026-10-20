@@ -12,8 +12,6 @@
         <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-validation</artifactId></dependency>
         <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-actuator</artifactId></dependency>
         <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-data-redis</artifactId></dependency>
-        <dependency><groupId>io.seekflux</groupId><artifactId>retrieval</artifactId><version>${project.version}</version></dependency>
-        <dependency><groupId>io.seekflux</groupId><artifactId>model-serving</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>io.seekflux</groupId><artifactId>persistence</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>io.seekflux</groupId><artifactId>shared</artifactId><version>${project.version}</version></dependency>
         <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-test</artifactId><scope>test</scope></dependency>

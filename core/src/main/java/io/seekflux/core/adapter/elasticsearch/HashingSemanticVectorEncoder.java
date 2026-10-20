@@ -1,4 +1,4 @@
-package io.seekflux.platform.retrieval.semantic;
+package io.seekflux.core.adapter.elasticsearch;
 
 import java.text.Normalizer;
 import java.util.ArrayList;

@@ -1,4 +1,4 @@
-package io.seekflux.platform.modelserving;
+package io.seekflux.core.adapter.http;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;

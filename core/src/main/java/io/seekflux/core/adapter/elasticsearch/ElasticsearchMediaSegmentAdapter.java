@@ -1,4 +1,4 @@
-package io.seekflux.platform.retrieval.elasticsearch;
+package io.seekflux.core.adapter.elasticsearch;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;

@@ -1,4 +1,4 @@
-package io.seekflux.platform.retrieval.elasticsearch;
+package io.seekflux.core.adapter.elasticsearch;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -7,7 +7,7 @@ import com.fasterxml.jackson.databind.node.ObjectNode;
 import io.seekflux.ranking.domain.RankingCandidate;
 import io.seekflux.ranking.domain.RetrievalSource;
 import io.seekflux.recommendation.port.out.RecommendationRetriever;
-import io.seekflux.platform.retrieval.semantic.SemanticVectorEncoder;
+import io.seekflux.core.adapter.elasticsearch.SemanticVectorEncoder;
 import io.seekflux.search.port.out.SearchCandidate;
 import io.seekflux.search.port.out.SearchDocument;
 import io.seekflux.search.port.out.SearchIndex;
