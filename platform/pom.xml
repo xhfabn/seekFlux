@@ -5,6 +5,6 @@
     <artifactId>platform</artifactId><packaging>pom</packaging>
     <modules>
         <module>agent-runtime</module><module>agent-runtime-spring-boot-autoconfigure</module><module>retrieval</module><module>persistence</module><module>messaging</module>
-        <module>model-serving</module><module>observability</module>
+        <module>model-serving</module>
     </modules>
 </project>
