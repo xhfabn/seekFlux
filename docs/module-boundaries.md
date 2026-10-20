@@ -3,96 +3,75 @@
 ## 依赖方向
 
 ```text
-apps -> contexts + platform
-apps -> Context/Runtime 的接口与实现（只负责选择和装配）
-context infrastructure -> context application/port + Runtime API/SPI + 被适配 Context 输入 Port
-platform infrastructure -> platform application SPI
-platform -> context output ports（实现阶段按需依赖）
-context adapter -> application -> domain
-application -> port/in + port/out + domain
-domain -> JDK only
+apps/*                 -> core, agent, shared, runtime-autoconfigure
+agent                  -> core, runtime-core（发布制品，按版本引入）
+runtime-autoconfigure  -> runtime-core
+runtime-core           -> 仅第三方库（可独立发布，不含业务代码）
+core                   -> 仅第三方库
+shared                 -> 仅第三方库
+core 内部               content 独立；search / recommendation -> feature.api
 ```
 
-`contexts` 之间不得共享数据库 Entity 或直接访问对方存储。跨上下文协作使用输入 Port、版本化 DTO 或领域事件。
+禁止的边：
 
-当前仓库有十个业务 Context，`AgentOrchestration` 是第十个；`platform/agent-runtime` 是横向执行基础设施，不是业务 Context。`feature-context` 是既有 Feature Context 在 Step 9 的具体实现，不新增第十一个 Context。Step 5 已经实现 Agent 业务语义与运行机制的分离，后续新增能力仍必须保持这一边界。
+- `core -> agent`、`core -> shared`、`agent -> shared`
+- `shared ->` 任何业务包
+- `apps/a -> apps/b`
+- 跨域引用 `domain` 或 `adapter`（只能引用 `*.api`）
+- `runtime-core` 引用任何 `io.seekflux.core` / `io.seekflux.agent` 类型
 
-## Context 内部目录
+`core` 与 `agent` 的规则由 `CoreArchitectureTest`（4 条）与 `AgentArchitectureTest`（3 条）在 `mvn test` 中强制；`runtime-core` 的"零业务依赖"由它自身的 pom 保证（没有 seekflux 业务坐标）。
+
+## 模块清单
+
+| 模块 | 坐标 | 职责 |
+| --- | --- | --- |
+| `core` | `io.seekflux:core` | 四个业务域 + 共享出站适配器 |
+| `agent` | `io.seekflux:agent` | 检索编排：目标、约束、路由、追问、回退 |
+| `platform/agent-runtime` | `io.github.xhfabn.seekflux:seekflux-agent-runtime-core` | 可发布 Agent 内核（独立版本） |
+| `platform/agent-runtime-spring-boot-autoconfigure` | `...:seekflux-agent-runtime-spring-boot-autoconfigure` | 内核的 Spring Boot 装配 |
+| `shared` | `io.seekflux:shared` | Outbox Relay、Flyway、JDBC 驱动 |
+| `apps/online-server` | 可部署进程 | 搜索、Feed、交互、实时特征 |
+| `apps/agent-server` | 可部署进程 | Agent 搜索 API 与运行时装配 |
+| `apps/content-server` | 可部署进程 | 内容登记与媒体上传 |
+| `apps/worker-runner` | 可部署进程 | Kafka 消费、索引、行为事实、特征投影 |
+| `pipelines/realtime-features` | Flink Job | 事件时间窗口与短期兴趣 |
+
+## core 内部结构
 
 ```text
-domain/       聚合、实体、值对象、领域服务和领域事件
-application/  用例编排、事务边界
-port/in/      输入用例接口
-port/out/     存储、检索、消息、模型和时钟等输出接口
-adapter/in/   HTTP、Kafka Consumer、Job、管理命令
-adapter/out/  PostgreSQL、Redis、Kafka、Elasticsearch、S3、模型服务
+io.seekflux.core
+├── content/{api, domain, adapter}          内容写侧 + JdbcContentRepository
+├── search/{api, domain}                    检索用例与检索端口
+├── feature/{api, domain, adapter}          交互事实 + 实时特征
+├── recommendation/{api, domain}            兴趣、召回、规则排序
+└── adapter/{elasticsearch, http}           同时服务多个域的出站适配器
 ```
 
-`domain` 不允许依赖 Spring、Reactor、Kafka、Redis、Elasticsearch、Flink 或模型 SDK。输入 Port、输出 Port 和应用服务使用普通 Java 返回值；异步并发只允许在明确的编排点通过命名且有界的执行器引入，不成为跨层接口类型。
+每个域固定三段：
 
-## Agent 专用依赖规则
+- `api/`：用例接口、命令、视图、跨域 DTO —— **唯一允许被其它域引用的包**
+- `domain/`：聚合、值对象、领域服务、出站端口
+- `adapter/`：Jdbc、HTTP 等出站实现
 
-`platform/agent-runtime` 是供业务 Context 接入的框架内核，因此不用普通 Context 的 `port/in|out` 命名，而把 `application` 明确定义为纯对外契约面：
+`core/adapter/elasticsearch` 是唯一跨域的适配器目录：一个 ES 索引同时承载检索与 Feed 两种查询。
+
+## agent 内部结构
 
 ```text
-业务 / interfaces -> application/api <- domain/service
-输入请求          -> application/command
-domain/service    -> application/spi/business   <- 业务定制实现
-domain/service    -> application/spi/capability <- 基础设施或业务 Adapter
-domain/service    -> domain/model
+io.seekflux.agent
+├── api/                     检索契约（use case + DTO，不依赖实现）
+├── AgentSearchApplicationService
+├── orchestration/           检索目标、约束、路由、追问、回退
+│   └── adapter/             SearchDirectTool、DirectSearchExecutionAdapter、Redis 会话投影
+└── adapter/jdbc/            会话、运行记录、恢复、工作区事实的持久化
 ```
 
-API 与 SPI 都是对外契约。API 表示“业务可以调用 Runtime 什么”，Command 表示“业务向 Runtime 传入什么”，SPI 表示“业务或运行环境需要向 Runtime 提供什么”。Application 不放 Service 或通用 Model；组件状态与规则进入 `domain/model`，跨组件关系与主链编排进入 `domain/service`。默认基础设施实现可以被替换、装饰或组合。
+Runtime 内核以发布制品引入，不在本模块内；`agent` 与 `shared` 互不依赖。
 
-```text
-apps/agent-server
-  -> interfaces/rest + bootstrap
-  -> contexts/agent-orchestration-context port/in
-  -> contexts/agent-orchestration-context infrastructure
-  -> platform/agent-runtime application/api
+## 装配方式
 
-contexts/agent-orchestration-context
-  domain/application/port -> 自身业务规则与契约
-  infrastructure -> 自身 port/out + Runtime application/api/business SPI/capability SPI + Search port/in + OpenAI-compatible 协议
-  domain/application/port -/> Runtime 具体实现、Redis、Micrometer
-
-platform/agent-runtime（公开 Core 制品）
-  domain/application -> LLM / Session / RuntimeEvent / Clock 等 capability SPI
-  infrastructure -> 自身 application/spi + 纯 Java 默认实现
-  mcp.model/spi -> JDK + Runtime 契约（不暴露 Jackson）
-  mcp.connection -> mcp.spi/model + 默认实现（配置式装配入口）
-  mcp.infrastructure.http/schema -> Runtime Tool SPI + JDK HTTP + Jackson
-  mcp.infrastructure.auth/tool -> Runtime 契约 + mcp.spi/model（无 Jackson）
-  domain/application -/> MCP 或 Jackson
-  main classpath -/> Spring、Redis、JDBC、Provider、Micrometer、业务 Context
-
-platform/agent-runtime-spring-boot-autoconfigure（公开可选制品）
-  -> agent-runtime Core
-  -> Spring Boot optional compile contract（不向消费者传递）
-  -> Core MCP 默认实现的条件装配（默认关闭）
-  -/> Redis、JDBC、Provider 或业务 Context
-
-contexts/agent-orchestration-context infrastructure
-  -> Runtime SPI + SeekFlux 私有 Redis/Provider/观测 Adapter
-```
-
-AgentOrchestration 的 Domain/Application 决定搜索目标、约束修正、追问和业务回退；Runtime 的 Domain/Application 只执行有限步循环、Deadline、取消、Tool 调度与运行事件。跨 Context 适配发生在 `agent-orchestration-context/infrastructure`：`SearchDirectTool` 与确定性回退都调用 Search 的稳定输入 Port。最终实现选择发生在 `agent-server/bootstrap`，但 Server 不拥有 Adapter 实现。Direct Search 不反向依赖 Agent 模块。
-
-MCP 默认实现自 `1.0.0-RC2-SNAPSHOT` 起进入 Core；已发布 RC1 的零第三方依赖边界不变。
-当前边界见 [ADR-016](adr/ADR-016-default-mcp-in-runtime-core.md)，字节码门槛由
-[`verify-core-boundary.sh`](../tools/agent-runtime/verify-core-boundary.sh) 验证。
-
-## 物理部署基线
-
-| 进程 | 首期装配内容 |
-| --- | --- |
-| online-server | Search、Recommendation、Interaction、UserInterest、Ranking、Experiment、Moderation |
-| content-server | Content、Moderation、Feature/Model 控制面 |
-| worker-runner | 内容理解、索引发布、行为事实写入、特征写入、Outbox Relay 与 Agent 终态幂等审计消费 |
-| agent-server | Agent REST API 与组合装配；依赖 AgentOrchestration 和 Runtime 模块，端口 `8083`，独立线程池和故障边界 |
-| realtime-features | 生产 Flink 事件时间窗口、短期兴趣、内容热度与迟到事件输出；本地统一启动由 Worker JDBC 参考投影器执行同一策略 |
-| multimodal-model（Step 11） | SigLIP 共享向量、FFmpeg 关键帧、RapidOCR、faster-whisper 与可选 BLIP；只经 MediaEmbeddingPort/MediaUnderstandingPort 被 Java 应用调用 |
-| training-runner（Step 12 可选） | 样本生成、基线训练、离线评测、模型注册 |
+四个进程都使用 `@SpringBootApplication(scanBasePackages = "io.seekflux")`。业务模块内的 `@Component`、`@Configuration` 自动装配；**进程级装配留在 apps**（例如 `AgentRuntimeConfiguration` 依赖 autoconfigure 与 actuator health，属于进程关注点）。Runtime 的装配由 `runtime-autoconfigure` 提供。
 
 ## 拆分触发条件
 

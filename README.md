@@ -43,7 +43,7 @@ Interaction Topics → Flink（生产）/ Worker 参考投影（本地）→ Red
 External Sources → Media Importer → MinIO + Content Server
 ```
 
-工程保持模块化单体与独立 Agent Server 的组合：业务语义在 `contexts/`，通用基础能力在 `platform/`，应用装配在 `apps/`。HTTP 接口采用 Spring MVC 同步 JSON；JDBC/HikariCP、Redis 与 Elasticsearch 使用同步 Adapter。Agent 内部的模型调用和 Tool fan-out 只在命名、有界、可观测的执行器中并发，不向领域 Port 或 HTTP 扩散 `Mono`/`Flux`。
+工程保持模块化单体与独立 Agent Server 的组合：业务语义在 `core/`（content、search、feature、recommendation），检索编排在 `agent/`，Agent Runtime 作为可独立发布的内核留在 `platform/agent-runtime`，技术共享在 `shared/`，应用装配在 `apps/`。模块依赖由 `CoreArchitectureTest` 与 `AgentArchitectureTest` 在构建期强制，规则见[模块边界](docs/module-boundaries.md)。HTTP 接口采用 Spring MVC 同步 JSON；JDBC/HikariCP、Redis 与 Elasticsearch 使用同步 Adapter。Agent 内部的模型调用和 Tool fan-out 只在命名、有界、可观测的执行器中并发，不向领域 Port 或 HTTP 扩散 `Mono`/`Flux`。
 
 Agent Runtime 的详细设计见 [docs/agent-runtime.md](docs/agent-runtime.md)，多实例可靠性与 Ark-Leto 参考实现的对照见 [ADR-006](docs/adr/ADR-006-agent-reliability-fencing-outbox-shadow.md)。
 

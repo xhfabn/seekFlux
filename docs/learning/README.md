@@ -165,3 +165,15 @@ docs/learning/
 ```
 
 文档职责保持单一：本页维护当前状态和完整路线；每个 `step-NN-*.md` 只记录对应切片；`template.md` 只作为新 Step 模板。不要再增加架构路线副本、阶段总结副本或同一 Step 的多份说明。
+
+## 架构收敛记录（2026-10-20）
+
+本轮不新增 Step，只做结构收敛，不改变任何业务行为与外部契约：
+
+- 10 个 `contexts/` 模块合并为 `core`（content / search / feature / recommendation 四域）与 `agent`（检索编排）
+- `platform/persistence`、`platform/retrieval`、`platform/model-serving`、`platform/messaging`、`platform/observability` 全部消失；适配器回到所属域
+- `platform/` 只剩两个可发布模块：`agent-runtime` 与 `agent-runtime-spring-boot-autoconfigure`
+- 每域三段 `api / domain / adapter`，跨域只允许引用 `*.api`；`CoreArchitectureTest`（4 条）与 `AgentArchitectureTest`（3 条）在构建期强制
+- pom 27 → 14，非聚合模块 22 → 10，业务模块包深度 ≤4，生产类 375 不变
+
+变更入口：[SPEC-001](../sdd/SPEC-001-arch-slimming.md) → [DESIGN-001](../sdd/DESIGN-001-arch-slimming.md) → [TASKS-001](../sdd/TASKS-001-arch-slimming.md)；依赖规则见[模块边界](../module-boundaries.md)。各 Step 正文与状态保持不变。
