@@ -4,6 +4,6 @@
     <parent><groupId>io.seekflux</groupId><artifactId>seekflux</artifactId><version>0.1.0-SNAPSHOT</version></parent>
     <artifactId>platform</artifactId><packaging>pom</packaging>
     <modules>
-        <module>agent-runtime</module><module>agent-runtime-spring-boot-autoconfigure</module><module>persistence</module>
+        <module>agent-runtime</module><module>agent-runtime-spring-boot-autoconfigure</module>
     </modules>
 </project>

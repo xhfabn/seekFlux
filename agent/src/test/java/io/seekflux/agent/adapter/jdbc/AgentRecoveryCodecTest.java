@@ -1,4 +1,4 @@
-package io.seekflux.platform.persistence.agent;
+package io.seekflux.agent.adapter.jdbc;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 

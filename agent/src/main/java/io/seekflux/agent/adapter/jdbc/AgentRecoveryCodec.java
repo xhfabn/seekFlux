@@ -1,4 +1,4 @@
-package io.seekflux.platform.persistence.agent;
+package io.seekflux.agent.adapter.jdbc;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;

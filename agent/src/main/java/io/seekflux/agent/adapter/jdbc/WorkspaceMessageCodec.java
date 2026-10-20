@@ -1,4 +1,4 @@
-package io.seekflux.platform.persistence.agent;
+package io.seekflux.agent.adapter.jdbc;
 
 import io.seekflux.platform.agentruntime.domain.model.message.AgentMessage;
 import java.nio.charset.StandardCharsets;
