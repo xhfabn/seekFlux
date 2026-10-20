@@ -1,4 +1,4 @@
-package io.seekflux.platform.messaging.outbox;
+package io.seekflux.shared.outbox;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;

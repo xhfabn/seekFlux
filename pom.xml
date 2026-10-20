@@ -15,6 +15,7 @@
     <modules>
         <module>contexts</module>
         <module>platform</module>
+        <module>shared</module>
         <module>apps</module>
         <module>pipelines</module>
     </modules>

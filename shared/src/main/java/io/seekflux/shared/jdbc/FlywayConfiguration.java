@@ -1,4 +1,4 @@
-package io.seekflux.platform.persistence;
+package io.seekflux.shared.jdbc;
 
 import org.flywaydb.core.Flyway;
 import org.springframework.beans.factory.annotation.Value;
@@ -7,7 +7,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
 @Configuration
-public class PersistenceConfiguration {
+public class FlywayConfiguration {
 
     @Bean(initMethod = "migrate")
     @ConditionalOnProperty(name = "spring.flyway.enabled", havingValue = "true", matchIfMissing = true)
