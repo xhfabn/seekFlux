@@ -1,11 +1,12 @@
-package io.seekflux.apps.onlineserver;
+package io.seekflux.apps.onlineserver.configuration;
 
 import io.seekflux.core.feature.InteractionApplicationService;
 import io.seekflux.core.feature.api.ReportInteractionsUseCase;
 import io.seekflux.core.feature.domain.InteractionRepository;
-import java.time.Clock;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+
+import java.time.Clock;
 
 @Configuration
 class InteractionConfiguration {

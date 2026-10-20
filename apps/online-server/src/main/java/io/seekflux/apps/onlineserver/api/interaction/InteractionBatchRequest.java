@@ -1,4 +1,4 @@
-package io.seekflux.apps.onlineserver.api;
+package io.seekflux.apps.onlineserver.api.interaction;
 
 import io.seekflux.core.feature.domain.InteractionSignal;
 import io.seekflux.core.feature.domain.InteractionSurface;

@@ -1,4 +1,4 @@
-package io.seekflux.apps.onlineserver.api;
+package io.seekflux.apps.onlineserver.api.search;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;

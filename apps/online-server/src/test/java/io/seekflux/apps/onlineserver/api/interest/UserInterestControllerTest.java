@@ -1,4 +1,4 @@
-package io.seekflux.apps.onlineserver.api;
+package io.seekflux.apps.onlineserver.api.interest;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;

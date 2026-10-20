@@ -1,4 +1,6 @@
-package io.seekflux.apps.onlineserver.api;
+package io.seekflux.apps.onlineserver.api.recommendation;
+
+import io.seekflux.apps.onlineserver.api.error.OnlineExceptionHandler;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -65,7 +67,7 @@ class RecommendationControllerTest {
             }
         };
         MockMvc client = MockMvcBuilders.standaloneSetup(new RecommendationController(useCase))
-                .setControllerAdvice(new SearchExceptionHandler())
+                .setControllerAdvice(new OnlineExceptionHandler())
                 .build();
 
         client.perform(get("/v1/feed").queryParam("cursor", "invalid"))

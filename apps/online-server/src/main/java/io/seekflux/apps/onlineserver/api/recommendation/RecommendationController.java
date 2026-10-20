@@ -1,4 +1,4 @@
-package io.seekflux.apps.onlineserver.api;
+package io.seekflux.apps.onlineserver.api.recommendation;
 
 import io.seekflux.core.recommendation.api.FeedRequest;
 import io.seekflux.core.recommendation.api.RecommendationPage;

@@ -1,11 +1,12 @@
-package io.seekflux.apps.onlineserver;
+package io.seekflux.apps.onlineserver.configuration;
 
 import io.seekflux.core.feature.RealtimeFeatureApplicationService;
 import io.seekflux.core.feature.api.RealtimeFeatureUseCase;
 import io.seekflux.core.feature.domain.OnlineFeatureRepository;
-import java.time.Clock;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+
+import java.time.Clock;
 
 @Configuration
 class FeatureConfiguration {

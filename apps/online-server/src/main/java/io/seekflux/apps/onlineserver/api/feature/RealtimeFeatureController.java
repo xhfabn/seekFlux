@@ -1,4 +1,4 @@
-package io.seekflux.apps.onlineserver.api;
+package io.seekflux.apps.onlineserver.api.feature;
 
 import io.seekflux.core.feature.api.FeatureRead;
 import io.seekflux.core.feature.api.FeatureTopicScore;

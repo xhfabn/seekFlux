@@ -1,4 +1,4 @@
-package io.seekflux.apps.onlineserver.api;
+package io.seekflux.apps.onlineserver.api.interest;
 
 import io.seekflux.core.recommendation.domain.InterestProfile;
 import java.time.Instant;

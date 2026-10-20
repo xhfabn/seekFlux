@@ -1,4 +1,6 @@
-package io.seekflux.apps.onlineserver.api;
+package io.seekflux.apps.onlineserver.api.search;
+
+import io.seekflux.apps.onlineserver.api.error.OnlineExceptionHandler;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -46,7 +48,7 @@ class SearchControllerTest {
             throw new SearchUnavailableException();
         };
         MockMvc client = MockMvcBuilders.standaloneSetup(new SearchController(useCase))
-                .setControllerAdvice(new SearchExceptionHandler())
+                .setControllerAdvice(new OnlineExceptionHandler())
                 .build();
 
         client.perform(get("/v1/search").queryParam("q", "露营"))
@@ -59,7 +61,7 @@ class SearchControllerTest {
     void rejectsADeepResultWindowWithTheStableSearchCode() throws Exception {
         SearchUseCase useCase = SearchControllerTest::page;
         MockMvc client = MockMvcBuilders.standaloneSetup(new SearchController(useCase))
-                .setControllerAdvice(new SearchExceptionHandler())
+                .setControllerAdvice(new OnlineExceptionHandler())
                 .build();
 
         client.perform(get("/v1/search")

@@ -1,24 +1,25 @@
-package io.seekflux.apps.onlineserver;
+package io.seekflux.apps.onlineserver.configuration;
 
-import io.seekflux.core.recommendation.RuleRankingService;
 import io.seekflux.core.feature.api.RealtimeFeatureUseCase;
-import io.seekflux.core.recommendation.api.RankingUseCase;
-import io.seekflux.core.recommendation.RecommendationApplicationService;
-import io.seekflux.core.recommendation.SignedRecommendationCursorCodec;
-import io.seekflux.core.recommendation.api.RecommendationUseCase;
-import io.seekflux.core.recommendation.api.RecommendationRetriever;
 import io.seekflux.core.recommendation.ExplicitInterestService;
+import io.seekflux.core.recommendation.RecommendationApplicationService;
+import io.seekflux.core.recommendation.RuleRankingService;
+import io.seekflux.core.recommendation.SignedRecommendationCursorCodec;
+import io.seekflux.core.recommendation.api.RankingUseCase;
+import io.seekflux.core.recommendation.api.RecommendationRetriever;
+import io.seekflux.core.recommendation.api.RecommendationUseCase;
 import io.seekflux.core.recommendation.api.UserInterestUseCase;
 import io.seekflux.core.recommendation.domain.UserInterestRepository;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
+
 import java.time.Clock;
 import java.time.Duration;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ThreadPoolExecutor;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 
 @Configuration
 class RecommendationConfiguration {

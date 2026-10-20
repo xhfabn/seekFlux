@@ -223,6 +223,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/UserInterestProfile"
+        "400":
+          $ref: "#/components/responses/BadRequest"
     put:
       operationId: saveUserInterestProfile
       summary: Persist the explicit-interest profile used by subsequent feed requests
@@ -258,6 +260,8 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ShortTermInterestFeature"
+        "400":
+          $ref: "#/components/responses/BadRequest"
   /v1/search:
     get:
       operationId: searchByQueryParameter
@@ -1452,7 +1456,13 @@ components:
         timestamp: {type: string, format: date-time}
   responses:
     BadRequest:
-      description: Request validation failed
+      description: >-
+        Request validation failed. For exceptions handled by online-server's REST advice,
+        search (including multimodal) uses INVALID_SEARCH_REQUEST; interaction uses
+        INVALID_INTERACTION_REQUEST; feed and similar-content use INVALID_RECOMMENDATION_REQUEST;
+        interest-profile uses INVALID_INTEREST_REQUEST; realtime features use INVALID_FEATURE_REQUEST.
+        Other online controllers use INVALID_REQUEST. Framework errors outside this advice
+        are not guaranteed to use these codes.
       content:
         application/json:
           schema:

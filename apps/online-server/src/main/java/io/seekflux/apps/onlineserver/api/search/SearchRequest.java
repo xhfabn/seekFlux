@@ -1,4 +1,4 @@
-package io.seekflux.apps.onlineserver.api;
+package io.seekflux.apps.onlineserver.api.search;
 
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;

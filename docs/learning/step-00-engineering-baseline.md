@@ -53,7 +53,7 @@ Step 0 建立的九个 Context 是逻辑业务边界，但首期不会部署成�
 | [`pom.xml`](../../pom.xml) | 理解 Maven Reactor 和统一版本管理 |
 | [`docs/module-boundaries.md`](../module-boundaries.md) | 理解允许和禁止的依赖方向 |
 | [`apps/online-server/pom.xml`](../../apps/online-server/pom.xml) | 理解应用如何装配 Context 与 Platform |
-| [`apps/training-runner/pyproject.toml`](../../apps/training-runner/pyproject.toml) | 理解 Python 训练环境边界 |
+| `apps/training-runner/pyproject.toml`（历史入口，现已移除） | 当时用于理解 Python 训练环境边界 |
 | [`contracts/openapi/seekflux-v1.yaml`](../../contracts/openapi/seekflux-v1.yaml) | 理解计划提供的首批 API |
 | [`deploy/compose/compose.yml`](../../deploy/compose/compose.yml) | 理解本地中间件拓扑 |
 
@@ -75,6 +75,29 @@ uv run --project apps/training-runner python --version
 2. 解释为什么 `Content` 和 `Search` 不能共享一个 JPA Entity，即便首期在同一进程中。
 3. 为“内容画像已发布”设计一个事件 Payload，并说明 Envelope 中哪些字段用于幂等、追踪和版本兼容。
 4. 假设 Elasticsearch 不可用，指出降级策略属于 Search/Recommendation 规则还是 retrieval Adapter，并说明理由。
+
+## 2026-10-20：Online HTTP 包结构维护
+
+本轮属于工程结构维护，不新增 Step，也不改变学习路线的阶段状态。
+
+- `online-server/api` 按搜索、推荐、交互、实时特征、兴趣分包，Controller 与专用 DTO 同包，测试同步迁移。
+- 服务内公共错误模型与异常处理集中到 `api/error`；`SearchExceptionHandler` 更名为
+  `OnlineExceptionHandler`，作用范围限定 online API，未抽取跨服务 Web 模块。
+- 错误码根据实际 HandlerMethod 的业务包选择；兴趣、实时特征不再误报推荐错误。
+  未识别的业务包使用 `INVALID_REQUEST`，声明范围以外的异常继续交给 Spring。
+- `ApiError` 保持 `code / message / timestamp`，显式固定时间戳为 ISO 字符串。
+  原有 409、503 映射和多模态配置开关保持现有语义。
+- 既有配置类移至 `configuration` 的调整一并保留，Spring 上下文启动测试通过。
+
+入口与长期边界见 [模块边界](../module-boundaries.md) 和
+[ADR-019](../adr/ADR-019-online-rest-package-organization.md)；错误码事实见
+[OpenAPI](../../contracts/openapi/seekflux-v1.yaml)。核心代码入口为
+[OnlineExceptionHandler](../../apps/online-server/src/main/java/io/seekflux/apps/onlineserver/api/error/OnlineExceptionHandler.java)
+及 [HTTP 错误回归测试](../../apps/online-server/src/test/java/io/seekflux/apps/onlineserver/api/error/OnlineExceptionHandlerTest.java)。
+
+验证命令：`mvn -pl apps/online-server -am test`。2026-10-20 实测 core 44 项、online-server
+21 项全部通过，无失败或跳过；其中 9 个错误响应场景覆盖各业务、多模态、错误 JSON 和应用路径前缀，
+并校验时间戳可解析。此验证包含 Spring 上下文与 MockMvc，不替代真实中间件或检索质量验收。
 
 ## 当时的下一步与当前路线
 

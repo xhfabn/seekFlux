@@ -1,4 +1,6 @@
-package io.seekflux.apps.onlineserver.api;
+package io.seekflux.apps.onlineserver.api.interaction;
+
+import io.seekflux.apps.onlineserver.api.error.OnlineExceptionHandler;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -70,7 +72,7 @@ class InteractionControllerTest {
 
     private static MockMvc client(ReportInteractionsUseCase useCase) {
         return MockMvcBuilders.standaloneSetup(new InteractionController(useCase))
-                .setControllerAdvice(new SearchExceptionHandler())
+                .setControllerAdvice(new OnlineExceptionHandler())
                 .build();
     }
 

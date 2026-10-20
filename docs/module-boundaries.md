@@ -71,6 +71,11 @@ Runtime 内核以发布制品引入，不在本模块内；`agent` 与 `shared` 
 
 ## 装配方式
 
+`online-server/api` 按 `search / recommendation / interaction / feature / interest` 分包，
+Controller 与业务专用 HTTP DTO 同包；服务内公共错误模型和 Advice 放在 `api/error`。
+HTTP 错误映射留在各自 app，不进入业务域或 `shared`，也不引入 app 间依赖。
+决策与兼容边界见 [ADR-019](adr/ADR-019-online-rest-package-organization.md)。
+
 四个进程都使用 `@SpringBootApplication(scanBasePackages = "io.seekflux")`。业务模块内的 `@Component`、`@Configuration` 自动装配；**进程级装配留在 apps**（例如 `AgentRuntimeConfiguration` 依赖 autoconfigure 与 actuator health，属于进程关注点）。Runtime 的装配由 `runtime-autoconfigure` 提供。
 
 ## 拆分触发条件
