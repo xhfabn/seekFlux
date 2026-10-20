@@ -2,9 +2,9 @@ package io.seekflux.apps.workerrunner.feature;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.seekflux.feature.application.RealtimeFeaturePolicy;
-import io.seekflux.feature.application.FeatureTopics;
-import io.seekflux.feature.domain.FeatureKeys;
+import io.seekflux.core.feature.RealtimeFeaturePolicy;
+import io.seekflux.core.feature.FeatureTopics;
+import io.seekflux.core.feature.domain.FeatureKeys;
 import java.time.Duration;
 import java.util.UUID;
 import org.springframework.data.redis.core.StringRedisTemplate;

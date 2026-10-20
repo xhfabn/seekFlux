@@ -2,8 +2,8 @@ package io.seekflux.apps.onlineserver.interest;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.seekflux.userinterest.domain.InterestProfile;
-import io.seekflux.userinterest.port.out.UserInterestRepository;
+import io.seekflux.core.recommendation.domain.InterestProfile;
+import io.seekflux.core.recommendation.domain.UserInterestRepository;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.Base64;

@@ -5,12 +5,12 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
-import io.seekflux.search.port.in.SearchChannelTrace;
-import io.seekflux.search.port.in.SearchQuery;
-import io.seekflux.search.port.in.SearchResultPage;
-import io.seekflux.search.port.in.SearchTrace;
-import io.seekflux.search.port.in.SearchUnavailableException;
-import io.seekflux.search.port.in.SearchUseCase;
+import io.seekflux.core.search.api.SearchChannelTrace;
+import io.seekflux.core.search.api.SearchQuery;
+import io.seekflux.core.search.api.SearchResultPage;
+import io.seekflux.core.search.api.SearchTrace;
+import io.seekflux.core.search.api.SearchUnavailableException;
+import io.seekflux.core.search.api.SearchUseCase;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;

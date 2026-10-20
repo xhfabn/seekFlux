@@ -6,8 +6,8 @@ import io.seekflux.agent.port.in.AgentExecutionMode;
 import io.seekflux.agent.port.in.AgentSearchResult;
 import io.seekflux.agent.port.in.AgentSearchState;
 import io.seekflux.agent.port.in.AgentTraceView;
-import io.seekflux.search.port.in.SearchHitView;
-import io.seekflux.search.port.in.SearchTrace;
+import io.seekflux.core.search.api.SearchHitView;
+import io.seekflux.core.search.api.SearchTrace;
 import java.util.List;
 
 public record AgentSearchResponse(

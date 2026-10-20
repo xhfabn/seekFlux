@@ -5,10 +5,10 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import io.seekflux.recommendation.port.in.FeedRequest;
-import io.seekflux.recommendation.port.in.RecommendationPage;
-import io.seekflux.recommendation.port.in.RecommendationUseCase;
-import io.seekflux.recommendation.port.in.SimilarContentRequest;
+import io.seekflux.core.recommendation.api.FeedRequest;
+import io.seekflux.core.recommendation.api.RecommendationPage;
+import io.seekflux.core.recommendation.api.RecommendationUseCase;
+import io.seekflux.core.recommendation.api.SimilarContentRequest;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;

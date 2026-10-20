@@ -1,15 +1,15 @@
 package io.seekflux.apps.onlineserver;
 
-import io.seekflux.ranking.application.RuleRankingService;
-import io.seekflux.feature.port.in.RealtimeFeatureUseCase;
-import io.seekflux.ranking.port.in.RankingUseCase;
-import io.seekflux.recommendation.application.RecommendationApplicationService;
-import io.seekflux.recommendation.application.SignedRecommendationCursorCodec;
-import io.seekflux.recommendation.port.in.RecommendationUseCase;
-import io.seekflux.recommendation.port.out.RecommendationRetriever;
-import io.seekflux.userinterest.application.ExplicitInterestService;
-import io.seekflux.userinterest.port.in.UserInterestUseCase;
-import io.seekflux.userinterest.port.out.UserInterestRepository;
+import io.seekflux.core.recommendation.RuleRankingService;
+import io.seekflux.core.feature.api.RealtimeFeatureUseCase;
+import io.seekflux.core.recommendation.api.RankingUseCase;
+import io.seekflux.core.recommendation.RecommendationApplicationService;
+import io.seekflux.core.recommendation.SignedRecommendationCursorCodec;
+import io.seekflux.core.recommendation.api.RecommendationUseCase;
+import io.seekflux.core.recommendation.api.RecommendationRetriever;
+import io.seekflux.core.recommendation.ExplicitInterestService;
+import io.seekflux.core.recommendation.api.UserInterestUseCase;
+import io.seekflux.core.recommendation.domain.UserInterestRepository;
 import java.time.Clock;
 import java.time.Duration;
 import java.util.concurrent.Executor;

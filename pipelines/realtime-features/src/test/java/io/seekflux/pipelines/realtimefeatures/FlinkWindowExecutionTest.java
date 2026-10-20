@@ -2,8 +2,8 @@ package io.seekflux.pipelines.realtimefeatures;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
-import io.seekflux.feature.domain.RealtimeFeatureEvent;
-import io.seekflux.interaction.domain.InteractionType;
+import io.seekflux.core.feature.domain.RealtimeFeatureEvent;
+import io.seekflux.core.feature.domain.InteractionType;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;

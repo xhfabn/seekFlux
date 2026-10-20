@@ -86,7 +86,7 @@ import io.seekflux.platform.agentruntime.domain.model.capability.CapabilityCatal
 import io.seekflux.platform.agentruntime.domain.model.capability.SkillDefinition;
 import io.seekflux.platform.agentruntime.domain.model.capability.ToolGroupDefinition;
 import io.seekflux.platform.agentruntime.domain.service.capability.CapabilityResolver;
-import io.seekflux.search.port.in.SearchUseCase;
+import io.seekflux.core.search.api.SearchUseCase;
 import java.time.Clock;
 import java.time.Duration;
 import java.net.URI;

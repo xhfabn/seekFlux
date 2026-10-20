@@ -3,7 +3,7 @@ package io.seekflux.apps.workerrunner.interaction;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.seekflux.interaction.application.InteractionTopics;
+import io.seekflux.core.feature.InteractionTopics;
 import java.util.UUID;
 import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.kafka.annotation.KafkaListener;

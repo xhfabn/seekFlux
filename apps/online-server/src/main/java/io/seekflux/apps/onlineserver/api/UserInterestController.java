@@ -1,6 +1,6 @@
 package io.seekflux.apps.onlineserver.api;
 
-import io.seekflux.userinterest.port.in.UserInterestUseCase;
+import io.seekflux.core.recommendation.api.UserInterestUseCase;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Size;
 import java.util.List;

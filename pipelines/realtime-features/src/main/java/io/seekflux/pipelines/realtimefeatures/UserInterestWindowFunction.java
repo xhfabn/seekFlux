@@ -1,8 +1,8 @@
 package io.seekflux.pipelines.realtimefeatures;
 
-import io.seekflux.feature.application.RealtimeFeaturePolicy;
-import io.seekflux.feature.domain.RealtimeFeatureEvent;
-import io.seekflux.feature.domain.ShortTermInterestSnapshot;
+import io.seekflux.core.feature.RealtimeFeaturePolicy;
+import io.seekflux.core.feature.domain.RealtimeFeatureEvent;
+import io.seekflux.core.feature.api.ShortTermInterestSnapshot;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;

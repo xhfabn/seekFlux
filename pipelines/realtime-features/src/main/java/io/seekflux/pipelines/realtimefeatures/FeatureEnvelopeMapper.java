@@ -1,10 +1,10 @@
 package io.seekflux.pipelines.realtimefeatures;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.seekflux.feature.application.FeatureTopics;
-import io.seekflux.feature.domain.ContentHeatSnapshot;
-import io.seekflux.feature.domain.RealtimeFeatureEvent;
-import io.seekflux.feature.domain.ShortTermInterestSnapshot;
+import io.seekflux.core.feature.FeatureTopics;
+import io.seekflux.core.feature.api.ContentHeatSnapshot;
+import io.seekflux.core.feature.domain.RealtimeFeatureEvent;
+import io.seekflux.core.feature.api.ShortTermInterestSnapshot;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.LinkedHashMap;

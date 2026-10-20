@@ -1,9 +1,9 @@
 package io.seekflux.apps.onlineserver.api;
 
-import io.seekflux.feature.domain.FeatureRead;
-import io.seekflux.feature.domain.FeatureTopicScore;
-import io.seekflux.feature.domain.ShortTermInterestSnapshot;
-import io.seekflux.feature.port.in.RealtimeFeatureUseCase;
+import io.seekflux.core.feature.api.FeatureRead;
+import io.seekflux.core.feature.api.FeatureTopicScore;
+import io.seekflux.core.feature.api.ShortTermInterestSnapshot;
+import io.seekflux.core.feature.api.RealtimeFeatureUseCase;
 import jakarta.validation.constraints.Size;
 import java.time.Instant;
 import java.util.List;

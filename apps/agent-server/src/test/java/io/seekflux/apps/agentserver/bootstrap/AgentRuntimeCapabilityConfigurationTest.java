@@ -11,7 +11,7 @@ import io.seekflux.platform.agentruntime.domain.model.capability.CapabilityActiv
 import io.seekflux.platform.agentruntime.domain.model.decision.AgentDecision;
 import io.seekflux.platform.agentruntime.domain.service.capability.CapabilityResolver;
 import io.seekflux.platform.agentruntime.infrastructure.tool.SwitchToolGroupsTool;
-import io.seekflux.search.port.in.SearchUseCase;
+import io.seekflux.core.search.api.SearchUseCase;
 import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.Test;

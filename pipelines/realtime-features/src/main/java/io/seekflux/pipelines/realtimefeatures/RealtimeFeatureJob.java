@@ -1,11 +1,11 @@
 package io.seekflux.pipelines.realtimefeatures;
 
-import io.seekflux.feature.application.FeatureTopics;
-import io.seekflux.feature.application.RealtimeFeaturePolicy;
-import io.seekflux.feature.domain.ContentHeatSnapshot;
-import io.seekflux.feature.domain.RealtimeFeatureEvent;
-import io.seekflux.feature.domain.ShortTermInterestSnapshot;
-import io.seekflux.interaction.application.InteractionTopics;
+import io.seekflux.core.feature.FeatureTopics;
+import io.seekflux.core.feature.RealtimeFeaturePolicy;
+import io.seekflux.core.feature.api.ContentHeatSnapshot;
+import io.seekflux.core.feature.domain.RealtimeFeatureEvent;
+import io.seekflux.core.feature.api.ShortTermInterestSnapshot;
+import io.seekflux.core.feature.InteractionTopics;
 import java.time.Duration;
 import java.util.List;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;

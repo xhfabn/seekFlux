@@ -1,7 +1,7 @@
 package io.seekflux.apps.onlineserver.api;
 
-import io.seekflux.interaction.application.InteractionIdempotencyConflictException;
-import io.seekflux.search.port.in.SearchUnavailableException;
+import io.seekflux.core.feature.InteractionIdempotencyConflictException;
+import io.seekflux.core.search.api.SearchUnavailableException;
 import jakarta.servlet.http.HttpServletRequest;
 import java.time.Instant;
 import java.util.Map;

@@ -1,8 +1,8 @@
 package io.seekflux.apps.onlineserver.api;
 
-import io.seekflux.search.port.in.SearchQuery;
-import io.seekflux.search.port.in.SearchResultPage;
-import io.seekflux.search.port.in.SearchUseCase;
+import io.seekflux.core.search.api.SearchQuery;
+import io.seekflux.core.search.api.SearchResultPage;
+import io.seekflux.core.search.api.SearchUseCase;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;

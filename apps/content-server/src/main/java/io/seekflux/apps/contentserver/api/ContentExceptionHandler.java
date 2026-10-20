@@ -1,8 +1,8 @@
 package io.seekflux.apps.contentserver.api;
 
-import io.seekflux.content.application.ContentConcurrencyException;
-import io.seekflux.content.application.ContentNotFoundException;
-import io.seekflux.content.domain.ContentStateException;
+import io.seekflux.core.content.ContentConcurrencyException;
+import io.seekflux.core.content.ContentNotFoundException;
+import io.seekflux.core.content.domain.ContentStateException;
 import java.time.Instant;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;

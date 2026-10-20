@@ -1,8 +1,8 @@
 package io.seekflux.apps.onlineserver.api;
 
-import io.seekflux.search.port.in.MultimodalSearchQuery;
-import io.seekflux.search.port.in.MultimodalSearchResult;
-import io.seekflux.search.port.in.MultimodalSearchUseCase;
+import io.seekflux.core.search.api.MultimodalSearchQuery;
+import io.seekflux.core.search.api.MultimodalSearchResult;
+import io.seekflux.core.search.api.MultimodalSearchUseCase;
 import jakarta.validation.Valid;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.web.bind.annotation.PostMapping;

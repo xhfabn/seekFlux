@@ -1,6 +1,6 @@
 package io.seekflux.agent.domain;
 
-import io.seekflux.search.port.in.SearchQuery;
+import io.seekflux.core.search.api.SearchQuery;
 import java.util.List;
 import java.util.Map;
 

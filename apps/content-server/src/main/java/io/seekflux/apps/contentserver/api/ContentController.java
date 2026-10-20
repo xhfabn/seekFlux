@@ -1,11 +1,11 @@
 package io.seekflux.apps.contentserver.api;
 
-import io.seekflux.content.domain.ContentId;
-import io.seekflux.content.domain.ContentSource;
-import io.seekflux.content.domain.ContentType;
-import io.seekflux.content.port.in.CompleteContentProfileCommand;
-import io.seekflux.content.port.in.ContentUseCase;
-import io.seekflux.content.port.in.SubmitContentCommand;
+import io.seekflux.core.content.domain.ContentId;
+import io.seekflux.core.content.domain.ContentSource;
+import io.seekflux.core.content.domain.ContentType;
+import io.seekflux.core.content.api.CompleteContentProfileCommand;
+import io.seekflux.core.content.api.ContentUseCase;
+import io.seekflux.core.content.api.SubmitContentCommand;
 import jakarta.validation.Valid;
 import java.net.URI;
 import org.springframework.http.ResponseEntity;

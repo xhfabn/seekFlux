@@ -5,8 +5,8 @@ import io.seekflux.agent.port.in.AgentSearchResult;
 import io.seekflux.agent.port.in.AgentSearchState;
 import io.seekflux.agent.port.out.AgentExecutionRequest;
 import io.seekflux.agent.port.out.DirectSearchPort;
-import io.seekflux.search.port.in.SearchResultPage;
-import io.seekflux.search.port.in.SearchUseCase;
+import io.seekflux.core.search.api.SearchResultPage;
+import io.seekflux.core.search.api.SearchUseCase;
 
 public final class DirectSearchExecutionAdapter implements DirectSearchPort {
 

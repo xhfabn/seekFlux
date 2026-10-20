@@ -1,8 +1,8 @@
 package io.seekflux.apps.workerrunner;
 
-import io.seekflux.content.application.ContentApplicationService;
-import io.seekflux.content.port.in.ContentUseCase;
-import io.seekflux.content.port.out.ContentRepository;
+import io.seekflux.core.content.ContentApplicationService;
+import io.seekflux.core.content.api.ContentUseCase;
+import io.seekflux.core.content.domain.ContentRepository;
 import java.time.Clock;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;

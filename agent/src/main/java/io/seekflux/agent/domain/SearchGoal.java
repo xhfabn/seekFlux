@@ -1,6 +1,6 @@
 package io.seekflux.agent.domain;
 
-import io.seekflux.search.port.in.SearchQuery;
+import io.seekflux.core.search.api.SearchQuery;
 import java.util.Map;
 
 public record SearchGoal(long version, String query, QueryConstraintSet constraints) {

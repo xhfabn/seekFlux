@@ -1,6 +1,6 @@
 package io.seekflux.apps.onlineserver.api;
 
-import io.seekflux.userinterest.domain.InterestProfile;
+import io.seekflux.core.recommendation.domain.InterestProfile;
 import java.time.Instant;
 import java.util.List;
 

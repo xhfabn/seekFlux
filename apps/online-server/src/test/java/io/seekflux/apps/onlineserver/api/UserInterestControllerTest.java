@@ -5,8 +5,8 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import io.seekflux.userinterest.domain.InterestProfile;
-import io.seekflux.userinterest.port.in.UserInterestUseCase;
+import io.seekflux.core.recommendation.domain.InterestProfile;
+import io.seekflux.core.recommendation.api.UserInterestUseCase;
 import java.time.Instant;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicReference;

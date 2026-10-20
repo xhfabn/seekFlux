@@ -22,8 +22,8 @@ import io.seekflux.platform.agentruntime.application.command.CapabilityRequest;
 import io.seekflux.platform.agentruntime.application.spi.capability.llm.LlmClient;
 import io.seekflux.platform.agentruntime.application.api.Router;
 import io.seekflux.platform.agentruntime.application.api.model.RouterResult;
-import io.seekflux.search.port.in.SearchResultPage;
-import io.seekflux.search.port.in.SearchUseCase;
+import io.seekflux.core.search.api.SearchResultPage;
+import io.seekflux.core.search.api.SearchUseCase;
 import java.util.Map;
 import java.util.Set;
 

@@ -1,6 +1,6 @@
 package io.seekflux.apps.contentserver.api;
 
-import io.seekflux.content.domain.ContentType;
+import io.seekflux.core.content.domain.ContentType;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import java.util.List;

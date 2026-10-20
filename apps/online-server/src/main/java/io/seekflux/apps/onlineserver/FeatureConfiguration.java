@@ -1,8 +1,8 @@
 package io.seekflux.apps.onlineserver;
 
-import io.seekflux.feature.application.RealtimeFeatureApplicationService;
-import io.seekflux.feature.port.in.RealtimeFeatureUseCase;
-import io.seekflux.feature.port.out.OnlineFeatureRepository;
+import io.seekflux.core.feature.RealtimeFeatureApplicationService;
+import io.seekflux.core.feature.api.RealtimeFeatureUseCase;
+import io.seekflux.core.feature.domain.OnlineFeatureRepository;
 import java.time.Clock;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;

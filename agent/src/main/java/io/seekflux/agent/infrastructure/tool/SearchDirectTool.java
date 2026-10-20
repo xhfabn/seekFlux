@@ -5,10 +5,10 @@ import io.seekflux.platform.agentruntime.application.spi.business.tool.model.Age
 import io.seekflux.platform.agentruntime.domain.model.tool.AgentToolParameter;
 import io.seekflux.platform.agentruntime.domain.model.tool.AgentToolResult;
 import io.seekflux.platform.agentruntime.domain.model.tool.AgentToolSchema;
-import io.seekflux.search.port.in.SearchQuery;
-import io.seekflux.search.port.in.SearchResultPage;
-import io.seekflux.search.port.in.SearchUnavailableException;
-import io.seekflux.search.port.in.SearchUseCase;
+import io.seekflux.core.search.api.SearchQuery;
+import io.seekflux.core.search.api.SearchResultPage;
+import io.seekflux.core.search.api.SearchUnavailableException;
+import io.seekflux.core.search.api.SearchUseCase;
 import java.util.List;
 import java.util.Map;
 

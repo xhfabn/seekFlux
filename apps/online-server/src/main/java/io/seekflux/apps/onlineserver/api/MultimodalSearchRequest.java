@@ -1,6 +1,6 @@
 package io.seekflux.apps.onlineserver.api;
 
-import io.seekflux.search.port.out.MediaModality;
+import io.seekflux.core.search.domain.MediaModality;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;

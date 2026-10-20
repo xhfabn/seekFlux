@@ -4,12 +4,12 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.seekflux.search.port.out.MediaEmbeddingBatch;
-import io.seekflux.search.port.out.MediaEmbeddingSegment;
-import io.seekflux.search.port.out.MediaSegmentDocument;
-import io.seekflux.search.port.out.MediaSegmentIndex;
-import io.seekflux.search.port.out.MediaUnderstandingBatch;
-import io.seekflux.search.port.out.MediaUnderstandingEvidence;
+import io.seekflux.core.search.domain.MediaEmbeddingBatch;
+import io.seekflux.core.search.domain.MediaEmbeddingSegment;
+import io.seekflux.core.search.domain.MediaSegmentDocument;
+import io.seekflux.core.search.domain.MediaSegmentIndex;
+import io.seekflux.core.search.domain.MediaUnderstandingBatch;
+import io.seekflux.core.search.domain.MediaUnderstandingEvidence;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;

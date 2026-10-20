@@ -1,8 +1,8 @@
 package io.seekflux.apps.onlineserver.api;
 
-import io.seekflux.interaction.port.in.InteractionBatchReceipt;
-import io.seekflux.interaction.port.in.ReportInteractionsCommand;
-import io.seekflux.interaction.port.in.ReportInteractionsUseCase;
+import io.seekflux.core.feature.api.InteractionBatchReceipt;
+import io.seekflux.core.feature.api.ReportInteractionsCommand;
+import io.seekflux.core.feature.api.ReportInteractionsUseCase;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;

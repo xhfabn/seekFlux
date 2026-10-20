@@ -1,9 +1,9 @@
 package io.seekflux.apps.onlineserver.api;
 
-import io.seekflux.recommendation.port.in.FeedRequest;
-import io.seekflux.recommendation.port.in.RecommendationPage;
-import io.seekflux.recommendation.port.in.RecommendationUseCase;
-import io.seekflux.recommendation.port.in.SimilarContentRequest;
+import io.seekflux.core.recommendation.api.FeedRequest;
+import io.seekflux.core.recommendation.api.RecommendationPage;
+import io.seekflux.core.recommendation.api.RecommendationUseCase;
+import io.seekflux.core.recommendation.api.SimilarContentRequest;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.Size;

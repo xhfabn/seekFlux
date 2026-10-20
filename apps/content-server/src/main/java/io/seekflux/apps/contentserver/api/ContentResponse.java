@@ -1,10 +1,10 @@
 package io.seekflux.apps.contentserver.api;
 
-import io.seekflux.content.domain.ContentProfile;
-import io.seekflux.content.domain.ContentSource;
-import io.seekflux.content.domain.ContentStatus;
-import io.seekflux.content.domain.ContentType;
-import io.seekflux.content.port.in.ContentView;
+import io.seekflux.core.content.domain.ContentProfile;
+import io.seekflux.core.content.domain.ContentSource;
+import io.seekflux.core.content.domain.ContentStatus;
+import io.seekflux.core.content.domain.ContentType;
+import io.seekflux.core.content.api.ContentView;
 import java.time.Instant;
 import java.util.List;
 

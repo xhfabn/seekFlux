@@ -1,8 +1,8 @@
 package io.seekflux.apps.agentserver.bootstrap;
 
-import io.seekflux.search.application.SearchApplicationService;
-import io.seekflux.search.port.in.SearchUseCase;
-import io.seekflux.search.port.out.SearchRetriever;
+import io.seekflux.core.search.SearchApplicationService;
+import io.seekflux.core.search.api.SearchUseCase;
+import io.seekflux.core.search.domain.SearchRetriever;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.Set;

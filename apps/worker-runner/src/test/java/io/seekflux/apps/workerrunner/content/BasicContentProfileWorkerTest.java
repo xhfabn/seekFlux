@@ -6,12 +6,12 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.seekflux.content.domain.ContentId;
-import io.seekflux.content.domain.ContentSource;
-import io.seekflux.content.domain.ContentStatus;
-import io.seekflux.content.domain.ContentType;
-import io.seekflux.content.port.in.ContentUseCase;
-import io.seekflux.content.port.in.ContentView;
+import io.seekflux.core.content.domain.ContentId;
+import io.seekflux.core.content.domain.ContentSource;
+import io.seekflux.core.content.domain.ContentStatus;
+import io.seekflux.core.content.domain.ContentType;
+import io.seekflux.core.content.api.ContentUseCase;
+import io.seekflux.core.content.api.ContentView;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;

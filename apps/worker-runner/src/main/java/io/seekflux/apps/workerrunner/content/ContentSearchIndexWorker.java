@@ -2,9 +2,9 @@ package io.seekflux.apps.workerrunner.content;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.seekflux.content.application.ContentApplicationService;
-import io.seekflux.search.port.out.SearchDocument;
-import io.seekflux.search.port.out.SearchIndex;
+import io.seekflux.core.content.ContentApplicationService;
+import io.seekflux.core.search.domain.SearchDocument;
+import io.seekflux.core.search.domain.SearchIndex;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;

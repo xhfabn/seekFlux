@@ -2,12 +2,12 @@ package io.seekflux.apps.workerrunner.content;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.seekflux.content.application.ContentApplicationService;
-import io.seekflux.search.port.out.MediaModality;
-import io.seekflux.search.port.out.MediaSegmentDocument;
-import io.seekflux.search.port.out.MediaSegmentIndex;
-import io.seekflux.search.port.out.MediaUnderstandingEvidence;
-import io.seekflux.search.port.out.MediaUnderstandingPort;
+import io.seekflux.core.content.ContentApplicationService;
+import io.seekflux.core.search.domain.MediaModality;
+import io.seekflux.core.search.domain.MediaSegmentDocument;
+import io.seekflux.core.search.domain.MediaSegmentIndex;
+import io.seekflux.core.search.domain.MediaUnderstandingEvidence;
+import io.seekflux.core.search.domain.MediaUnderstandingPort;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;

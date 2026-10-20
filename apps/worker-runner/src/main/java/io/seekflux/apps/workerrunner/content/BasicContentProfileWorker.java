@@ -2,12 +2,12 @@ package io.seekflux.apps.workerrunner.content;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import io.seekflux.content.application.ContentApplicationService;
-import io.seekflux.content.domain.ContentId;
-import io.seekflux.content.domain.ContentStateException;
-import io.seekflux.content.domain.ContentStatus;
-import io.seekflux.content.port.in.CompleteContentProfileCommand;
-import io.seekflux.content.port.in.ContentUseCase;
+import io.seekflux.core.content.ContentApplicationService;
+import io.seekflux.core.content.domain.ContentId;
+import io.seekflux.core.content.domain.ContentStateException;
+import io.seekflux.core.content.domain.ContentStatus;
+import io.seekflux.core.content.api.CompleteContentProfileCommand;
+import io.seekflux.core.content.api.ContentUseCase;
 import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;

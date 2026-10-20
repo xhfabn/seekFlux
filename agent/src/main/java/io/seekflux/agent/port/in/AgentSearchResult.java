@@ -2,7 +2,7 @@ package io.seekflux.agent.port.in;
 
 import io.seekflux.agent.domain.QueryConstraintSet;
 import io.seekflux.agent.domain.SearchPlan;
-import io.seekflux.search.port.in.SearchResultPage;
+import io.seekflux.core.search.api.SearchResultPage;
 
 public record AgentSearchResult(
         String requestId,

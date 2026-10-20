@@ -1,13 +1,13 @@
 package io.seekflux.apps.onlineserver;
 
-import io.seekflux.search.application.SearchApplicationService;
-import io.seekflux.search.application.MultimodalSearchApplicationService;
-import io.seekflux.feature.port.in.RealtimeFeatureUseCase;
-import io.seekflux.search.port.in.SearchUseCase;
-import io.seekflux.search.port.in.MultimodalSearchUseCase;
-import io.seekflux.search.port.out.MediaEmbeddingPort;
-import io.seekflux.search.port.out.MediaSegmentRetriever;
-import io.seekflux.search.port.out.SearchRetriever;
+import io.seekflux.core.search.SearchApplicationService;
+import io.seekflux.core.search.MultimodalSearchApplicationService;
+import io.seekflux.core.feature.api.RealtimeFeatureUseCase;
+import io.seekflux.core.search.api.SearchUseCase;
+import io.seekflux.core.search.api.MultimodalSearchUseCase;
+import io.seekflux.core.search.domain.MediaEmbeddingPort;
+import io.seekflux.core.search.domain.MediaSegmentRetriever;
+import io.seekflux.core.search.domain.SearchRetriever;
 import java.time.Duration;
 import java.util.Arrays;
 import java.util.Set;

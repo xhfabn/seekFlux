@@ -1,8 +1,8 @@
 package io.seekflux.apps.workerrunner;
 
-import io.seekflux.feature.application.RealtimeFeatureProjectionService;
-import io.seekflux.feature.port.in.RealtimeFeatureProjectionUseCase;
-import io.seekflux.feature.port.out.RealtimeFeatureProjectionRepository;
+import io.seekflux.core.feature.RealtimeFeatureProjectionService;
+import io.seekflux.core.feature.api.RealtimeFeatureProjectionUseCase;
+import io.seekflux.core.feature.domain.RealtimeFeatureProjectionRepository;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 

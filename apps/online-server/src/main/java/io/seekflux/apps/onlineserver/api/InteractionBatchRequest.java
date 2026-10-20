@@ -1,8 +1,8 @@
 package io.seekflux.apps.onlineserver.api;
 
-import io.seekflux.interaction.domain.InteractionSignal;
-import io.seekflux.interaction.domain.InteractionSurface;
-import io.seekflux.interaction.domain.InteractionType;
+import io.seekflux.core.feature.domain.InteractionSignal;
+import io.seekflux.core.feature.domain.InteractionSurface;
+import io.seekflux.core.feature.domain.InteractionType;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;

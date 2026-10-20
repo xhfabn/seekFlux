@@ -4,11 +4,11 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import io.seekflux.interaction.application.InteractionIdempotencyConflictException;
-import io.seekflux.interaction.domain.InteractionDisposition;
-import io.seekflux.interaction.port.in.InteractionBatchReceipt;
-import io.seekflux.interaction.port.in.InteractionEventReceipt;
-import io.seekflux.interaction.port.in.ReportInteractionsUseCase;
+import io.seekflux.core.feature.InteractionIdempotencyConflictException;
+import io.seekflux.core.feature.domain.InteractionDisposition;
+import io.seekflux.core.feature.api.InteractionBatchReceipt;
+import io.seekflux.core.feature.api.InteractionEventReceipt;
+import io.seekflux.core.feature.api.ReportInteractionsUseCase;
 import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
