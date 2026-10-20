@@ -13,8 +13,8 @@
     <description>Multimodal search and recommendation platform</description>
 
     <modules>
-        <module>contexts</module>
         <module>core</module>
+        <module>agent</module>
         <module>platform</module>
         <module>shared</module>
         <module>apps</module>
