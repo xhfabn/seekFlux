@@ -139,3 +139,25 @@ mvn -o -B test                         # G2：Tests run: 90, Failures: 0, Errors
 | E4 | 架构测试改用 `ClassFileImporter` + JUnit 断言 | `@ArchTest` 字段在 surefire 下未注册（Tests run: 0），规则会静默不生效 | 改为普通 `@Test`，8 条规则真实执行 |
 | E5 | `apps/web` 只删除 `examples/d1` | `vite.config.ts` import 了 `build/` 与 `.openai/hosting.json`，`worker/index.ts` 是 vinext 入口 | SPEC R9 已修正，其余模板文件保留 |
 | E6 | G7/G8 未执行 | 需要本地拉起 PostgreSQL/Redis/Kafka/ES/MinIO 与 4 个进程 | 合并前必须补跑，见 T10 剩余项 |
+
+## 4. v2 执行记录（基线 86593ba，分支 refactor/arch-slimming-v2）
+
+上一轮基线取错（本地 main 落后 origin/main 15 个提交），本轮在新基线上重放并按要求改写两个任务。
+
+| 任务 | 提交 | 状态 | 说明 |
+| --- | --- | --- | --- |
+| T01 + 文档 | `9bfa461` | 已完成 | 删 3 个空模块、training-runner、18 个空 adapter 目录、web 示例 |
+| T02 | `a0caeed` | 已完成 | shared 建立；冲突解法：保留上游 autoconfigure 模块 |
+| T03 | `e0ad447` | 已完成 | 7 context → core；3 个 pom 的发布版 runtime 依赖保留 |
+| T04 | `5f78ddb` | 已完成 | 适配器归位；retrieval / model-serving 删除 |
+| T05（改写） | `5e467e5` | 已完成 | **不合并 runtime**：它已是独立版本的发布制品，并入会让 Maven Central 制品带上业务代码 |
+| T06 | `40a68d4` | 已完成 | persistence 8 类 + 5 测试 → agent.adapter.jdbc；platform 只剩 2 个发布模块 |
+| T07 | `e180108` | 已完成 | core 三段式 + 域合并；5 个跨域类型提升到 feature.api |
+| T08 | `d52ef91` | 已完成 | agent 包收敛为 api / orchestration / adapter |
+| T09 | `b018514` | 已完成 | 7 条架构规则；装配类留在 apps（依赖 autoconfigure 与 actuator） |
+| T10 | `cacc247` | 已完成 | 文档同步 + 补回 postgresql 驱动 |
+
+最终验收（v2）：`mvn -B clean test` → **BUILD SUCCESS，287 tests，0 failures，0 errors**；pom 27 → 14；非聚合模块 22 → 10；生产类 375 不变；业务模块包深度 ≤4。
+
+已知未执行：G5（4 进程启动）、G6（OpenAPI 冒烟）、G7/G8（检索与 Agent Eval），需本地栈。
+
