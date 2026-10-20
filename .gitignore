@@ -1,6 +1,7 @@
 .idea/
 .vscode/
 .env
+.env.remote
 .runtime/
 .local/
 **/target/

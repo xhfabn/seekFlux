@@ -99,6 +99,42 @@ uv run --project apps/training-runner python --version
 21 项全部通过，无失败或跳过；其中 9 个错误响应场景覆盖各业务、多模态、错误 JSON 和应用路径前缀，
 并校验时间戳可解析。此验证包含 Spring 上下文与 MockMvc，不替代真实中间件或检索质量验收。
 
+## 2026-10-20：本地代码直连服务器中间件
+
+本轮维护工程启动配置，不改变业务契约或 Step 11 路线。
+
+- 新增 [`.env.remote.example`](../../.env.remote.example) 和
+  [`deploy/remote/remote.py`](../../deploy/remote/remote.py)：单一主机配置派生 PostgreSQL JDBC、
+  Redis、Kafka、Elasticsearch、MinIO 的远程连接；本地仅启动业务代码，不安装中间件或建立隧道。
+- `remote-init` 创建 Git 忽略、权限 `600` 的私有配置；可选 `--from-server` 通过一次性 SSH
+  读取已运行容器的凭据和端口。凭据不输出到终端。`remote-infra-up` 通过服务器 Compose
+  选择性启动五个中间件及两个初始化服务；业务连接不依赖 SSH。
+- `remote-up/down` 复用本地业务启动器；macOS launchd 和 Linux nohup 显式传递
+  `.local/remote/runtime.env`，避免被原 `.env` 的本地地址覆盖。Agent Server 使用已有的
+  手工 Runtime 装配，远程模板关闭公共库的重复自动装配。
+- Kafka 的外部公布地址增加 `KAFKA_ADVERTISED_HOST`，默认保留本地行为；容器内部地址
+  仍为 `kafka:29092`。MinIO 上传连接和持久化的公开媒体 URL 使用服务器地址。
+- 检查失败时 `remote-up` 在启动应用前退出；尤其会拒绝返回 `localhost`/容器名的 Kafka
+  broker 元数据。详细边界和操作命令见[远程开发说明](../../deploy/remote/README.md)。
+
+验证入口：
+
+```bash
+python3 -m unittest discover -s deploy/remote -p 'test_*.py' -v
+bash -n seekflux.sh deploy/local/stack.sh deploy/local/run-java-app.sh deploy/local/run-web-app.sh
+./seekflux.sh remote-check
+git diff --check
+```
+
+自动化覆盖统一地址/自定义端口、私有配置优先级与权限、凭据不输出、停止范围、Kafka
+公布地址检查与分片协议响应、Java/Web 子进程实际读取远程配置。远程模式默认共享服务器
+现有数据和消费进度，不提供隔离；它不替代跨版本数据迁移与完整业务链路验收。
+
+本轮完成证据：7 项自动化测试、Shell 语法与 `git diff --check` 通过；从笔记本直连
+`36.140.162.30` 的五个中间件协议/健康检查全部通过，PostgreSQL 密码登录后的只读查询
+和 MinIO S3 签名鉴权请求通过。服务器 Kafka 保留同一镜像和数据卷，仅更新外部地址及
+内部健康检查后重建，容器健康检查通过。没有以此宣称已验收完整业务流程。
+
 ## 当时的下一步与当前路线
 
 Step 0 完成后，当时的下一步是 Step 1“内容登记与画像发布”，该切片现在已经完成。项目随后也已完成 Step 2 关键词搜索、Step 3 Feed 基线、Step 4 Agent-ready Direct Search 和 Step 5 Agent Runtime MVP。

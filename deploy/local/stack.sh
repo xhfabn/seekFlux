@@ -7,7 +7,7 @@ LOCAL_DIR="${ROOT_DIR}/.local"
 DOWNLOAD_DIR="${RUNTIME_DIR}/downloads"
 CONFIG_DIR="${LOCAL_DIR}/config"
 VERSION_FILE="${ROOT_DIR}/deploy/local/versions.env"
-ENV_FILE="${ROOT_DIR}/.env"
+ENV_FILE="${SEEKFLUX_ENV_FILE:-${ROOT_DIR}/.env}"
 
 [[ -f "${VERSION_FILE}" ]] || { printf '缺少版本清单: %s\n' "${VERSION_FILE}" >&2; exit 1; }
 # shellcheck disable=SC1090
@@ -70,6 +70,7 @@ prepare_directories() {
 
 load_local_env() {
   if [[ ! -f "${ENV_FILE}" ]]; then
+    [[ "${ENV_FILE}" == "${ROOT_DIR}/.env" ]] || fail "环境配置不存在: ${ENV_FILE}"
     cp "${ROOT_DIR}/.env.example" "${ENV_FILE}"
     log "已从 .env.example 创建本地 .env"
   fi
@@ -794,7 +795,7 @@ start_java_app() {
     fi
     launchctl remove "${label}" >/dev/null 2>&1 || true
     launchctl submit -l "${label}" -o "${log_file}" -e "${log_file}" -- \
-      "${ROOT_DIR}/deploy/local/run-java-app.sh" "${jar}"
+      "${ROOT_DIR}/deploy/local/run-java-app.sh" "${jar}" "${ENV_FILE}"
     for _ in {1..20}; do
       app_pid="$(launchd_pid "${label}" || true)"
       [[ "${app_pid}" =~ ^[0-9]+$ ]] && break
@@ -802,7 +803,7 @@ start_java_app() {
     done
     [[ "${app_pid}" =~ ^[0-9]+$ ]] || fail "${name} 未能注册到 launchd"
   else
-    nohup "${JAVA_HOME}/bin/java" -jar "${jar}" >"${log_file}" 2>&1 </dev/null &
+    nohup "${ROOT_DIR}/deploy/local/run-java-app.sh" "${jar}" "${ENV_FILE}" >"${log_file}" 2>&1 </dev/null &
     app_pid="$!"
   fi
   printf '%s\n' "${app_pid}" >"${pidfile}"
@@ -855,7 +856,7 @@ start_web_app() {
     launchctl remove "${label}" >/dev/null 2>&1 || true
     launchctl submit -l "${label}" -o "${log_file}" -e "${log_file}" -- \
       "${ROOT_DIR}/deploy/local/run-web-app.sh" "${WEB_SERVER_PORT}" "${node_bin_dir}" "${npm_bin_dir}" \
-      "${WEB_SERVER_HOST}"
+      "${WEB_SERVER_HOST}" "${ENV_FILE}"
     for _ in {1..20}; do
       app_pid="$(launchd_pid "${label}" || true)"
       [[ "${app_pid}" =~ ^[0-9]+$ ]] && break
@@ -864,7 +865,7 @@ start_web_app() {
     [[ "${app_pid}" =~ ^[0-9]+$ ]] || fail "Web 未能注册到 launchd"
   else
     nohup "${ROOT_DIR}/deploy/local/run-web-app.sh" "${WEB_SERVER_PORT}" "${node_bin_dir}" "${npm_bin_dir}" \
-      "${WEB_SERVER_HOST}" >"${log_file}" 2>&1 </dev/null &
+      "${WEB_SERVER_HOST}" "${ENV_FILE}" >"${log_file}" 2>&1 </dev/null &
     app_pid="$!"
   fi
   printf '%s\n' "${app_pid}" >"${pidfile}"
@@ -1084,6 +1085,11 @@ SeekFlux macOS / Ubuntu 本地开发环境
   infra-up          安装并启动 PostgreSQL、Redis、Kafka、ES、MinIO
   build             构建四个 Java 应用
   apps-up           构建并启动 Content、Worker、Online、Agent 与 Web
+  remote-init       创建私有 .env.remote；--from-server 可自动获取凭据
+  remote-up         本地业务代码通过服务器 IP 和端口直连中间件
+  remote-check      检查远程 PostgreSQL、Redis、Kafka、ES、MinIO
+  remote-down       停止本地业务代码，保留服务器中间件
+  remote-infra-up   在服务器用 Docker Compose 启动中间件
   seed-demo         通过内容发布链路创建六类画像示例视频
   up                 安装并启动中间件、四个 Java 应用与 Web
   status             查看全部中间件与应用状态

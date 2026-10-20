@@ -80,6 +80,19 @@ cp .env.example .env
 docker compose --env-file .env -f deploy/compose/compose.yml up -d
 ```
 
+本地代码使用服务器上的 PostgreSQL、Redis、Kafka、Elasticsearch 和 MinIO 时：
+
+```bash
+./seekflux.sh remote-init   # 在 .env.remote 填写服务器账号密码
+./seekflux.sh remote-check
+./seekflux.sh remote-up
+./seekflux.sh remote-down
+```
+
+默认直连 `36.140.162.30` 的中间件端口，不要求本地 Docker，也不建立 SSH 隧道。
+已有服务器 SSH 权限时，`remote-init --from-server` 可一次性取得当前容器凭据。
+配置、服务器启动和 Kafka 外部地址要求见[远程开发说明](deploy/remote/README.md)。
+
 默认端口：PostgreSQL `5432`、Redis `6379`、Kafka `9092`、Elasticsearch `9200`、MinIO `9000/9001`、Online `8080`、Content `8081`、Agent `8083`、Web `3001`。
 
 多模态检索默认关闭，避免普通开发启动时下载大型模型。安装 Python/FFmpeg 后在 `.env`

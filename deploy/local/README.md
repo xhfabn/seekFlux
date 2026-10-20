@@ -1,5 +1,7 @@
 # SeekFlux macOS / Ubuntu 本地运行脚本
 
+本地代码直连服务器中间件使用独立的 `remote-*` 命令，见[远程开发说明](../remote/README.md)。
+
 根目录的 `seekflux.sh` 是当前已实现服务的统一入口。它会把可下载的中间件安装在项目
 `.runtime/`，把数据、日志和 PID 保存在 `.local/`。macOS 的 PostgreSQL 二进制可由
 Homebrew 安装；Ubuntu 使用系统安装的 PostgreSQL 17 工具，数据目录仍属于本项目。
