@@ -1,0 +1,38 @@
+package io.seekflux.agent.orchestration.adapter;
+
+import io.micrometer.core.instrument.MeterRegistry;
+import io.seekflux.platform.agentruntime.mcp.model.McpEvent;
+import io.seekflux.platform.agentruntime.mcp.spi.McpEventRecorder;
+
+public final class MicrometerMcpEventRecorder implements McpEventRecorder {
+
+    private final MeterRegistry registry;
+
+    public MicrometerMcpEventRecorder(MeterRegistry registry) {
+        this.registry = registry;
+    }
+
+    @Override
+    public void record(McpEvent event) {
+        String tool = event.toolName() == null || event.toolName().isBlank()
+                ? "none" : event.toolName();
+        registry.counter(
+                "seekflux.agent.mcp.events",
+                "type", event.eventType().name(),
+                "server", event.serverId(),
+                "tool", tool,
+                "outcome", event.outcome().name(),
+                "reason", event.reason()).increment();
+        registry.summary(
+                "seekflux.agent.mcp.duration",
+                "type", event.eventType().name(),
+                "server", event.serverId(),
+                "outcome", event.outcome().name()).record(event.durationMillis());
+        if (event.eventType() == McpEvent.Type.DISCOVERY
+                && event.outcome() == McpEvent.Outcome.SUCCEEDED) {
+            registry.summary(
+                    "seekflux.agent.mcp.active.tools",
+                    "server", event.serverId()).record(event.activeToolCount());
+        }
+    }
+}

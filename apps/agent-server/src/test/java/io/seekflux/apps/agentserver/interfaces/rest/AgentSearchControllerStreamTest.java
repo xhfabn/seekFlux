@@ -4,7 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoInteractions;
 
-import io.seekflux.agent.port.in.AgentSearchUseCase;
+import io.seekflux.agent.api.AgentSearchUseCase;
 import io.seekflux.platform.agentruntime.application.api.Router;
 import io.seekflux.platform.agentruntime.application.api.model.RouterResult;
 import io.seekflux.platform.agentruntime.application.command.AgentRunRequest;

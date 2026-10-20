@@ -1,9 +1,9 @@
 package io.seekflux.apps.agentserver.interfaces.rest;
 
-import io.seekflux.agent.domain.ConstraintPatch;
-import io.seekflux.agent.port.in.AgentRequestedMode;
-import io.seekflux.agent.port.in.AgentSearchCommand;
-import io.seekflux.agent.port.in.AgentSearchUseCase;
+import io.seekflux.agent.orchestration.ConstraintPatch;
+import io.seekflux.agent.api.AgentRequestedMode;
+import io.seekflux.agent.api.AgentSearchCommand;
+import io.seekflux.agent.api.AgentSearchUseCase;
 import io.seekflux.platform.agentruntime.application.api.Router;
 import io.seekflux.platform.agentruntime.application.api.WaitResumeDispatcher;
 import io.seekflux.platform.agentruntime.application.api.model.RouterResult;

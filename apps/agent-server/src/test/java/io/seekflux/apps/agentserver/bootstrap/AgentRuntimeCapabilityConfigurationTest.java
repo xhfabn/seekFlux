@@ -2,8 +2,8 @@ package io.seekflux.apps.agentserver.bootstrap;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import io.seekflux.agent.infrastructure.tool.SearchDirectTool;
-import io.seekflux.agent.infrastructure.tool.SearchFilteredTool;
+import io.seekflux.agent.orchestration.adapter.SearchDirectTool;
+import io.seekflux.agent.orchestration.adapter.SearchFilteredTool;
 import io.seekflux.platform.agentruntime.application.command.CapabilityRequest;
 import io.seekflux.platform.agentruntime.autoconfigure.AgentMcpProperties;
 import io.seekflux.platform.agentruntime.application.spi.capability.llm.LlmClient;

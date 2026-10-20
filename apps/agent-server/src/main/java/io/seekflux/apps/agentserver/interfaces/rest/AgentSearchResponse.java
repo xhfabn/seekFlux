@@ -1,11 +1,11 @@
 package io.seekflux.apps.agentserver.interfaces.rest;
 
-import io.seekflux.agent.domain.QueryConstraintSet;
-import io.seekflux.agent.domain.SearchPlan;
-import io.seekflux.agent.port.in.AgentExecutionMode;
-import io.seekflux.agent.port.in.AgentSearchResult;
-import io.seekflux.agent.port.in.AgentSearchState;
-import io.seekflux.agent.port.in.AgentTraceView;
+import io.seekflux.agent.orchestration.QueryConstraintSet;
+import io.seekflux.agent.orchestration.SearchPlan;
+import io.seekflux.agent.api.AgentExecutionMode;
+import io.seekflux.agent.api.AgentSearchResult;
+import io.seekflux.agent.api.AgentSearchState;
+import io.seekflux.agent.api.AgentTraceView;
 import io.seekflux.core.search.api.SearchHitView;
 import io.seekflux.core.search.api.SearchTrace;
 import java.util.List;

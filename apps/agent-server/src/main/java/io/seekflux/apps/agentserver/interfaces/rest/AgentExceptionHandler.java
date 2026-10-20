@@ -1,8 +1,8 @@
 package io.seekflux.apps.agentserver.interfaces.rest;
 
-import io.seekflux.agent.application.exception.AgentSessionBusyException;
-import io.seekflux.agent.application.exception.DuplicateAgentRequestException;
-import io.seekflux.agent.domain.ConstraintVersionConflictException;
+import io.seekflux.agent.AgentSessionBusyException;
+import io.seekflux.agent.DuplicateAgentRequestException;
+import io.seekflux.agent.orchestration.ConstraintVersionConflictException;
 import io.seekflux.platform.agentruntime.domain.exception.AgentSessionStateConflictException;
 import io.seekflux.platform.agentruntime.domain.exception.AgentExecutionFencedException;
 import io.seekflux.platform.agentruntime.domain.exception.UnsafeToolRecoveryException;
