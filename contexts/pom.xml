@@ -4,8 +4,6 @@
     <parent><groupId>io.seekflux</groupId><artifactId>seekflux</artifactId><version>0.1.0-SNAPSHOT</version></parent>
     <artifactId>contexts</artifactId><packaging>pom</packaging>
     <modules>
-        <module>agent-orchestration-context</module><module>content-context</module><module>search-context</module><module>recommendation-context</module>
-        <module>user-interest-context</module><module>interaction-context</module><module>feature-context</module>
-        <module>ranking-context</module>
+        <module>agent-orchestration-context</module>
     </modules>
 </project>
