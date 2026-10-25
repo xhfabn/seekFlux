@@ -12,4 +12,3 @@ public final class DefaultSuite {
         } catch (IOException e) { throw new UncheckedIOException(e); }
     }
 }
-

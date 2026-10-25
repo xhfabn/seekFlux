@@ -130,4 +130,3 @@ public final class EvaluationRunner {
     }
     private record Graded(Evidence evidence, List<Finding> findings) {}
 }
-

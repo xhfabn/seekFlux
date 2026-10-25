@@ -13,4 +13,3 @@ public interface EvaluationTarget {
         @Override void close() throws Exception;
     }
 }
-

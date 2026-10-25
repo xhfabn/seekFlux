@@ -16,4 +16,3 @@ public interface RuntimeFixture extends AutoCloseable {
     @Override default void close() throws Exception {}
     @FunctionalInterface interface Factory { RuntimeFixture create(Evaluation.Case testCase) throws Exception; }
 }
-

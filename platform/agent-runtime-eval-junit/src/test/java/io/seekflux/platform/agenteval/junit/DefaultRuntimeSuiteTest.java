@@ -12,4 +12,3 @@ class DefaultRuntimeSuiteTest {
         return AgentEvaluations.tests(report);
     }
 }
-

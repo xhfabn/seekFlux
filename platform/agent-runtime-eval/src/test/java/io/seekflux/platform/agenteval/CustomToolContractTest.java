@@ -32,4 +32,3 @@ class CustomToolContractTest {
         assertEquals(2, calls.get()); // success and AFTER_TOOL; no body entry on failure/cancel before tool
     }
 }
-

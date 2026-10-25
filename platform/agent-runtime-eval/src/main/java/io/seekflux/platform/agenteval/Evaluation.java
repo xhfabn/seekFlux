@@ -80,4 +80,3 @@ public final class Evaluation {
         if (new HashSet<>(values).size() != values.size()) throw new IllegalArgumentException("duplicate " + name + " id");
     }
 }
-

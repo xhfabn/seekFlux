@@ -8,4 +8,3 @@ public interface Grader {
     String version();
     List<Evaluation.Finding> grade(Evaluation.Case testCase, Evaluation.Evidence evidence) throws Exception;
 }
-

@@ -84,4 +84,3 @@ JUnit 适配器提供 `AgentEvaluations.tests(report)`，可在 `@TestFactory` �
 当前交付覆盖通用执行与扩展机制、进程内故障、固定 Runtime 套件和报告。真实进程崩溃、Checkpoint 持久恢复、等待审批回调、分布式 fencing、上下文压缩专用套件、在线模型 Judge、多轮数据适配仍待后续切片；当前适配器不声明这些能力。
 
 协议见[评测契约](../../contracts/runtime/agent-evaluation-v1.md)，架构见 [ADR-020](../../docs/adr/ADR-020-generic-agent-evaluation.md)，长期范围见[规划](../../evals/agent-evaluation-plan.md)。
-

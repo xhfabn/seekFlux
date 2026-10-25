@@ -33,4 +33,3 @@ Rescore 要求相同 Suite Hash 和完整有序用例，只重做评分，保留
 Compare 要求相同 suiteId/version/hash、target 标识、Grader ID/版本和用例集合，targetVersion 可变化。输出 regressions、improvements、通过数；原有失败不算新增回归。无回归不代表所有用例通过。
 
 JSON/JSONL 是机器接口，HTML 展示同一结果。报告包含完整证据，应按评测输入相同的数据访问范围保存和共享。固定场景通过率不代表真实模型业务成功率。
-

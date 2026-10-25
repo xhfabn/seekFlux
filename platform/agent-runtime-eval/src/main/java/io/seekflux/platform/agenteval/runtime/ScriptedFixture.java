@@ -91,4 +91,3 @@ public final class ScriptedFixture implements RuntimeFixture {
     }
     private int number(String name, int fallback) { return ((Number) config.getOrDefault(name, fallback)).intValue(); }
 }
-

@@ -56,4 +56,3 @@ public final class RuntimeInvariantsGrader implements Grader {
         results.add(new Finding(id, pass ? Status.PASS : Status.FAIL, detail));
     }
 }
-

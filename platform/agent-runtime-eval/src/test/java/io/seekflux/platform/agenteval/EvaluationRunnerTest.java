@@ -156,4 +156,3 @@ class EvaluationRunnerTest {
         assertTrue(comparison.candidatePassed() < comparison.baselinePassed());
     }
 }
-

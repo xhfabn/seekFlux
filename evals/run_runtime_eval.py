@@ -43,4 +43,3 @@ if __name__ == "__main__":
         sys.exit(main())
     except subprocess.CalledProcessError as error:
         sys.exit(error.returncode)
-

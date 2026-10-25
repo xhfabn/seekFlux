@@ -44,4 +44,3 @@ public final class ToolContractSuite {
     }
     private static Check eq(String id, String path, Object expected) { return new Check(id, path, Operator.EQUALS, expected); }
 }
-

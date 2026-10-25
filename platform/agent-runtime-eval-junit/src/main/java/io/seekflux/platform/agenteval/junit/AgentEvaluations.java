@@ -14,4 +14,3 @@ public final class AgentEvaluations {
                 () -> assertEquals(Evaluation.Status.PASS, result.status(), () -> result.findings().toString())));
     }
 }
-

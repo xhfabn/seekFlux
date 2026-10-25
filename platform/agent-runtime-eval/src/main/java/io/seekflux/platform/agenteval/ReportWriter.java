@@ -65,4 +65,3 @@ public final class ReportWriter {
         return value.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;").replace("'", "&#39;");
     }
 }
-

@@ -25,4 +25,3 @@ public record ReportComparison(String baselineRun, String candidateRun,
                 List.copyOf(improvements), baseline.count(Status.PASS), candidate.count(Status.PASS), before.size());
     }
 }
-

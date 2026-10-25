@@ -38,4 +38,3 @@ public final class FaultController {
         public InjectedFailure(String id) { super("injected fault: " + id); }
     }
 }
-

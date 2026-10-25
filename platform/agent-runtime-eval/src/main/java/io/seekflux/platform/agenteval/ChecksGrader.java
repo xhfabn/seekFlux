@@ -40,4 +40,3 @@ public final class ChecksGrader implements Grader {
         return false;
     }
 }
-
