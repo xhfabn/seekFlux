@@ -6,6 +6,8 @@
 apps/*                 -> core, agent, shared, runtime-autoconfigure
 agent                  -> core, runtime-core（发布制品，按版本引入）
 runtime-autoconfigure  -> runtime-core
+runtime-eval-junit     -> runtime-eval, JUnit API
+runtime-eval           -> runtime-core, Jackson（无业务或基础设施依赖）
 runtime-core           -> 仅第三方库（可独立发布，不含业务代码）
 core                   -> 仅第三方库
 shared                 -> 仅第三方库
@@ -30,6 +32,8 @@ core 内部               content 独立；search / recommendation -> feature.ap
 | `agent` | `io.seekflux:agent` | 检索编排：目标、约束、路由、追问、回退 |
 | `platform/agent-runtime` | `io.github.xhfabn.seekflux:seekflux-agent-runtime-core` | 可发布 Agent 内核（独立版本） |
 | `platform/agent-runtime-spring-boot-autoconfigure` | `...:seekflux-agent-runtime-spring-boot-autoconfigure` | 内核的 Spring Boot 装配 |
+| `platform/agent-runtime-eval` | `...:seekflux-agent-runtime-eval` | 通用评测流程、故障、评分与报告 |
+| `platform/agent-runtime-eval-junit` | `...:seekflux-agent-runtime-eval-junit` | 逐用例 JUnit 门禁适配 |
 | `shared` | `io.seekflux:shared` | Outbox Relay、Flyway、JDBC 驱动 |
 | `apps/online-server` | 可部署进程 | 搜索、Feed、交互、实时特征 |
 | `apps/agent-server` | 可部署进程 | Agent 搜索 API 与运行时装配 |

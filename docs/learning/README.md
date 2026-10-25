@@ -78,6 +78,11 @@ Agent 内核决策和参考文档映射见 [ADR-004](../adr/ADR-004-ark-leto-ins
 
 ## Step 与 Agent Phase 的对应关系
 
+2026-10-25 补充：Step 07 平台化新增通用评测 1.0 首版，已提供独立 SDK、JUnit 适配和
+17 个默认 Runtime 场景，固定基线 17/17，负向对照检出两个答案回归。范围及证据见
+[Step 07](step-07-agent-reliability-platform.md#2026-10-25通用-agent-评测-10-首版)。
+产品主路线仍保持 Step 11 为下一步，持久恢复等评测扩展不据此标记完成。
+
 开发 `Step` 是仓库中的交付顺序；Agent `Phase` 是 [`SeekFlux.md`](../../SeekFlux.md) 中的能力成熟度。两者不是同一套编号。
 
 | 开发 Step | 对应 Agent Phase | 交付结果 | 状态 |

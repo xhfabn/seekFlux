@@ -334,6 +334,28 @@ git diff --check
   仍需自行覆盖模型语义版本；没有新增工具工厂、注解解析器、Prompt 注入检测器或在线版本仓库。
   当前总路线仍以[学习入口](README.md)为准，不创建新 Step。
 
+## 2026-10-25：通用 Agent 评测 1.0 首版
+
+本轮新增 `platform/agent-runtime-eval` 与 `agent-runtime-eval-junit`，作为 Step 07
+平台化扩展，不新增 Step。统一用例执行、隔离夹具、工具/模型故障注入、可插拔评分、
+完整证据、HTML/JSON/JSONL 报告、基线对比与离线重评分。默认目标驱动生产 Runtime；
+业务工具只需提供合法样例与工厂即可复用四类契约场景。
+
+已完成的验证：Runtime 147 项测试通过；新增模块最终 15 项 SDK 测试和 17 个 JUnit
+场景通过。故障未命中、缺能力/证据、评分异常、超时、工具结果缺失、目标不响应中断
+均有失败证据或反向测试。取消 Future 后必须等待实际线程退出，未退出会停止后续用例。
+命令为 `mvn -B -ntp -pl platform/agent-runtime-eval-junit -am install`，随后新增检查的
+最终回归使用 `mvn -B -ntp -pl platform/agent-runtime-eval,platform/agent-runtime-eval-junit test`。
+
+固定 CLI 演示已完成：默认基线 17/17，故意修改答案的候选 15/17，检出两个回归。
+证据见 [evals](../../evals/README.md)，运行入口与接入说明见[模块说明](../../platform/agent-runtime-eval/README.md)。
+沙箱内一次首次启动出现用例超时；正常本机运行随后通过。按用户最新要求停止追加测试，
+不宣称已做全仓回归、独立外部项目消费或远程 CI 验收；Python 完整构建入口尚未端到端复跑。
+
+真实进程崩溃、持久等待/恢复、分布式 fencing、上下文压缩专用套件与在线模型 Judge
+仍待后续实现；当前目标不声明这些能力。学习主路线不变。长期决定见
+[ADR-020](../adr/ADR-020-generic-agent-evaluation.md)，契约见[评测协议](../../contracts/runtime/agent-evaluation-v1.md)。
+
 ## 本阶段可以学到什么
 
 - 租约解决“谁现在可以执行”，fencing 才解决“旧 owner 还能否晚到提交”；

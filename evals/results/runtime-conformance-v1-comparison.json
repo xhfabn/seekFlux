@@ -1,0 +1,9 @@
+{
+  "baselineRun" : "f43c3669-a53e-4a0d-bcf8-1fac5d594905",
+  "candidateRun" : "c2142591-5363-4c0b-82e9-af15b704d791",
+  "regressions" : [ "lookup", "policy-modify" ],
+  "improvements" : [ ],
+  "baselinePassed" : 17,
+  "candidatePassed" : 15,
+  "total" : 17
+}

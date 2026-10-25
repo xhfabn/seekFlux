@@ -1,0 +1,708 @@
+{
+  "id": "runtime-conformance",
+  "version": "1.0",
+  "metadata": {
+    "fixtureVersion": "generic-fixtures-v1",
+    "provider": "scripted",
+    "isolation": "per-case-memory",
+    "purpose": "runtime-conformance-not-model-quality"
+  },
+  "cases": [
+    {
+      "id": "completion",
+      "input": "Execute the isolated generic agent scenario: completion",
+      "requiredCapabilities": [
+        "basic"
+      ],
+      "parameters": {},
+      "faults": [],
+      "checks": [
+        {
+          "id": "state",
+          "path": "/state",
+          "operator": "EQUALS",
+          "expected": "RESULTS_READY"
+        },
+        {
+          "id": "output.answer",
+          "path": "/output/answer",
+          "operator": "EQUALS",
+          "expected": "done"
+        },
+        {
+          "id": "modelCalls",
+          "path": "/modelCalls",
+          "operator": "EQUALS",
+          "expected": 1
+        },
+        {
+          "id": "providerUsageMeasured",
+          "path": "/providerUsageMeasured",
+          "operator": "EQUALS",
+          "expected": false
+        },
+        {
+          "id": "totalTokens",
+          "path": "/totalTokens",
+          "operator": "EQUALS",
+          "expected": null
+        }
+      ],
+      "timeoutMillis": 8000
+    },
+    {
+      "id": "lookup",
+      "input": "Execute the isolated generic agent scenario: lookup",
+      "requiredCapabilities": [
+        "basic"
+      ],
+      "parameters": {
+        "plan": [
+          {
+            "action": "tool",
+            "tool": "lookup_record",
+            "arguments": {
+              "key": "alpha"
+            }
+          }
+        ]
+      },
+      "faults": [],
+      "checks": [
+        {
+          "id": "state",
+          "path": "/state",
+          "operator": "EQUALS",
+          "expected": "RESULTS_READY"
+        },
+        {
+          "id": "output.value",
+          "path": "/output/value",
+          "operator": "EQUALS",
+          "expected": "ready"
+        },
+        {
+          "id": "effects.executions.lookup_record",
+          "path": "/effects/executions/lookup_record",
+          "operator": "EQUALS",
+          "expected": 1
+        }
+      ],
+      "timeoutMillis": 8000
+    },
+    {
+      "id": "idempotent-write",
+      "input": "Execute the isolated generic agent scenario: idempotent-write",
+      "requiredCapabilities": [
+        "basic"
+      ],
+      "parameters": {
+        "plan": [
+          {
+            "action": "tool",
+            "tool": "set_value",
+            "arguments": {
+              "key": "alpha",
+              "value": "updated"
+            }
+          }
+        ]
+      },
+      "faults": [],
+      "checks": [
+        {
+          "id": "state",
+          "path": "/state",
+          "operator": "EQUALS",
+          "expected": "RESULTS_READY"
+        },
+        {
+          "id": "effects.values.alpha",
+          "path": "/effects/values/alpha",
+          "operator": "EQUALS",
+          "expected": "updated"
+        },
+        {
+          "id": "effects.writes",
+          "path": "/effects/writes",
+          "operator": "EQUALS",
+          "expected": 1
+        }
+      ],
+      "timeoutMillis": 8000
+    },
+    {
+      "id": "schema-reject",
+      "input": "Execute the isolated generic agent scenario: schema-reject",
+      "requiredCapabilities": [
+        "basic",
+        "schema"
+      ],
+      "parameters": {
+        "plan": [
+          {
+            "action": "tool",
+            "tool": "lookup_record",
+            "arguments": {}
+          }
+        ]
+      },
+      "faults": [],
+      "checks": [
+        {
+          "id": "fallbackReason",
+          "path": "/fallbackReason",
+          "operator": "EQUALS",
+          "expected": "TOOL_ARGUMENT_INVALID"
+        },
+        {
+          "id": "effects.executions.lookup_record",
+          "path": "/effects/executions/lookup_record",
+          "operator": "EQUALS",
+          "expected": 0
+        }
+      ],
+      "timeoutMillis": 8000
+    },
+    {
+      "id": "schema-repair",
+      "input": "Execute the isolated generic agent scenario: schema-repair",
+      "requiredCapabilities": [
+        "basic",
+        "schema"
+      ],
+      "parameters": {
+        "plan": [
+          {
+            "action": "tool",
+            "tool": "lookup_record",
+            "arguments": {
+              "key": "alpha",
+              "limit": "2"
+            }
+          }
+        ]
+      },
+      "faults": [],
+      "checks": [
+        {
+          "id": "state",
+          "path": "/state",
+          "operator": "EQUALS",
+          "expected": "RESULTS_READY"
+        },
+        {
+          "id": "messages.1.argumentsRepaired",
+          "path": "/messages/1/argumentsRepaired",
+          "operator": "EQUALS",
+          "expected": true
+        }
+      ],
+      "timeoutMillis": 8000
+    },
+    {
+      "id": "policy-deny",
+      "input": "Execute the isolated generic agent scenario: policy-deny",
+      "requiredCapabilities": [
+        "basic",
+        "policy"
+      ],
+      "parameters": {
+        "plan": [
+          {
+            "action": "tool",
+            "tool": "set_value",
+            "arguments": {
+              "key": "alpha",
+              "value": "updated"
+            }
+          }
+        ],
+        "policy": "deny"
+      },
+      "faults": [],
+      "checks": [
+        {
+          "id": "fallbackReason",
+          "path": "/fallbackReason",
+          "operator": "EQUALS",
+          "expected": "TOOL_POLICY_DENIED"
+        },
+        {
+          "id": "effects.writes",
+          "path": "/effects/writes",
+          "operator": "EQUALS",
+          "expected": 0
+        }
+      ],
+      "timeoutMillis": 8000
+    },
+    {
+      "id": "policy-modify",
+      "input": "Execute the isolated generic agent scenario: policy-modify",
+      "requiredCapabilities": [
+        "basic",
+        "policy"
+      ],
+      "parameters": {
+        "plan": [
+          {
+            "action": "tool",
+            "tool": "lookup_record",
+            "arguments": {
+              "key": "alpha"
+            }
+          }
+        ],
+        "policy": "modify"
+      },
+      "faults": [],
+      "checks": [
+        {
+          "id": "state",
+          "path": "/state",
+          "operator": "EQUALS",
+          "expected": "RESULTS_READY"
+        },
+        {
+          "id": "output.key",
+          "path": "/output/key",
+          "operator": "EQUALS",
+          "expected": "beta"
+        },
+        {
+          "id": "output.value",
+          "path": "/output/value",
+          "operator": "EQUALS",
+          "expected": "pending"
+        }
+      ],
+      "timeoutMillis": 8000
+    },
+    {
+      "id": "allowed-tools",
+      "input": "Execute the isolated generic agent scenario: allowed-tools",
+      "requiredCapabilities": [
+        "basic"
+      ],
+      "parameters": {
+        "plan": [
+          {
+            "action": "tool",
+            "tool": "set_value",
+            "arguments": {
+              "key": "alpha",
+              "value": "updated"
+            }
+          }
+        ],
+        "allowedTools": [
+          "lookup_record"
+        ]
+      },
+      "faults": [],
+      "checks": [
+        {
+          "id": "fallbackReason",
+          "path": "/fallbackReason",
+          "operator": "EQUALS",
+          "expected": "TOOL_ARGUMENT_INVALID"
+        },
+        {
+          "id": "effects.writes",
+          "path": "/effects/writes",
+          "operator": "EQUALS",
+          "expected": 0
+        }
+      ],
+      "timeoutMillis": 8000
+    },
+    {
+      "id": "parallel-tools",
+      "input": "Execute the isolated generic agent scenario: parallel-tools",
+      "requiredCapabilities": [
+        "basic",
+        "parallel"
+      ],
+      "parameters": {
+        "plan": [
+          {
+            "action": "parallel",
+            "calls": [
+              {
+                "action": "tool",
+                "tool": "lookup_record",
+                "arguments": {
+                  "key": "alpha"
+                }
+              },
+              {
+                "action": "tool",
+                "tool": "lookup_record",
+                "arguments": {
+                  "key": "beta"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "faults": [],
+      "checks": [
+        {
+          "id": "state",
+          "path": "/state",
+          "operator": "EQUALS",
+          "expected": "RESULTS_READY"
+        },
+        {
+          "id": "effects.executions.lookup_record",
+          "path": "/effects/executions/lookup_record",
+          "operator": "EQUALS",
+          "expected": 2
+        }
+      ],
+      "timeoutMillis": 8000
+    },
+    {
+      "id": "tool-call-limit",
+      "input": "Execute the isolated generic agent scenario: tool-call-limit",
+      "requiredCapabilities": [
+        "basic"
+      ],
+      "parameters": {
+        "plan": [
+          {
+            "action": "tool",
+            "tool": "lookup_record",
+            "arguments": {
+              "key": "alpha"
+            }
+          },
+          {
+            "action": "tool",
+            "tool": "set_value",
+            "arguments": {
+              "key": "alpha",
+              "value": "updated"
+            }
+          }
+        ],
+        "maxToolCalls": 1
+      },
+      "faults": [],
+      "checks": [
+        {
+          "id": "fallbackReason",
+          "path": "/fallbackReason",
+          "operator": "EQUALS",
+          "expected": "TOOL_CALL_LIMIT_REACHED"
+        },
+        {
+          "id": "effects.writes",
+          "path": "/effects/writes",
+          "operator": "EQUALS",
+          "expected": 0
+        }
+      ],
+      "timeoutMillis": 8000
+    },
+    {
+      "id": "tool-failure-before",
+      "input": "Execute the isolated generic agent scenario: tool-failure-before",
+      "requiredCapabilities": [
+        "basic",
+        "tool-faults"
+      ],
+      "parameters": {
+        "plan": [
+          {
+            "action": "tool",
+            "tool": "lookup_record",
+            "arguments": {
+              "key": "alpha"
+            }
+          }
+        ]
+      },
+      "faults": [
+        {
+          "id": "before_tool-throw",
+          "phase": "BEFORE_TOOL",
+          "tool": "lookup_record",
+          "occurrence": 1,
+          "action": "THROW",
+          "delayMillis": 0
+        }
+      ],
+      "checks": [
+        {
+          "id": "state",
+          "path": "/state",
+          "operator": "EQUALS",
+          "expected": "FALLBACK_REQUIRED"
+        },
+        {
+          "id": "fallbackReason",
+          "path": "/fallbackReason",
+          "operator": "EQUALS",
+          "expected": "TOOL_EXECUTION_FAILED"
+        },
+        {
+          "id": "effects.executions.lookup_record",
+          "path": "/effects/executions/lookup_record",
+          "operator": "EQUALS",
+          "expected": 0
+        }
+      ],
+      "timeoutMillis": 8000
+    },
+    {
+      "id": "response-loss-after-write",
+      "input": "Execute the isolated generic agent scenario: response-loss-after-write",
+      "requiredCapabilities": [
+        "basic",
+        "tool-faults",
+        "in-memory-effects"
+      ],
+      "parameters": {
+        "plan": [
+          {
+            "action": "tool",
+            "tool": "set_value",
+            "arguments": {
+              "key": "alpha",
+              "value": "updated"
+            }
+          }
+        ]
+      },
+      "faults": [
+        {
+          "id": "after_tool-throw",
+          "phase": "AFTER_TOOL",
+          "tool": "set_value",
+          "occurrence": 1,
+          "action": "THROW",
+          "delayMillis": 0
+        }
+      ],
+      "checks": [
+        {
+          "id": "state",
+          "path": "/state",
+          "operator": "EQUALS",
+          "expected": "FALLBACK_REQUIRED"
+        },
+        {
+          "id": "effects.writes",
+          "path": "/effects/writes",
+          "operator": "EQUALS",
+          "expected": 1
+        },
+        {
+          "id": "effects.values.alpha",
+          "path": "/effects/values/alpha",
+          "operator": "EQUALS",
+          "expected": "updated"
+        }
+      ],
+      "timeoutMillis": 8000
+    },
+    {
+      "id": "tool-deadline",
+      "input": "Execute the isolated generic agent scenario: tool-deadline",
+      "requiredCapabilities": [
+        "basic",
+        "tool-faults"
+      ],
+      "parameters": {
+        "plan": [
+          {
+            "action": "tool",
+            "tool": "lookup_record",
+            "arguments": {
+              "key": "alpha"
+            }
+          }
+        ],
+        "runtimeTimeoutMillis": 100
+      },
+      "faults": [
+        {
+          "id": "before_tool-delay",
+          "phase": "BEFORE_TOOL",
+          "tool": "lookup_record",
+          "occurrence": 1,
+          "action": "DELAY",
+          "delayMillis": 1000
+        }
+      ],
+      "checks": [
+        {
+          "id": "fallbackReason",
+          "path": "/fallbackReason",
+          "operator": "EQUALS",
+          "expected": "AGENT_DEADLINE_EXCEEDED"
+        },
+        {
+          "id": "effects.executions.lookup_record",
+          "path": "/effects/executions/lookup_record",
+          "operator": "EQUALS",
+          "expected": 0
+        }
+      ],
+      "timeoutMillis": 8000
+    },
+    {
+      "id": "model-failure",
+      "input": "Execute the isolated generic agent scenario: model-failure",
+      "requiredCapabilities": [
+        "basic",
+        "model-faults"
+      ],
+      "parameters": {},
+      "faults": [
+        {
+          "id": "before_model-throw",
+          "phase": "BEFORE_MODEL",
+          "tool": null,
+          "occurrence": 1,
+          "action": "THROW",
+          "delayMillis": 0
+        }
+      ],
+      "checks": [
+        {
+          "id": "state",
+          "path": "/state",
+          "operator": "EQUALS",
+          "expected": "FALLBACK_REQUIRED"
+        },
+        {
+          "id": "modelCalls",
+          "path": "/modelCalls",
+          "operator": "EQUALS",
+          "expected": 0
+        }
+      ],
+      "timeoutMillis": 8000
+    },
+    {
+      "id": "cancel-before-model",
+      "input": "Execute the isolated generic agent scenario: cancel-before-model",
+      "requiredCapabilities": [
+        "basic",
+        "cancellation"
+      ],
+      "parameters": {},
+      "faults": [
+        {
+          "id": "before_model-cancel",
+          "phase": "BEFORE_MODEL",
+          "tool": null,
+          "occurrence": 1,
+          "action": "CANCEL",
+          "delayMillis": 0
+        }
+      ],
+      "checks": [
+        {
+          "id": "state",
+          "path": "/state",
+          "operator": "EQUALS",
+          "expected": "CANCELLED"
+        },
+        {
+          "id": "cancellationReason",
+          "path": "/cancellationReason",
+          "operator": "EQUALS",
+          "expected": "USER_CANCEL"
+        },
+        {
+          "id": "modelCalls",
+          "path": "/modelCalls",
+          "operator": "EQUALS",
+          "expected": 0
+        }
+      ],
+      "timeoutMillis": 8000
+    },
+    {
+      "id": "cancel-before-tool",
+      "input": "Execute the isolated generic agent scenario: cancel-before-tool",
+      "requiredCapabilities": [
+        "basic",
+        "cancellation"
+      ],
+      "parameters": {
+        "plan": [
+          {
+            "action": "tool",
+            "tool": "set_value",
+            "arguments": {
+              "key": "alpha",
+              "value": "updated"
+            }
+          }
+        ]
+      },
+      "faults": [
+        {
+          "id": "before_tool-cancel",
+          "phase": "BEFORE_TOOL",
+          "tool": "set_value",
+          "occurrence": 1,
+          "action": "CANCEL",
+          "delayMillis": 0
+        }
+      ],
+      "checks": [
+        {
+          "id": "state",
+          "path": "/state",
+          "operator": "EQUALS",
+          "expected": "CANCELLED"
+        },
+        {
+          "id": "effects.writes",
+          "path": "/effects/writes",
+          "operator": "EQUALS",
+          "expected": 0
+        }
+      ],
+      "timeoutMillis": 8000
+    },
+    {
+      "id": "clarification",
+      "input": "Execute the isolated generic agent scenario: clarification",
+      "requiredCapabilities": [
+        "basic"
+      ],
+      "parameters": {
+        "plan": [
+          {
+            "action": "clarify",
+            "question": "Which record?"
+          }
+        ]
+      },
+      "faults": [],
+      "checks": [
+        {
+          "id": "state",
+          "path": "/state",
+          "operator": "EQUALS",
+          "expected": "NEED_CLARIFICATION"
+        },
+        {
+          "id": "clarification",
+          "path": "/clarification",
+          "operator": "EQUALS",
+          "expected": "Which record?"
+        }
+      ],
+      "timeoutMillis": 8000
+    }
+  ]
+}
