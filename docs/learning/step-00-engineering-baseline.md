@@ -135,6 +135,78 @@ git diff --check
 和 MinIO S3 签名鉴权请求通过。服务器 Kafka 保留同一镜像和数据卷，仅更新外部地址及
 内部健康检查后重建，容器健康检查通过。没有以此宣称已验收完整业务流程。
 
+## 2026-10-20：Windows 原生启动与远程连通验收
+
+本轮继续维护工程启动与打包，不新增 Step，也不改变路线状态。
+
+- `agent-server` 补充对 `shared` 的直接依赖，修复运行 JAR 缺少 PostgreSQL 驱动的问题。
+- 从 `main` 原样恢复 V1–V16 到 `shared/src/main/resources/db/migration`；逐文件字节比对
+  以及 JAR 资源检查通过，四个服务均成功校验远程现有迁移，未执行新迁移。
+- `AgentCapabilityController` 移除 `final`，修复方法校验代理导致的真实启动失败；新增
+  [代理与参数校验回归](../../apps/agent-server/src/test/java/io/seekflux/apps/agentserver/interfaces/rest/AgentCapabilityValidationTest.java)，
+  使用 Spring 上下文验证代理创建及超长 Session ID 的校验，而非只做 standalone MockMvc。
+- 在 Windows 使用私有临时启动器直接运行四个 Java JAR 与 Vinext，远程环境通过进程环境变量
+  注入；Node 使用本项目运行目录内的 22.20.0，未替换系统 Node 16。正式 Shell 启动器尚不支持
+  Windows 原生，Python 使用 `-X utf8` 绕过默认 GBK。操作边界见
+  [远程开发说明](../../deploy/remote/README.md#windows-本机实测补充2026-10-20)。
+- 经用户授权，追加本机专用 SSH 公钥并配置本机别名 `seekflux-dev`；BatchMode 免密登录
+  实测通过，已有授权保留。服务器密码未写入仓库；中间件私有配置仍由 Git 忽略。
+
+验证命令与证据：
+
+```powershell
+mvn -pl apps/content-server,apps/online-server,apps/agent-server,apps/worker-runner -am package
+mvn -pl apps/agent-server -am package '-Dtest=AgentCapabilityValidationTest' '-Dsurefire.failIfNoSpecifiedTests=false'
+python -X utf8 deploy/remote/remote.py check
+ssh -o BatchMode=yes seekflux-dev 'echo SSH_KEY_AUTH_OK'
+git diff --check
+```
+
+首次构建的 236 项测试及新增代理回归测试通过。五个中间件协议检查、PostgreSQL 实际登录和
+迁移校验、MinIO 签名桶 HEAD 均通过；Content/Online/Agent 健康接口均为 `UP`。
+Web 首页、搜索及其 Bridge 代理、内容详情均为 HTTP 200；Worker 加入远程 Kafka 消费者组，
+本轮未生产新事件验证消费闭环。8080 被本机其他应用占用，Online 私有端口改为 18080，
+Content/Agent/Web 保留 8081/8083/3001；日志和本机验收元数据保存在 Git 忽略的 `.local/remote/`。
+
+剩余边界：搜索和 Bridge 实测约 7–8 秒，推荐为空；显式 Agent 请求返回 3 条结果，但为
+`AGENT_TO_DIRECT_FALLBACK / AGENT_DEADLINE_EXCEEDED`，不代表 Agent 正常完成。
+抽查历史媒体 URL 仍为本机回环地址，原地址访问失败，相同文件改用服务器 MinIO 地址返回 200；
+本轮不改写历史媒体数据。新启动配置不能自动修复旧数据或串行远程特征读取的延迟。
+
+## 2026-10-20：Windows 一键启动与停止
+
+Windows 正式入口为 [seekflux.ps1](../../seekflux.ps1)，底层由
+[windows_apps.py](../../deploy/remote/windows_apps.py) 管理四个后端和前端，配置仍来自
+Git 忽略的 `.env.remote`。`remote.py` 显式按 UTF-8 读写配置，兼容中文和 UTF-8 BOM；
+不再依赖先前的本机临时启动器。本轮不新增 Step 或改变路线状态。
+
+- 提供 `up/down/restart/status/logs/check/init`；普通启动先构建 Java，`-NoBuild` 使用已有 JAR。
+  优先选择项目内满足要求的 Node，缺少 Web 依赖时用对应 npm 安装，不替换系统运行时。
+- 启动前检查端口冲突，记录 PID、创建时间及可执行文件身份；仅停止身份仍匹配的项目进程树，
+  不停止其他占端口程序或服务器中间件。过期 PID 不执行终止；停止失败保留记录。
+- 启停命令互斥，部分启动失败清理本轮进程。`down/status/logs` 不依赖私有配置和远程连通。
+- 三个 HTTP 后端健康检查、Worker 启动日志和 Web 首页分别作为就绪门槛；不据此宣称推荐
+  非空、Agent 无降级或历史媒体问题已解决。命令及故障语义见
+  [Windows 启动说明](../../deploy/remote/README.md#windows-一键启动与停止)。
+
+验证命令：`python -m unittest discover -s deploy/remote -p 'test_*.py' -v`，11 项中
+10 项通过、1 项 POSIX Shell 用例按平台跳过。包括原生子进程创建/停止、PID 复用保护、
+停止失败记录保留，以及缺配置时的停止路径。真实 `up` 构建成功并启动全部五个进程，
+就绪检查全部通过；用户随后执行关闭，复查 `status` 全为 `STOPPED`，四个监听端口均释放，
+进程记录为 `{}`。本轮保持用户关闭后的状态，没有再次启动；`restart` 尚无独立真实验收。
+
+## 2026-10-25：提交前评审
+
+复核当前启动、打包与校验修改：V1–V16 与 `main` 的原路径
+`platform/persistence/src/main/resources/db/migration` 逐文件字节相同。
+修复 Windows 子进程已创建、但身份读取失败时未进入清理记录的泄漏；通过原始
+`Popen` 句柄停止未登记进程，已登记进程继续使用身份校验和失败记录保留。
+
+验证：`mvn -B -ntp -pl apps/agent-server -am test` 通过；
+`python -X utf8 -m unittest discover -s deploy/remote -p 'test_*.py' -v`
+覆盖原生进程停止及身份读取失败清理。Windows 原生停止测试需在允许终止自身测试
+子进程的环境运行。此前真实服务联调证据仍为 2026-10-20，本轮没有重新启动远程服务。
+
 ## 当时的下一步与当前路线
 
 Step 0 完成后，当时的下一步是 Step 1“内容登记与画像发布”，该切片现在已经完成。项目随后也已完成 Step 2 关键词搜索、Step 3 Feed 基线、Step 4 Agent-ready Direct Search 和 Step 5 Agent Runtime MVP。

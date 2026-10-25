@@ -30,7 +30,7 @@ import org.springframework.web.server.ResponseStatusException;
 @Validated
 @RestController
 @RequestMapping("/v1/agent/sessions")
-public final class AgentCapabilityController {
+public class AgentCapabilityController {
 
     private final AgentSessionStore sessions;
     private final Map<String, AgentDefinition> definitions;
