@@ -20,9 +20,13 @@ SERVICES = {"POSTGRES": 5432, "REDIS": 6379, "KAFKA": 9092,
 INFRA = ["postgres", "redis", "kafka", "elasticsearch", "minio"]
 
 
+def on_windows():
+    return os.name == "nt"
+
+
 def read_env(path):
     result = {}
-    for number, raw in enumerate(path.read_text().splitlines(), 1):
+    for number, raw in enumerate(path.read_text(encoding="utf-8-sig").splitlines(), 1):
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
@@ -44,7 +48,8 @@ def read_env(path):
 def write_env(path, values):
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + ".tmp")
-    with open(temporary, "w", opener=lambda name, flags: os.open(name, flags, 0o600)) as handle:
+    with open(temporary, "w", encoding="utf-8", newline="\n",
+              opener=lambda name, flags: os.open(name, flags, 0o600)) as handle:
         os.chmod(temporary, 0o600)
         for key, value in values.items():
             if "\n" in value or "\r" in value:
@@ -214,7 +219,10 @@ def check(host, ports):
         raise ValueError("中间件检查未通过：" + ", ".join(failures))
 
 
-def applications(action, values):
+def applications(action, values, no_build=False):
+    if on_windows():
+        from windows_apps import manage
+        return manage(action, values, ROOT, no_build=no_build)
     if action == "up":
         for key in ("POSTGRES_PASSWORD", "MINIO_ROOT_PASSWORD"):
             if not values.get(key):
@@ -242,7 +250,8 @@ docker compose --env-file .env -f deploy/compose/compose.yml up -d kafka-init mi
 
 def main():
     parser = argparse.ArgumentParser(description="本地业务代码直连服务器中间件；无需 SSH 隧道或本地 Docker")
-    parser.add_argument("action", choices=("init", "up", "down", "check", "infra-up"))
+    parser.add_argument("action", choices=("init", "up", "down", "restart", "status", "logs", "check", "infra-up"))
+    parser.add_argument("--no-build", action="store_true", help="Windows: 使用已有 JAR，跳过构建")
     parser.add_argument("--from-server", action="store_true", help="初始化时通过 SSH 获取现有容器凭据")
     arguments = parser.parse_args()
     if arguments.from_server and arguments.action != "init":
@@ -250,6 +259,11 @@ def main():
     if arguments.action == "init":
         initialize(arguments.from_server)
         return
+    if on_windows() and arguments.action in ("down", "status", "logs"):
+        applications(arguments.action, {}, no_build=arguments.no_build)
+        return
+    if arguments.action in ("restart", "status", "logs") and not on_windows():
+        parser.error("restart/status/logs 当前为 Windows 启动器命令")
     values, host, ports = configuration()
     if arguments.action == "infra-up":
         infra_up(values)
@@ -257,8 +271,8 @@ def main():
         applications("down", values)
     else:
         check(host, ports)
-        if arguments.action == "up":
-            applications("up", values)
+        if arguments.action in ("up", "restart"):
+            applications(arguments.action, values, no_build=arguments.no_build)
 
 
 if __name__ == "__main__":

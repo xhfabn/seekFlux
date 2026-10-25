@@ -45,17 +45,18 @@ class RemoteDevelopmentTest(unittest.TestCase):
     def test_app_up_uses_private_remote_file_without_ssh_or_local_infra(self):
         values, _, _ = remote.configuration(self.root)
         (self.root / ".env").write_text("POSTGRES_PASSWORD=wrong-local-password\n")
-        with patch.object(remote, "ROOT", self.root), patch.object(remote.subprocess, "run") as run:
+        with patch.object(remote, "on_windows", return_value=False), patch.object(remote, "ROOT", self.root), patch.object(remote.subprocess, "run") as run:
             remote.applications("up", values)
         args, kwargs = run.call_args
         self.assertEqual(args[0], [str(self.root / "deploy/local/stack.sh"), "apps-up"])
         runtime = Path(kwargs["env"]["SEEKFLUX_ENV_FILE"])
         self.assertEqual(remote.read_env(runtime)["POSTGRES_PASSWORD"], self.values["POSTGRES_PASSWORD"])
-        self.assertEqual(runtime.stat().st_mode & 0o777, 0o600)
+        if os.name != "nt":
+            self.assertEqual(runtime.stat().st_mode & 0o777, 0o600)
 
     def test_down_stops_only_local_apps(self):
         values, _, _ = remote.configuration(self.root)
-        with patch.object(remote, "ROOT", self.root), patch.object(remote.subprocess, "run") as run:
+        with patch.object(remote, "on_windows", return_value=False), patch.object(remote, "ROOT", self.root), patch.object(remote.subprocess, "run") as run:
             remote.applications("down", values)
         self.assertEqual(run.call_args.args[0][-1], "apps-down")
 
@@ -90,6 +91,7 @@ class RemoteDevelopmentTest(unittest.TestCase):
         with patch.object(remote.socket, "create_connection", return_value=Connection()):
             self.assertEqual(remote.kafka_brokers("36.140.162.30", 9092), [(host.decode(), 9092)])
 
+    @unittest.skipIf(os.name == "nt", "POSIX shell wrapper; Windows has a native lifecycle test")
     def test_launch_wrappers_source_the_selected_remote_file(self):
         config = self.root / "selected.env"
         remote.write_env(config, {"POSTGRES_PASSWORD": self.values["POSTGRES_PASSWORD"],

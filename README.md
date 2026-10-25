@@ -93,6 +93,19 @@ docker compose --env-file .env -f deploy/compose/compose.yml up -d
 已有服务器 SSH 权限时，`remote-init --from-server` 可一次性取得当前容器凭据。
 配置、服务器启动和 Kafka 外部地址要求见[远程开发说明](deploy/remote/README.md)。
 
+Windows PowerShell 在项目根目录使用：
+
+```powershell
+.\seekflux.ps1 up       # 构建并启动四个后端和前端，连接远程中间件
+.\seekflux.ps1 status   # 查看本机项目进程
+.\seekflux.ps1 down     # 停止本机项目进程
+.\seekflux.ps1 restart  # 停止、重新构建并启动
+.\seekflux.ps1 logs     # 查看最近日志
+```
+
+使用现有构建快速启动可加 `-NoBuild`。配置来自 `.env.remote`，操作不会停止服务器中间件。
+Windows 原生命令、端口冲突与运行时要求见[Windows 启动说明](deploy/remote/README.md#windows-一键启动与停止)。
+
 默认端口：PostgreSQL `5432`、Redis `6379`、Kafka `9092`、Elasticsearch `9200`、MinIO `9000/9001`、Online `8080`、Content `8081`、Agent `8083`、Web `3001`。
 
 多模态检索默认关闭，避免普通开发启动时下载大型模型。安装 Python/FFmpeg 后在 `.env`
