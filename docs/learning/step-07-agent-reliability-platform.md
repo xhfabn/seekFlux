@@ -356,6 +356,17 @@ git diff --check
 仍待后续实现；当前目标不声明这些能力。学习主路线不变。长期决定见
 [ADR-020](../adr/ADR-020-generic-agent-evaluation.md)，契约见[评测协议](../../contracts/runtime/agent-evaluation-v1.md)。
 
+## 2026-10-25：SearchDirectTool 业务接入示例
+
+新增 [SearchDirectTool 评测示例](../../evals/search-direct-evaluation-example.md)，在 agent
+测试目录使用真实工具和固定 SearchUseCase，提供六条 JSON 用例：默认参数及返回结果、
+显式分页与标签、必填参数拒绝、调用前/后故障、搜索依赖不可用。效果探针记录实际查询
+参数与调用次数，复用通用 SDK 的故障命中检查、评分、报告和 JUnit 适配。
+
+agent 仅增加 test scope 评测依赖，不修改生产工具或通用模块的业务边界。当前按用户
+要求未编译、未运行测试或评测，尚无本例报告与通过证据，不改变阶段状态或已有基线。
+后续验证命令与预期输出路径见示例说明；当前路线仍以[学习入口](README.md)为准。
+
 ## 本阶段可以学到什么
 
 - 租约解决“谁现在可以执行”，fencing 才解决“旧 owner 还能否晚到提交”；

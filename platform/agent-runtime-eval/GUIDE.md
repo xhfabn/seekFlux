@@ -158,6 +158,8 @@ CLI 的 `run suite.json` 当前固定使用内置 `ScriptedFixture`，适合调�
 
 ## 6 给新工具接入默认评测
 
+项目内真实工具的完整接入示例见 [SearchDirectTool 评测示例](../../evals/search-direct-evaluation-example.md)，包括参数传递、工具边界故障和业务异常映射。该示例源码尚未编译或运行。
+
 提供工具工厂、一组合法参数和预期输出即可：
 
 ```java
