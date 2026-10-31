@@ -28,6 +28,10 @@ Every `AgentTool` bean is collected into the Tool registry. The auto-configurati
 standard Context Engine, finite-step Runtime, Loop, Feature Pipeline, Session Executor, Router,
 bounded executors and safe NOOP implementations for optional recorders.
 
+Optional unified observations use `seekflux.agent.runtime.observation.enabled=true` and a
+host `AgentObservationExporter` bean. The default Loop observes model/context calls without
+changing host bean types. See the [capture and export guide](../agent-runtime/OBSERVABILITY.md).
+
 The default Tool registration policy accepts only `READ_ONLY` and `IDEMPOTENT` Tools. Registering a
 `MUTATING` Tool requires an explicit `AgentToolRegistrationPolicy` bean and a durable
 `AgentRecoveryStore` whose side-effect ledger is enabled.

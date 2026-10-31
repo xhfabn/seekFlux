@@ -44,6 +44,8 @@ import io.seekflux.platform.agentruntime.domain.service.execution.AgentCallGuard
 import io.seekflux.platform.agentruntime.domain.service.recovery.AgentRecoveryExecution;
 import io.seekflux.platform.agentruntime.domain.model.capability.CapabilitySnapshot;
 import io.seekflux.platform.agentruntime.domain.service.capability.CapabilityResolver;
+import io.seekflux.platform.agentruntime.domain.service.observation.AgentObservations;
+import io.seekflux.platform.agentruntime.application.spi.capability.observation.AgentObservationEvent.Kind;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -73,6 +75,7 @@ public final class AgentRuntime {
 
     private static final long CANCELLATION_CHECK_INTERVAL_NANOS = TimeUnit.MILLISECONDS.toNanos(10);
 
+    private final AgentObservations observations;
     private final AgentToolRegistry tools;
     private final AgentToolExecutor toolExecutor;
     private final ExecutorService executor;
@@ -127,6 +130,16 @@ public final class AgentRuntime {
             ToolExecutionPolicy toolPolicy,
             ToolExecutionObserver toolObserver,
             CapabilityResolver capabilityResolver) {
+        this(tools, toolExecutor, executor, recorder, clock, callGuard, toolPolicy,
+                toolObserver, capabilityResolver, AgentObservations.NOOP);
+    }
+
+    public AgentRuntime(AgentToolRegistry tools, AgentToolExecutor toolExecutor,
+            ExecutorService executor, AgentRunRecorder recorder, Clock clock,
+            AgentCallGuard callGuard, ToolExecutionPolicy toolPolicy,
+            ToolExecutionObserver toolObserver, CapabilityResolver capabilityResolver,
+            AgentObservations observations) {
+        this.observations = Objects.requireNonNull(observations, "observations must not be null");
         this.tools = Objects.requireNonNull(tools, "tool registry must not be null");
         this.toolExecutor = Objects.requireNonNull(toolExecutor, "tool executor must not be null");
         this.executor = Objects.requireNonNull(executor, "agent executor must not be null");
@@ -138,6 +151,8 @@ public final class AgentRuntime {
         this.capabilityResolver = Objects.requireNonNull(
                 capabilityResolver, "capability resolver must not be null");
     }
+
+    public AgentObservations observations() { return observations; }
 
     public AgentRunResult run(
             AgentDefinition definition,
@@ -183,6 +198,27 @@ public final class AgentRuntime {
             AgentRecoveryExecution recovery,
             PushEventPublisher publisher,
             CapabilitySnapshot initialCapabilities) {
+        Objects.requireNonNull(request, "agent run request must not be null");
+        String observationRunId = UUID.randomUUID().toString();
+        var scope = observations.start(request, observationRunId, AgentObservations.rootId(observationRunId),
+                AgentObservations.currentParent(null), null, Kind.RUN, "agent.run",
+                Map.of("input", request.input()));
+        try {
+            AgentRunResult result = scope.within(() -> runObserved(definition, request, planner,
+                    cancellationToken, recovery, publisher, initialCapabilities, observationRunId, scope));
+            scope.complete(result.trace().terminalState().name(), Map.of(
+                    "output", result, "usage", result.trace().llmUsage(),
+                    "resultRunId", result.trace().agentRunId(),
+                    "fallbackReason", result.fallbackReason() == null ? "" : result.fallbackReason(),
+                    "cancellationReason", result.cancellationReason() == null ? "" : result.cancellationReason()));
+            return result;
+        } catch (RuntimeException | Error error) { scope.fail(error); throw error; }
+    }
+
+    private AgentRunResult runObserved(AgentDefinition definition, AgentRunRequest request,
+            AgentPlanner planner, CancellationToken cancellationToken, AgentRecoveryExecution recovery,
+            PushEventPublisher publisher, CapabilitySnapshot initialCapabilities, String runId,
+            AgentObservations.Scope executionObservation) {
         Objects.requireNonNull(definition, "agent definition must not be null");
         Objects.requireNonNull(request, "agent run request must not be null");
         Objects.requireNonNull(planner, "agent planner must not be null");
@@ -211,7 +247,6 @@ public final class AgentRuntime {
         if (recoveryPlan.action() == ResumeAction.FAIL_UNSAFE_PENDING_TOOL) {
             throw new IllegalStateException("unsafe pending Tool must be rejected before Loop dispatch");
         }
-        String runId = UUID.randomUUID().toString();
         Instant startedAt = clock.instant();
         long startedNanos = System.nanoTime();
         RuntimeCheckpoint restored = recoveryPlan.checkpoint();
@@ -247,7 +282,7 @@ public final class AgentRuntime {
         }
         RunState run = new RunState(
                 runId, request, snapshot, startedAt, startedNanos, deadlineNanos,
-                recovery, restored, publisher);
+                recovery, restored, publisher, executionObservation);
         run.record(AgentRunEvent.Type.RUN_STARTED, Map.of("definition", snapshot));
         run.publish(new PushEvent.SegmentStarted(
                 runId, clock.instant(), request.requestId(), request.turnId()));
@@ -306,6 +341,9 @@ public final class AgentRuntime {
                     completedInvocations);
 
             AgentDecision decision;
+            var planObservation = this.observations.start(request, run.runId,
+                    AgentObservations.planId(run.runId, step), AgentObservations.rootId(run.runId),
+                    null, Kind.PLAN, "planner.decide", Map.of("step", step));
             long decisionStarted = System.nanoTime();
             int currentStep = step;
             EagerToolBatch eager = new EagerToolBatch(
@@ -325,10 +363,14 @@ public final class AgentRuntime {
                         run.messages,
                         run.snapshot.toolDefinitions());
                 decision = invoke(
-                        () -> callGuard.execute(AgentCallGuard.CallType.MODEL, () -> planner.decide(context)),
+                        () -> callGuard.execute(AgentCallGuard.CallType.MODEL, () -> planObservation.within(() -> planner.decide(context))),
                         deadlineNanos,
                         cancellationToken);
+                planObservation.complete(decision == null ? "NULL_RESULT" : "DECIDED",
+                        java.util.Collections.singletonMap("output", decision));
             } catch (CallFailure failure) {
+                planObservation.event("WAIT_ENDED", Map.of("errorCode", failure.code));
+                planObservation.fail(failure);
                 eager.cancelAll();
                 String stepStatus = failure.cancellationCause == null ? "FAILED" : "CANCELLED";
                 run.steps.add(new AgentRunTrace.StepTrace(
@@ -393,7 +435,7 @@ public final class AgentRuntime {
             try {
                 List<PreparedToolCall> preparedCalls = new ArrayList<>();
                 for (int callIndex = 0; callIndex < calls.size(); callIndex++) {
-                    preparedCalls.add(prepare(
+                    preparedCalls.add(prepare(run,
                             calls.get(callIndex), effectiveTools, run.snapshot.toolSchemaVersions(),
                             request, step, callIndex));
                 }
@@ -1190,7 +1232,7 @@ public final class AgentRuntime {
             reconciliation = invoke(
                     () -> callGuard.execute(
                             AgentCallGuard.CallType.TOOL,
-                            () -> reconciler.reconcile(ledger, context)),
+                            () -> reconcileObserved(call, context, reconciler, ledger)),
                     deadlineNanos,
                     cancellationToken);
         } catch (CallFailure failure) {
@@ -1293,11 +1335,7 @@ public final class AgentRuntime {
                             call.arguments(),
                             Duration.ofNanos(remainingNanos(deadlineNanos)),
                             toolToken);
-                    return callGuard.execute(
-                            AgentCallGuard.CallType.TOOL,
-                            () -> toolExecutor.execute(
-                                    call.tool().name(), call.tool().schema().version(),
-                                    call.arguments(), context));
+                    return executeObservedTool(call, context, source.name());
                 });
                 pending.add(new PendingToolCall(call, started, future, null, ledger, source));
             } catch (RejectedExecutionException rejected) {
@@ -1403,6 +1441,39 @@ public final class AgentRuntime {
         return run.recovery.prepareSideEffect(entry);
     }
 
+    private AgentToolInvocation executeObservedTool(PreparedToolCall call, AgentToolContext context,
+            String source) throws Exception {
+        var scope = observations.start(context.request(), context.agentRunId(), UUID.randomUUID().toString(),
+                "RECOVERY".equals(source) ? AgentObservations.rootId(context.agentRunId())
+                        : AgentObservations.planId(context.agentRunId(), call.step()), context.toolCallId(),
+                Kind.TOOL, call.tool().name(), Map.of("input", context.arguments(), "source", source,
+                        "schemaVersion", call.tool().schema().version(), "effect", call.tool().effect()));
+        try {
+            AgentToolInvocation invocation = scope.withinCall(() -> callGuard.execute(
+                    AgentCallGuard.CallType.TOOL, () -> toolExecutor.execute(call.tool().name(),
+                            call.tool().schema().version(), call.arguments(), context)));
+            AgentToolResult result = invocation == null ? null : invocation.result();
+            scope.complete(result == null ? "NULL_RESULT" : result.waiting() ? "WAITING"
+                    : result.success() ? "SUCCEEDED" : "FAILED", Map.of(
+                            "output", invocation == null ? "[null]" : invocation,
+                            "errorCode", result == null || result.errorCode() == null ? "" : result.errorCode()));
+            return invocation;
+        } catch (Exception | Error error) { scope.fail(error); throw error; }
+    }
+
+    private SideEffectReconciliation reconcileObserved(PreparedToolCall call, AgentToolContext context,
+            AgentToolReconciler reconciler, SideEffectLedgerEntry ledger) {
+        var scope = observations.start(context.request(), context.agentRunId(), UUID.randomUUID().toString(),
+                AgentObservations.rootId(context.agentRunId()), context.toolCallId(), Kind.RECONCILIATION,
+                call.tool().name(), Map.of("input", context.arguments(), "source", "RECONCILIATION"));
+        try {
+            var result = scope.within(() -> reconciler.reconcile(ledger, context));
+            scope.complete(result == null ? "NULL_RESULT" : result.resolution().name(),
+                    java.util.Collections.singletonMap("output", result));
+            return result;
+        } catch (RuntimeException | Error error) { scope.fail(error); throw error; }
+    }
+
     private void observe(
             PreparedToolCall call,
             String attemptId,
@@ -1431,6 +1502,11 @@ public final class AgentRuntime {
             RunState run,
             AgentRunRequest request,
             List<PendingToolCall> pending) {
+        for (PendingToolCall item : pending) {
+            run.executionObservation.event("TOOL_WAIT_ABANDONED", Map.of(
+                    "toolCallId", item.call().toolCallId(), "toolName", item.call().tool().name(),
+                    "source", item.source(), "executionMayContinue", true));
+        }
         cancelPending(pending);
         List<String> mutating = pending.stream()
                 .filter(item -> item.ledger() != null)
@@ -1440,7 +1516,23 @@ public final class AgentRuntime {
                 request.sessionId(), request.requestId(), mutating);
     }
 
-    private PreparedToolCall prepare(
+    private PreparedToolCall prepare(RunState run, AgentDecision.ToolCall call,
+            Set<String> effectiveTools, Map<String, String> frozenSchemaVersions,
+            AgentRunRequest request, int step, int callIndex) {
+        var scope = observations.start(request, run.runId, UUID.randomUUID().toString(),
+                AgentObservations.planId(run.runId, step), null, Kind.TOOL_PREPARATION,
+                call.toolName(), Map.of("input", call.arguments(), "step", step, "index", callIndex));
+        try {
+            PreparedToolCall prepared = prepareUnobserved(call, effectiveTools, frozenSchemaVersions,
+                    request, step, callIndex);
+            scope.complete(prepared.approvalReason() == null ? "ALLOWED" : "APPROVAL_REQUIRED",
+                    Map.of("output", prepared.arguments(), "toolCallId", prepared.toolCallId(),
+                            "argumentsChanged", prepared.argumentsRepaired()));
+            return prepared;
+        } catch (RuntimeException | Error error) { scope.fail(error); throw error; }
+    }
+
+    private PreparedToolCall prepareUnobserved(
             AgentDecision.ToolCall call,
             Set<String> effectiveTools,
             Map<String, String> frozenSchemaVersions,
@@ -1715,7 +1807,7 @@ public final class AgentRuntime {
             }
             PreparedToolCall call;
             try {
-                call = prepare(
+                call = prepare(run,
                         new AgentDecision.ToolCall(toolName, arguments),
                         effectiveTools,
                         run.snapshot.toolSchemaVersions(),
@@ -1744,11 +1836,7 @@ public final class AgentRuntime {
                             call.arguments(),
                             Duration.ofNanos(remainingNanos(deadlineNanos)),
                             toolToken);
-                    return callGuard.execute(
-                            AgentCallGuard.CallType.TOOL,
-                            () -> toolExecutor.execute(
-                                    call.tool().name(), call.tool().schema().version(),
-                                    call.arguments(), context));
+                    return executeObservedTool(call, context, "EAGER");
                 });
                 pending.put(index, new PendingToolCall(
                         call, started, future, null, null, ToolExecutionObserver.Source.EAGER));
@@ -1792,6 +1880,8 @@ public final class AgentRuntime {
 
         private void cancelAll() {
             List.copyOf(pending.values()).forEach(item -> {
+                run.executionObservation.event("EAGER_CANCEL_REQUESTED", Map.of(
+                        "toolCallId", item.call().toolCallId(), "executionMayContinue", true));
                 if (item.future() != null) {
                     item.future().cancel(true);
                 }
@@ -1866,6 +1956,7 @@ public final class AgentRuntime {
         private final long deadlineNanos;
         private final AgentRecoveryExecution recovery;
         private final PushEventPublisher publisher;
+        private final AgentObservations.Scope executionObservation;
         private final List<AgentRunTrace.StepTrace> steps = new ArrayList<>();
         private final List<AgentMessage> messages = new ArrayList<>();
         private final Map<Integer, AgentAssistantContent> assistantContents = new ConcurrentHashMap<>();
@@ -1886,7 +1977,7 @@ public final class AgentRuntime {
                 long deadlineNanos,
                 AgentRecoveryExecution recovery,
                 RuntimeCheckpoint restored,
-                PushEventPublisher publisher) {
+                PushEventPublisher publisher, AgentObservations.Scope executionObservation) {
             this.runId = runId;
             this.request = request;
             this.snapshot = snapshot;
@@ -1895,6 +1986,7 @@ public final class AgentRuntime {
             this.deadlineNanos = deadlineNanos;
             this.recovery = recovery;
             this.publisher = publisher;
+            this.executionObservation = executionObservation;
             if (restored != null) {
                 this.steps.addAll(restored.steps());
                 this.messages.addAll(restored.messages());
@@ -1907,6 +1999,14 @@ public final class AgentRuntime {
         }
 
         private void record(AgentRunEvent.Type type, Map<String, Object> payload) {
+            Map<String, Object> observationData = new HashMap<>();
+            observationData.put("input", payload);
+            for (String key : List.of("step", "status", "errorCode", "toolCallId", "toolName",
+                    "schemaVersion", "argumentsRepaired", "tookMillis", "linkedTraceId", "state",
+                    "executionMode", "fallbackReason", "cancellationReason", "waitId", "waitType")) {
+                if (payload.containsKey(key)) observationData.put(key, payload.get(key));
+            }
+            executionObservation.event(type.name(), observationData);
             recorder.record(new AgentRunEvent(
                     UUID.randomUUID(),
                     runId,
@@ -1920,6 +2020,11 @@ public final class AgentRuntime {
         }
 
         private void publish(PushEvent event) {
+            // Streaming deltas are summarized by the model observer, never copied token-by-token.
+            if (!(event instanceof PushEvent.ContentDelta) && !(event instanceof PushEvent.ReasoningDelta)
+                    && !(event instanceof PushEvent.ToolCallDelta)) {
+                executionObservation.event(event.getClass().getSimpleName(), Map.of("input", event));
+            }
             try {
                 publisher.publish(event);
             } catch (RuntimeException ignored) {

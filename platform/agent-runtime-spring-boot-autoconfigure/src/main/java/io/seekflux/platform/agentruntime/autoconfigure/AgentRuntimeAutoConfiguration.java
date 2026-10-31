@@ -32,6 +32,8 @@ import io.seekflux.platform.agentruntime.domain.service.router.DefaultRouter;
 import io.seekflux.platform.agentruntime.domain.service.runtime.AgentRuntime;
 import io.seekflux.platform.agentruntime.domain.service.tool.AgentToolRegistry;
 import io.seekflux.platform.agentruntime.infrastructure.tool.DefaultAgentToolExecutor;
+import io.seekflux.platform.agentruntime.domain.service.observation.AgentObservations;
+import org.springframework.context.annotation.Import;
 import java.time.Clock;
 import java.util.Comparator;
 import java.util.List;
@@ -53,6 +55,7 @@ import org.springframework.boot.context.properties.EnableConfigurationProperties
 import org.springframework.context.annotation.Bean;
 
 @AutoConfiguration
+@Import(AgentObservationConfiguration.class)
 @ConditionalOnClass(AgentRuntime.class)
 @ConditionalOnProperty(
         prefix = "seekflux.agent.runtime",
@@ -226,7 +229,8 @@ public class AgentRuntimeAutoConfiguration {
             AgentCallGuard callGuard,
             ToolExecutionPolicy toolPolicy,
             ToolExecutionObserver toolObserver,
-            CapabilityResolver capabilityResolver) {
+            CapabilityResolver capabilityResolver,
+            AgentObservations observations) {
         return new AgentRuntime(
                 tools,
                 toolExecutor,
@@ -236,7 +240,8 @@ public class AgentRuntimeAutoConfiguration {
                 callGuard,
                 toolPolicy,
                 toolObserver,
-                capabilityResolver);
+                capabilityResolver,
+                observations);
     }
 
     @Bean

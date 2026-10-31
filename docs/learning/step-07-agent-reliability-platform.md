@@ -367,6 +367,25 @@ agent 仅增加 test scope 评测依赖，不修改生产工具或通用模块�
 要求未编译、未运行测试或评测，尚无本例报告与通过证据，不改变阶段状态或已有基线。
 后续验证命令与预期输出路径见示例说明；当前路线仍以[学习入口](README.md)为准。
 
+## 2026-10-30：统一执行观测与自定义导出
+
+Core 新增标准事件、Observer/Processor/Exporter SPI，Runtime 自动采集运行、规划、工具准备、
+普通/EAGER/RECOVERY 工具调用与对账，默认 Loop 自动观察上下文和模型。流式记录用量与块数，
+Shadow 候选单独标记。旧构造器和持久化/推送接口保留，当前 agent-server 自建 Runtime 已注入观测依赖。
+
+默认关闭上报与正文采集；内存快照经字段脱敏、深度/节点/字符限制后进入有界队列。批量导出有限重试，
+过载与失败计数，关闭限时等待。上报不是恢复事实存储；取消等待不等于底层工作结束，允许晚到事件。
+使用者实现 Exporter 决定格式/目标，可用 Processor 在入队前筛选和脱敏。
+
+关键入口和配置见 [观测指南](../../platform/agent-runtime/OBSERVABILITY.md)，长期取舍见
+[ADR-021](../adr/ADR-021-agent-observation-export.md)，API 语义见
+[Observation v1](../../contracts/runtime/agent-observation-v1.md)。
+
+验证：`mvn -o -pl apps/agent-server -am compile` 生产源码编译通过；文档本地链接、UTF-8 和
+`git diff --check` 纳入交付检查。按用户要求未运行测试或评测，也未启动服务做真实上报验收。
+[剩余验收清单](../../evals/agent-observation-acceptance.md) 尚未执行，不新增通过基线，不改变主路线阶段。
+当前路线以[学习入口](README.md)为准。
+
 ## 本阶段可以学到什么
 
 - 租约解决“谁现在可以执行”，fencing 才解决“旧 owner 还能否晚到提交”；

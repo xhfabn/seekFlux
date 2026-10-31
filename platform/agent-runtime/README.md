@@ -19,6 +19,11 @@ checkpoint, durable-wait and side-effect protocols. It deliberately contains no 
 model-provider, Micrometer or Spring implementation. Hosts provide their own implementations
 through the Runtime SPI.
 
+Current development source adds opt-in execution observations with bounded asynchronous export.
+Hosts select payload capture, redaction and output format through neutral SPI interfaces; Tools
+need no reporting code. See the [observation guide](OBSERVABILITY.md). Production compilation
+has passed; runtime acceptance has not been executed for this addition.
+
 Current development source supports incremental durable message facts and reference-based
 recovery. The repository's PostgreSQL adapter commits Assistant/DECIDED and ToolResult/terminal
 journal pairs atomically, stores compact Checkpoint references, and restores Session state from

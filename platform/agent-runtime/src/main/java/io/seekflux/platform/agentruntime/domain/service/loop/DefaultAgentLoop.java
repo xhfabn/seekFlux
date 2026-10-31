@@ -13,6 +13,7 @@ import io.seekflux.platform.agentruntime.domain.model.context.ContextEvent;
 import io.seekflux.platform.agentruntime.domain.model.feature.RuntimeContext;
 import io.seekflux.platform.agentruntime.domain.model.session.AgentSession;
 import io.seekflux.platform.agentruntime.domain.service.recovery.AgentRecoveryExecution;
+import io.seekflux.platform.agentruntime.domain.service.observation.*;
 import java.time.Clock;
 
 public final class DefaultAgentLoop implements AgentLoop {
@@ -32,7 +33,9 @@ public final class DefaultAgentLoop implements AgentLoop {
             Clock clock,
             ContextEventRecorder contextEvents) {
         this.finiteStepRuntime = finiteStepRuntime;
-        this.contextEngine = contextEngine;
+        this.contextEngine = finiteStepRuntime.observations() == AgentObservations.NOOP
+                || contextEngine instanceof ObservingContextEngine ? contextEngine
+                : new ObservingContextEngine(contextEngine, finiteStepRuntime.observations());
         this.clock = clock;
         this.contextEvents = contextEvents == null ? ContextEventRecorder.NOOP : contextEvents;
     }
@@ -121,6 +124,10 @@ public final class DefaultAgentLoop implements AgentLoop {
             io.seekflux.platform.agentruntime.application.spi.business.planner.model.AgentDecisionContext decision,
             CancellationToken cancellationToken,
             PushEventPublisher publisher) {
+        var client = runtimeContext.llmClient();
+        if (finiteStepRuntime.observations() != AgentObservations.NOOP && !(client instanceof ObservingLlmClient)) {
+            client = new ObservingLlmClient(client, finiteStepRuntime.observations());
+        }
         var assembled = contextEngine.assemble(session, runtimeContext, decision);
         int attempt = 0;
         while (true) {
@@ -129,7 +136,7 @@ public final class DefaultAgentLoop implements AgentLoop {
                 publisher.publish(new PushEvent.LlmTurnStarted(
                         decision.agentRunId(), clock.instant(), decision.step(),
                         runtimeContext.llmClient().version()));
-                var result = runtimeContext.llmClient().streamWithUsage(
+                var result = client.streamWithUsage(
                         assembled,
                         cancellationToken,
                         chunk -> publishChunk(publisher, decision, chunk));

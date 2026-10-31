@@ -10,6 +10,8 @@ import io.seekflux.platform.agentruntime.application.spi.capability.shadow.model
 import io.seekflux.platform.agentruntime.application.spi.capability.llm.model.AssembledContext;
 import io.seekflux.platform.agentruntime.application.spi.capability.llm.model.ChatChunk;
 import java.time.Clock;
+import io.seekflux.platform.agentruntime.domain.service.observation.AgentObservations;
+import io.seekflux.platform.agentruntime.domain.service.observation.ObservingLlmClient;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.RejectedExecutionException;
@@ -85,7 +87,8 @@ public final class ShadowingLlmClient implements LlmClient {
         if (control.shouldSample(requestId)) {
             try {
                 CancellationToken shadowToken = cancellationToken.child();
-                executor.submit(() -> evaluate(context, primaryResult.decision(), shadowToken));
+                AgentObservations observations = AgentObservations.current();
+                executor.submit(() -> evaluate(context, primaryResult.decision(), shadowToken, observations));
             } catch (RejectedExecutionException ignored) {
                 // Shadow saturation must never affect the primary result.
             }
@@ -95,13 +98,16 @@ public final class ShadowingLlmClient implements LlmClient {
     private void evaluate(
             AssembledContext context,
             AgentDecision primaryDecision,
-            CancellationToken cancellationToken) {
+            CancellationToken cancellationToken,
+            AgentObservations observations) {
         long started = System.nanoTime();
         String shadowDecision = null;
         String errorCode = null;
         boolean agreed = false;
         try {
-            AgentDecision candidate = shadow.chatWithUsage(context, cancellationToken).decision();
+            LlmClient observedShadow = observations == AgentObservations.NOOP || shadow instanceof ObservingLlmClient
+                    ? shadow : new ObservingLlmClient(shadow, observations, "llm.shadow");
+            AgentDecision candidate = observedShadow.chatWithUsage(context, cancellationToken).decision();
             shadowDecision = decisionType(candidate);
             agreed = decisionFingerprint(primaryDecision).equals(decisionFingerprint(candidate));
         } catch (RuntimeException failure) {

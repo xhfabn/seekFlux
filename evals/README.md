@@ -2,6 +2,8 @@
 
 `evals/` 保存可版本化、可复现的效果证据，不保存只依赖人工观感的截图。
 
+统一观测的新增能力与未执行场景见 [Agent 观测验收清单](agent-observation-acceptance.md)。当前只有生产源码编译证据，不更新现有评测基线。
+
 外部项目参考：
 
 - [OpenViking 评测流程讲解](references/openviking-evaluation-analysis.md)：以记忆整理 A/B 和完整记忆问答为主线，解释案例设计、执行、验证与问题定位。
