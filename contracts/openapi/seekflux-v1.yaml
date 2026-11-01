@@ -462,6 +462,65 @@ paths:
                 $ref: "#/components/schemas/ContentResponse"
         "404":
           $ref: "#/components/responses/NotFound"
+  /v1/contents/{contentId}/comments:
+    get:
+      operationId: listContentComments
+      summary: List SeekFlux comments on a published note, newest first
+      tags: [Content]
+      parameters:
+        - $ref: "#/components/parameters/ContentId"
+        - in: query
+          name: before
+          schema: {type: string, format: uuid}
+          description: The nextBefore comment ID from the preceding page.
+        - in: query
+          name: limit
+          schema: {type: integer, minimum: 1, maximum: 50, default: 20}
+      responses:
+        "200":
+          description: Comment page
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, nextBefore]
+                properties:
+                  items:
+                    type: array
+                    items: {$ref: "#/components/schemas/ContentComment"}
+                  nextBefore: {type: string, format: uuid, nullable: true}
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    post:
+      operationId: createContentComment
+      summary: Publish a SeekFlux comment
+      description: User ID is a client-supplied display identity, not authenticated. Reuse the same commentId and payload to retry safely.
+      tags: [Content]
+      parameters:
+        - $ref: "#/components/parameters/ContentId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [commentId, userId, body]
+              properties:
+                commentId: {type: string, format: uuid}
+                userId: {type: string, minLength: 1, maxLength: 128}
+                body: {type: string, minLength: 1, maxLength: 1000}
+      responses:
+        "201":
+          description: Created or idempotently replayed comment
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ContentComment"}
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
   /v1/contents/{contentId}/profile:
     put:
       operationId: completeContentProfile
@@ -586,6 +645,15 @@ components:
       description: Optional request-scoped override. When omitted, the persisted user profile is used.
       schema: {type: string, maxLength: 1300}
   schemas:
+    ContentComment:
+      type: object
+      required: [commentId, contentId, userId, body, createdAt]
+      properties:
+        commentId: {type: string, format: uuid}
+        contentId: {type: string, format: uuid}
+        userId: {type: string, maxLength: 128}
+        body: {type: string, maxLength: 1000}
+        createdAt: {type: string, format: date-time}
     InteractionBatchRequest:
       type: object
       required: [events]

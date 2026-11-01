@@ -9,6 +9,9 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingRequestHeaderException;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import jakarta.validation.ConstraintViolationException;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 @RestControllerAdvice
@@ -26,6 +29,9 @@ public final class ContentExceptionHandler {
 
     @ExceptionHandler({
             IllegalArgumentException.class,
+            ConstraintViolationException.class,
+            MissingRequestHeaderException.class,
+            MethodArgumentTypeMismatchException.class,
             MethodArgumentNotValidException.class,
             HttpMessageNotReadableException.class
     })

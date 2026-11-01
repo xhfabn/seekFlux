@@ -86,7 +86,9 @@ public final class RuleRankingService implements RankingUseCase {
             }
             ScoredCandidate selected = candidates.remove(selectedIndex);
             RankingCandidate item = selected.candidate();
-            creatorCounts.merge(item.creatorId(), 1, Integer::sum);
+            if (!hasSourceOnlyCreator(item)) {
+                creatorCounts.merge(item.creatorId(), 1, Integer::sum);
+            }
             previousPrimaryTag = primaryTag(item);
             result.add(new RankedCandidate(
                     item.contentId(), item.creatorId(), item.contentType(), item.mediaUri(), item.assetUris(),
@@ -105,7 +107,8 @@ public final class RuleRankingService implements RankingUseCase {
             boolean avoidAdjacentTag) {
         for (int index = 0; index < candidates.size(); index++) {
             RankingCandidate candidate = candidates.get(index).candidate();
-            if (creatorCounts.getOrDefault(candidate.creatorId(), 0) >= MAX_PER_CREATOR) {
+            if (!hasSourceOnlyCreator(candidate)
+                    && creatorCounts.getOrDefault(candidate.creatorId(), 0) >= MAX_PER_CREATOR) {
                 continue;
             }
             if (avoidAdjacentTag && previousPrimaryTag != null
@@ -115,6 +118,15 @@ public final class RuleRankingService implements RankingUseCase {
             return index;
         }
         return -1;
+    }
+
+    private static boolean hasSourceOnlyCreator(RankingCandidate candidate) {
+        String provider = candidate.sourceProvider().trim().toLowerCase(Locale.ROOT);
+        String creator = candidate.creatorId().trim().toLowerCase(Locale.ROOT);
+        // These are import defaults, not known individual authors. Do not change the stored identity.
+        return (provider.equals("qilin") || provider.startsWith("qilin-"))
+                && (creator.equals("qilin-import") || creator.equals("qilin-dataset"))
+                || (!provider.isEmpty() && creator.equals("external-import"));
     }
 
     private static String primaryTag(RankingCandidate candidate) {

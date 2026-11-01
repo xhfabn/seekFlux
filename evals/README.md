@@ -8,6 +8,8 @@ Qilin 前五个图片包导入后的少量搜索检查及长标题关键词超�
 
 关键词查询调整的少量真实数据前后对照见 [Qilin 关键词查询观察](results/qilin-keyword-query-2026-11-01.md)；覆盖与局限见文内说明，不替代固定评测。
 
+数据集来源占位身份与作者多样性规则的真实候选抽样检查见 [Qilin 推荐观察](results/qilin-recommendation-diversity-2026-11-01.md)，不代表正式线上验收或推荐质量基线。
+
 外部项目参考：
 
 - [OpenViking 评测流程讲解](references/openviking-evaluation-analysis.md)：以记忆整理 A/B 和完整记忆问答为主线，解释案例设计、执行、验证与问题定位。

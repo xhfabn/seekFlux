@@ -118,6 +118,7 @@ python3 evals/run_direct_search_eval.py --require-hybrid --min-recall 1.0
 - `mvn -o -pl core -am '-Dtest=ElasticsearchSearchAdapterTest,SearchApplicationServiceTest' '-Dsurefire.failIfNoSpecifiedTests=false' test` 通过 8 项测试；前端使用 Node 22 构建并通过渲染测试、ESLint，以及真实后端下的桌面/移动端、图片切换和 AI 请求检查。前端已部署；检索改动在隔离服务验证通过，服务器 Redis 新连接要求认证而现有服务配置未提供密码，因此尚未重启正式后端部署检索改动。
 - 同日修复笔记详情弹窗被卡片裁剪及悬停动画影响的问题：详情通过 React Portal 挂载到 `document.body`，避免卡片的 `overflow` 和 `transform` 限制固定定位。Node 22 构建、ESLint 与 3 项渲染测试通过；线上使用真实鼠标验证弹窗定位、移动指针和图片切换，并检查移动端弹窗可见、可点击。前端修复已部署。
 - 同日调整笔记详情图片和滚动：限制媒体容器高度并用 `object-fit: contain` 保持图片比例；打开时锁定背景滚动，桌面滚轮作用于详情正文，移动端滚动整个详情，关闭或卸载时恢复页面滚动。线上浏览器检查桌面和移动端图片容器、长正文滚动与背景位置，图片切换和 AI 搜索仍可用；Node 22 构建、ESLint 和 3 项渲染测试通过。评论区明确提示未提供评论正文：Qilin 笔记数据含评论数等统计，但当前导入和内容接口没有评论正文或评论列表，不能展示或发表真实评论。
+- 随后参考 `Rednote-Qilin-Search-Rec-System/src/frontend` 的浅色导航、蓝色强调和卡片布局，发现、用户画像与内容工作台共用顶部导航；画像和内容工作台改用浅色表单、步骤和状态卡片，保留原有业务入口。宽屏发现页支持五列，窄屏布局保持自适应。本地 Node 22 构建、ESLint 和 3 项渲染测试通过；本机连接现有后端，以浏览器检查桌面和移动端三页面切换、搜索、AI 请求及笔记详情。本次样式调整尚未部署服务器，未进行写入型操作验收。
 
 ## 当前边界
 

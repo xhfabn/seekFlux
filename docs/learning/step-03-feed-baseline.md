@@ -64,6 +64,14 @@ score(content) = Σ source_weight / (60 + rank_in_source)
 
 API 返回 `score`、`sources` 和 `reason`，因此可以解释一条内容为什么进入 Feed，而不需要猜测隐藏模型。
 
+### 2026-11-01：数据集来源占位身份与分页
+
+Qilin 导入中 `qilin-dataset` / `qilin-import` 代表数据集或导入流程，不代表真实作者；通用 Manifest 的 `external-import` 也是默认占位身份。排序只在来源字段符合这些已知约定时，对占位身份跳过作者限额；真实作者仍最多保留两条，按内容 ID 去重和有替代候选时避免相同主标签相邻的规则继续生效。原始创建者与来源字段保持不变，前端将这些身份标为来源；没有作者信息时不能推断真实作者多样性。
+
+前端普通搜索和推荐首次请求根据当前卡片列数确定每页数量，搜索后续页复用首次响应的页大小、推荐游标加载复用首次请求的页大小。视口中途变化时不会改变该次分页大小；真实结果不足或最后一页不满时保留实际数量。
+
+`mvn -o -pl core -am '-Dtest=RuleRankingServiceTest,RecommendationApplicationServiceTest' '-Dsurefire.failIfNoSpecifiedTests=false' test` 通过 11 项测试；浏览器验证五列 20 条、改为三列后翻页保持 20 条、新搜索采用 21 条。真实索引候选的本地排序观察及其局限见 [Qilin 推荐观察](../../evals/results/qilin-recommendation-diversity-2026-11-01.md)。本地实现尚未部署正式后端；正式服务器 Redis 新连接认证未配置，不能将离线排序观察视作完整线上 Feed 验收。
+
 ## 5. Cursor 和故障语义
 
 Cursor 包含版本、下一页偏移、过期时间和请求指纹，并使用 HMAC-SHA256 签名。指纹绑定场景、用户、兴趣和种子内容，所以不能把 A 用户或 A 兴趣下的 Cursor 用到另一请求；默认 15 分钟过期。当前候选规模固定为 200，适合基线实验；后续规模化时应下推为各 Retriever 的 `search_after` 边界。
