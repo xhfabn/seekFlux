@@ -1110,7 +1110,7 @@ components:
         assetUris:
           type: array
           minItems: 1
-          maxItems: 20
+          maxItems: 30
           items: {type: string}
         title: {type: string}
         description: {type: string}
@@ -1233,7 +1233,7 @@ components:
         assetUris:
           type: array
           minItems: 1
-          maxItems: 20
+          maxItems: 30
           items: {type: string}
         title: {type: string}
         description: {type: string}
@@ -1331,7 +1331,7 @@ components:
           examples: ["s3://seekflux-media/video-1.mp4"]
         assetUris:
           type: array
-          maxItems: 20
+          maxItems: 30
           items: {type: string, maxLength: 2048}
         title:
           type: string
@@ -1410,7 +1410,7 @@ components:
         assetUris:
           type: array
           minItems: 1
-          maxItems: 20
+          maxItems: 30
           items: {type: string}
         title: {type: string}
         description: {type: string}

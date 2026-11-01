@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 type Workspace = "discover" | "audience" | "studio";
 type DiscoverMode = "feed" | "search" | "agent";
@@ -312,6 +313,7 @@ export function SeekFluxApp() {
   const [query, setQuery] = useState("杭州 周末 露营");
   const [searchPage, setSearchPage] = useState(0);
   const [searchData, setSearchData] = useState<SearchResponse | null>(null);
+  const searchRequestRef = useRef(0);
   const [feedSeed, setFeedSeed] = useState("");
   const [feedData, setFeedData] = useState<FeedResponse | null>(null);
   const [feedItems, setFeedItems] = useState<ContentItem[]>([]);
@@ -361,8 +363,21 @@ export function SeekFluxApp() {
   }, []);
 
   useEffect(() => {
-    if (profileHydrated) void runFeed(null, false, savedUserId, feedSeed, false);
-    // Initial feed hydration intentionally runs once after browser profile restoration.
+    if (!profileHydrated) return;
+    let active = true;
+    queueMicrotask(() => {
+      if (!active) return;
+      if (window.localStorage.getItem("seekflux.viewer-profile")) {
+        void runFeed(null, false, savedUserId, feedSeed, false);
+      } else {
+        // New visitors see a real, explicitly labelled search rather than an empty feed.
+        setQuery("生活");
+        setDiscoverMode("search");
+        void runSearch(0, "生活", false);
+      }
+    });
+    return () => { active = false; };
+    // Initial discovery intentionally runs once after browser profile restoration.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profileHydrated]);
 
@@ -528,9 +543,10 @@ export function SeekFluxApp() {
     showToast("行为已保存到反馈队列");
   }, [showToast]);
 
-  async function runSearch(targetPage = 0, targetQuery = query) {
+  async function runSearch(targetPage = 0, targetQuery = query, activate = true) {
     const cleanQuery = targetQuery.trim();
     if (!cleanQuery) return showToast("请输入搜索词", true);
+    const requestNumber = ++searchRequestRef.current;
     setBusy("search");
     setDiscoverError("");
     try {
@@ -538,10 +554,11 @@ export function SeekFluxApp() {
       const data = await api<SearchResponse>(`/api/bridge/online/v1/search?${params}`, {
         headers: { "X-User-Id": savedUserId || "anonymous" },
       });
-      setQuery(cleanQuery);
+      if (requestNumber !== searchRequestRef.current) return;
+      if (activate) setQuery(cleanQuery);
       setSearchPage(targetPage);
       setSearchData(data);
-      setDiscoverMode("search");
+      if (activate) setDiscoverMode("search");
       setHealth((current) => ({ ...current, online: "online" }));
       appendExposureEvents(data.hits, {
         requestId: data.trace.requestId,
@@ -550,11 +567,14 @@ export function SeekFluxApp() {
       });
       if (!data.hits.length) showToast("没有匹配结果");
     } catch (error) {
+      if (requestNumber !== searchRequestRef.current) return;
       const message = error instanceof Error ? error.message : "搜索失败";
       setDiscoverError(message);
       setHealth((current) => ({ ...current, online: "offline" }));
       showToast(message, true);
-    } finally { setBusy(null); }
+    } finally {
+      if (requestNumber === searchRequestRef.current) setBusy((current) => current === "search" ? null : current);
+    }
   }
 
   async function runMultimodalSearch(file: File) {
@@ -636,7 +656,7 @@ export function SeekFluxApp() {
   async function runAgentSearch(targetQuery = agentQuery) {
     const cleanQuery = targetQuery.trim();
     if (!cleanQuery) return showToast("请描述你想找的内容", true);
-    if (busy === "agent-search") return;
+    if (agentAbortRef.current) return;
 
     const sessionId = agentSessionId || `session_${createEventId()}`;
     const turnId = `turn_${createEventId()}`;
@@ -717,7 +737,7 @@ export function SeekFluxApp() {
   }
 
   function startNewAgentSession() {
-    if (busy === "agent-search") return;
+    if (agentAbortRef.current) return;
     setAgentSessionId("");
     setAgentGoalVersion(0);
     setAgentTurns([]);
@@ -805,7 +825,7 @@ export function SeekFluxApp() {
     <div className={`app-shell workspace-${workspace}`}>
       {busy && <div className="loading-bar" aria-label="处理中" />}
       {workspace === "discover" ? (
-        <ConsumerSidebar
+        <ConsumerTopbar
           mode={discoverMode}
           setMode={setDiscoverMode}
           runFeed={runFeed}
@@ -832,12 +852,7 @@ export function SeekFluxApp() {
         </aside>
       )}
 
-      {workspace === "discover" ? (
-        <div className="consumer-mobile-header">
-          <button className="consumer-mobile-brand" onClick={() => navigate("discover")}><span className="consumer-brand-mark">S</span><strong>SeekFlux</strong></button>
-          <div><button onClick={() => setDiscoverMode("agent")}>AI 搜索</button><button onClick={() => navigate("audience")}>画像</button><button onClick={() => navigate("studio")}>投稿</button></div>
-        </div>
-      ) : (
+      {workspace !== "discover" && (
         <div className="mobile-header">
           <button className="mobile-brand" onClick={() => navigate("discover")}><span className="brand-mark">S</span><strong>SeekFlux</strong></button>
           <div className="mobile-tabs">
@@ -899,7 +914,7 @@ export function SeekFluxApp() {
   );
 }
 
-function ConsumerSidebar({ mode, setMode, runFeed, navigate, userId, busy }: {
+function ConsumerTopbar({ mode, setMode, runFeed, navigate, userId, busy }: {
   mode: DiscoverMode;
   setMode: (mode: DiscoverMode) => void;
   runFeed: (cursor?: string | null, append?: boolean) => Promise<void>;
@@ -912,22 +927,22 @@ function ConsumerSidebar({ mode, setMode, runFeed, navigate, userId, busy }: {
     window.setTimeout(() => document.getElementById("consumer-search-input")?.focus(), 0);
   }
   return (
-    <aside className="consumer-sidebar">
+    <header className="consumer-topbar">
+      <div className="consumer-topbar-inner">
       <button className="consumer-brand" onClick={() => navigate("discover")} aria-label="SeekFlux 首页">
-        <span className="consumer-brand-mark">S</span><span><strong>SeekFlux</strong><small>发现每一种兴趣</small></span>
+        <span className="consumer-brand-mark">S</span><span><strong>SeekFlux</strong><small>发现值得分享的生活</small></span>
       </button>
-      <nav className="consumer-side-nav" aria-label="发现页导航">
-        <button className={mode === "feed" ? "active" : ""} onClick={() => void runFeed()} disabled={busy === "feed"}><Icon name="play" /><span>推荐</span></button>
+      <nav className="consumer-top-nav" aria-label="发现页导航">
+        <button className={mode === "feed" ? "active" : ""} onClick={() => void runFeed()} disabled={busy === "feed"}><Icon name="play" /><span>发现</span></button>
         <button className={mode === "search" ? "active" : ""} onClick={focusSearch}><Icon name="search" /><span>搜索</span></button>
         <button className={mode === "agent" ? "active" : ""} onClick={() => setMode("agent")}><Icon name="spark" /><span>AI 搜索</span></button>
-        <div className="consumer-nav-divider" />
-        <button onClick={() => navigate("audience")}><Icon name="pulse" /><span>用户画像</span></button>
-        <button onClick={() => navigate("studio")}><Icon name="upload" /><span>内容工作台</span></button>
       </nav>
-      <button className="consumer-account" onClick={() => navigate("audience")}>
-        <span className="avatar">{userId.slice(0, 1).toUpperCase() || "U"}</span><span><strong>{userId || "未登录用户"}</strong><small>查看我的兴趣</small></span>
-      </button>
-    </aside>
+      <div className="consumer-top-actions">
+        <button className="consumer-top-studio" onClick={() => navigate("studio")}><Icon name="upload" /><span>内容工作台</span></button>
+        <button className="consumer-top-profile" onClick={() => navigate("audience")} aria-label="用户画像"><span className="avatar">{userId.slice(0, 1).toUpperCase() || "U"}</span><span>用户画像</span></button>
+      </div>
+      </div>
+    </header>
   );
 }
 
@@ -955,7 +970,7 @@ function DiscoverWorkspace(props: DiscoverProps) {
     return <AgentSearchWorkspace {...props} />;
   }
   const resultMeta = props.mode === "search" && props.searchData
-    ? `${props.searchData.total} 条结果 · ${props.searchData.tookMillis} ms`
+    ? `${props.searchData.total} 条可浏览结果 · ${props.searchData.tookMillis} ms`
     : props.feedData ? `${props.feedData.items.length} 条推荐` : "为你推荐";
   const categories = ["推荐", "露营", "亲子", "咖啡", "旅行", "摄影", "知识", "科技", "生活", "美食"];
 
@@ -971,6 +986,11 @@ function DiscoverWorkspace(props: DiscoverProps) {
 
   return (
     <div className="consumer-home">
+      <div className="discover-intro">
+        <span className="discover-eyebrow">DISCOVER SOMETHING NEW</span>
+        <h1>发现让生活更有意思的内容<span>。</span></h1>
+        <p>从一个关键词开始，或让 AI 帮你把想法慢慢找清楚。</p>
+      </div>
       <header className="consumer-home-header">
         <form className="consumer-home-search" onSubmit={(event) => { event.preventDefault(); void props.runSearch(0); }}>
           <Icon name="search" />
@@ -982,6 +1002,7 @@ function DiscoverWorkspace(props: DiscoverProps) {
           <button disabled={props.busy === "search"}><Icon name="search" /> 搜索</button>
         </form>
         <div className="consumer-header-actions">
+          <button className="discover-ai-entry" type="button" onClick={() => { props.setAgentQuery(props.query); props.setMode("agent"); window.setTimeout(() => document.getElementById("agent-search-input")?.focus(), 0); }}><Icon name="spark" /><span>用 AI 搜索</span></button>
           <button title="刷新推荐" onClick={() => void props.runFeed()} disabled={props.busy === "feed"}><Icon name="refresh" /></button>
           <button className="consumer-profile-button" onClick={props.goProfile}><span className="avatar">{props.userId.slice(0, 1).toUpperCase() || "U"}</span><span>我的</span></button>
         </div>
@@ -989,7 +1010,7 @@ function DiscoverWorkspace(props: DiscoverProps) {
 
       <nav className="consumer-category-tabs" aria-label="内容频道">
         {categories.map((category) => {
-          const active = category === "推荐" ? props.mode === "feed" : props.mode === "search" && props.query === category;
+          const active = category === "推荐" ? props.mode === "feed" : props.mode === "search" && props.searchData?.query === category;
           return <button key={category} className={active ? "active" : ""} onClick={() => selectCategory(category)}>{category}</button>;
         })}
       </nav>
@@ -999,7 +1020,7 @@ function DiscoverWorkspace(props: DiscoverProps) {
       {props.searchData?.trace.degraded && props.mode === "search" && <div className="consumer-service-note"><Icon name="info" /><span>部分搜索通道暂时不可用，已展示可用结果。</span></div>}
 
       <div className="consumer-result-heading">
-        <strong>{props.mode === "search" ? `“${props.query}”` : "精选推荐"}</strong>
+        <strong>{props.mode === "search" ? `“${props.searchData?.query || props.query}”` : "精选推荐"}</strong>
         <span>{resultMeta}</span>
       </div>
 
@@ -1012,17 +1033,18 @@ function DiscoverWorkspace(props: DiscoverProps) {
         <div className="consumer-empty">
           <Icon name="search" />
           <strong>{props.mode === "feed" ? "当前画像暂无匹配内容" : "没有找到相关内容"}</strong>
-          <p>{props.mode === "feed" ? "调整用户画像，或先在内容工作台发布带有对应标签的内容。" : "换一个关键词再试试。"}</p>
+          <p>{props.mode === "feed" ? "调整兴趣，或搜索你感兴趣的话题。" : "换一个关键词再试试，也可以用 AI 描述更具体的需求。"}</p>
           {props.mode === "feed" && <button onClick={props.goProfile}>调整用户画像 <Icon name="arrow" /></button>}
+          {props.mode === "search" && <button onClick={() => { props.setAgentQuery(props.query); props.setMode("agent"); }}>试试 AI 搜索 <Icon name="spark" /></button>}
         </div>
       )}
 
       <div className="consumer-pagination">
         {props.mode === "search" && props.searchData && props.searchData.total > props.searchData.size && (
           <>
-            <button disabled={props.searchPage === 0 || props.busy === "search"} onClick={() => void props.runSearch(props.searchPage - 1)}><Icon name="left" /> 上一页</button>
+            <button disabled={props.searchPage === 0 || props.busy === "search"} onClick={() => void props.runSearch(props.searchPage - 1, props.searchData?.query)}><Icon name="left" /> 上一页</button>
             <span>第 {props.searchPage + 1} 页</span>
-            <button disabled={(props.searchPage + 1) * props.searchData.size >= props.searchData.total || props.busy === "search"} onClick={() => void props.runSearch(props.searchPage + 1)}>下一页 <Icon name="arrow" /></button>
+            <button disabled={(props.searchPage + 1) * props.searchData.size >= props.searchData.total || props.busy === "search"} onClick={() => void props.runSearch(props.searchPage + 1, props.searchData?.query)}>下一页 <Icon name="arrow" /></button>
           </>
         )}
         {props.mode === "feed" && props.feedData?.nextCursor && <button onClick={() => void props.runFeed(props.feedData?.nextCursor, true)} disabled={props.busy === "feed"}>加载更多 <Icon name="down" /></button>}
@@ -1037,7 +1059,7 @@ function AgentSearchWorkspace(props: DiscoverProps) {
     "只看咖啡和摄影相关的内容",
     "我想看科技类视频，最好和 AI 有关",
   ];
-  const running = props.busy === "agent-search";
+  const running = props.agentTurns.some((turn) => turn.status === "loading");
 
   function submit(event: FormEvent) {
     event.preventDefault();
@@ -1063,7 +1085,7 @@ function AgentSearchWorkspace(props: DiscoverProps) {
           <div className="agent-welcome">
             <span className="agent-welcome-mark"><Icon name="spark" /></span>
             <h1>想找什么内容？</h1>
-            <p>描述主题和条件，我会调用真实搜索能力筛选已发布内容。</p>
+            <p>说说你的想法，继续补充条件，一起找到合适的内容。</p>
             <div className="agent-example-list">
               {examples.map((example) => <button key={example} onClick={() => void props.runAgentSearch(example)}>{example}<Icon name="arrow" /></button>)}
             </div>
@@ -1152,12 +1174,31 @@ function ConsumerContentCard({ item, index, attribution, addInteraction, runSimi
 }) {
   const [mediaError, setMediaError] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
+  const [assetIndex, setAssetIndex] = useState(0);
+  const detailCopyRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!detailOpen) return;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setDetailOpen(false);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.body.style.overflow = previousOverflow;
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [detailOpen]);
   const isArticle = item.contentType === "ARTICLE";
   const canRender = Boolean(item.mediaUri) && !mediaError;
   const assets = item.assetUris?.length ? item.assetUris : [item.mediaUri];
-  const durations = ["08:21", "05:48", "10:06", "06:32", "04:19", "07:45", "09:12", "03:56", "11:08"];
-  const likes = ["2.7万", "1.2万", "8,462", "3.1万", "9,830", "1.8万", "6,521", "2.2万", "7,104"];
-  const posterWords = ["去野", "手冲", "亲子", "川西", "晚餐", "日落", "散步", "AI", "好好住"];
+  const videoCover = isArticle && item.body.startsWith("[视频笔记");
+  const displayTags = item.tags.filter((tag) => {
+    const value = tag.trim();
+    return Boolean(value) && !/^[0-9a-f]{20,}$/i.test(value) && !["nan", "null", "none"].includes(value.toLowerCase());
+  });
+  const publishedDate = new Date(item.publishedAt);
+  const publishedLabel = Number.isNaN(publishedDate.getTime()) ? "" : publishedDate.toLocaleDateString("zh-CN");
   return (
     <article className="consumer-content-card">
       <div className={`consumer-card-cover palette-${index % 5}`}>
@@ -1171,51 +1212,60 @@ function ConsumerContentCard({ item, index, attribution, addInteraction, runSimi
           // eslint-disable-next-line jsx-a11y/media-has-caption
           <video src={item.mediaUri} controls playsInline preload="metadata" onError={() => setMediaError(true)} onPlay={() => addInteraction("PLAY_START", item, index + 1, attribution)} />
         ) : (
-          <div className={`consumer-poster poster-${index % 9}`}>
-            <span className="poster-kicker">SEEKFLUX PICKS</span>
-            <strong>{posterWords[index % posterWords.length]}</strong>
-            <small>{item.tags.slice(0, 2).join(" · ")}</small>
-          </div>
+          <button className="consumer-cover-fallback" onClick={() => { setDetailOpen(true); addInteraction("CLICK", item, index + 1, attribution); }}><Icon name="layers" /><span>打开内容</span></button>
         )}
-        <div className="consumer-cover-label">{isArticle ? "图文" : item.sources?.[0] === "INTEREST" ? "猜你喜欢" : item.tags[0] || "视频"}</div>
-        <div className="consumer-cover-meta"><button title="喜欢" onClick={() => addInteraction("LIKE", item, index + 1, attribution)}><Icon name="heart" /> {likes[index % likes.length]}</button><span>{isArticle ? `${assets.length} 图` : durations[index % durations.length]}</span></div>
+        <div className="consumer-cover-label">{videoCover ? "视频封面" : isArticle ? "图文" : "视频"}</div>
+        {isArticle && <div className="consumer-cover-meta"><span>{assets.length} 图</span></div>}
       </div>
       <div className="consumer-card-copy">
         <button className="consumer-card-title" onClick={() => { setDetailOpen(true); addInteraction("CLICK", item, index + 1, attribution); }}>{item.title}</button>
-        <div className="consumer-card-tags">{item.tags.slice(0, 3).map((tag) => <span key={tag}>#{tag}</span>)}</div>
+        {displayTags.length > 0 && <div className="consumer-card-tags">{displayTags.slice(0, 3).map((tag) => <span key={tag}>#{tag}</span>)}</div>}
         <div className="consumer-card-byline">
-          <span>@{item.creatorId} · {index % 3 === 0 ? "3天前" : index % 3 === 1 ? "6小时前" : "昨天"}</span>
+          <span>{item.sourceAuthor || item.creatorId || "内容创作者"}{publishedLabel ? ` · ${publishedLabel}` : ""}</span>
           <div>
+            <button title="喜欢" aria-label="喜欢" onClick={() => addInteraction("LIKE", item, index + 1, attribution)}><Icon name="heart" /></button>
             <button title="查看相似内容" onClick={() => void runSimilar(item.contentId)}><Icon name="layers" /></button>
             <button title="减少此类内容" onClick={() => addInteraction("NOT_INTERESTED", item, index + 1, attribution)}><Icon name="hide" /></button>
           </div>
         </div>
       </div>
-      {detailOpen && (
+      {detailOpen && createPortal(
         <div className="content-detail-backdrop" role="presentation">
           <button className="content-detail-dismiss" onClick={() => setDetailOpen(false)} aria-label="关闭详情" />
-          <section className="content-detail" role="dialog" aria-modal="true" aria-label={item.title}>
+          <section className="content-detail" role="dialog" aria-modal="true" aria-label={item.title} onWheel={(event) => {
+            const copy = detailCopyRef.current;
+            if (window.innerWidth > 620 && copy && !copy.contains(event.target as Node)) copy.scrollTop += event.deltaY;
+          }}>
             <button className="content-detail-close" onClick={() => setDetailOpen(false)} aria-label="关闭详情">×</button>
             <div className={`content-detail-media ${isArticle ? "article-assets" : ""}`}>
-              {isArticle ? assets.map((asset, assetIndex) => (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img key={asset} src={asset} alt={`${item.title} ${assetIndex + 1}`} />
-              )) : (
+              {isArticle ? (
+                <>
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={assets[assetIndex] || assets[0]} alt={`${item.title} ${assetIndex + 1} / ${assets.length}`} />
+                  {assets.length > 1 && <>
+                    <button className="content-image-arrow previous" aria-label="上一张图片" onClick={() => setAssetIndex((assetIndex + assets.length - 1) % assets.length)}><Icon name="left" /></button>
+                    <button className="content-image-arrow next" aria-label="下一张图片" onClick={() => setAssetIndex((assetIndex + 1) % assets.length)}><Icon name="arrow" /></button>
+                    <span className="content-image-count">{assetIndex + 1} / {assets.length}</span>
+                  </>}
+                </>
+              ) : (
                 // eslint-disable-next-line jsx-a11y/media-has-caption
                 <video src={item.mediaUri} controls autoPlay playsInline onPlay={() => addInteraction("PLAY_START", item, index + 1, attribution)} />
               )}
             </div>
-            <div className="content-detail-copy">
-              <span className="content-kind">{isArticle ? "图文" : "视频"}</span>
+            <div className="content-detail-copy" ref={detailCopyRef}>
+              <span className="content-kind">{videoCover ? "视频封面" : isArticle ? "图文" : "视频"}</span>
               <h1>{item.title}</h1>
               <p className="content-detail-byline">@{item.sourceAuthor || item.creatorId}</p>
-              <div className="content-detail-tags">{item.tags.map((tag) => <span key={tag}>#{tag}</span>)}</div>
+              {displayTags.length > 0 && <div className="content-detail-tags">{displayTags.map((tag) => <span key={tag}>#{tag}</span>)}</div>}
               <p className="content-detail-body">{item.body || item.description || item.summary}</p>
               {(item.sourceProvider || item.sourcePageUri) && <div className="content-provenance"><strong>来源</strong><span>{item.sourceProvider || "外部内容"}{item.licenseName ? ` · ${item.licenseName}` : ""}</span>{item.sourcePageUri && <a href={item.sourcePageUri} target="_blank" rel="noreferrer">查看原始页面</a>}</div>}
               <div className="content-detail-actions"><button onClick={() => addInteraction("LIKE", item, index + 1, attribution)}><Icon name="heart" /> 喜欢</button><button onClick={() => void runSimilar(item.contentId)}><Icon name="layers" /> 相似内容</button></div>
+              <section className="content-detail-comments" aria-label="评论"><strong>评论</strong><p>当前内容暂未提供评论正文</p></section>
             </div>
           </section>
-        </div>
+        </div>,
+        document.body,
       )}
     </article>
   );

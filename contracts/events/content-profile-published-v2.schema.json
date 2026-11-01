@@ -13,7 +13,7 @@
     "creator_id": {"type": "string"},
     "content_type": {"enum": ["VIDEO", "ARTICLE"]},
     "media_uri": {"type": "string"},
-    "asset_uris": {"type": "array", "minItems": 1, "maxItems": 20, "items": {"type": "string"}},
+    "asset_uris": {"type": "array", "minItems": 1, "maxItems": 30, "items": {"type": "string"}},
     "title": {"type": "string"},
     "description": {"type": "string"},
     "body": {"type": "string"},

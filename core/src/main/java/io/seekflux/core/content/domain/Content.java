@@ -290,8 +290,8 @@ public final class Content {
                 normalized.add(requireMediaUri(value));
             }
         }
-        if (normalized.size() > 20) {
-            throw new IllegalArgumentException("content must not contain more than 20 media assets");
+        if (normalized.size() > 30) {
+            throw new IllegalArgumentException("content must not contain more than 30 media assets");
         }
         return List.copyOf(normalized);
     }

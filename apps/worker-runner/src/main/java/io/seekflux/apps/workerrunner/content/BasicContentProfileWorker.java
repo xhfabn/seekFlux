@@ -71,7 +71,7 @@ public final class BasicContentProfileWorker {
         });
 
         CompleteContentProfileCommand command = new CompleteContentProfileCommand(
-                contentId, 1, summary, List.copyOf(tags), "");
+                contentId, 1, summary, tags.stream().limit(50).toList(), "");
         try {
             contentUseCase.completeProfile(command);
             if (!tags.isEmpty()) {

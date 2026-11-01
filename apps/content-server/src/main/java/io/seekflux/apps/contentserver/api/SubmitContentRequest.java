@@ -9,7 +9,7 @@ public record SubmitContentRequest(
         @NotBlank @Size(max = 128) String creatorId,
         ContentType contentType,
         @NotBlank @Size(max = 2_048) String mediaUri,
-        @Size(max = 20) List<@NotBlank @Size(max = 2_048) String> assetUris,
+        @Size(max = 30) List<@NotBlank @Size(max = 2_048) String> assetUris,
         @NotBlank @Size(max = 200) String title,
         @Size(max = 4_000) String description,
         @Size(max = 100_000) String body,

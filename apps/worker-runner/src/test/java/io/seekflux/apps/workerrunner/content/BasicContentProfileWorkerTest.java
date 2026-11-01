@@ -1,5 +1,6 @@
 package io.seekflux.apps.workerrunner.content;
 
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -12,10 +13,14 @@ import io.seekflux.core.content.domain.ContentStatus;
 import io.seekflux.core.content.domain.ContentType;
 import io.seekflux.core.content.api.ContentUseCase;
 import io.seekflux.core.content.api.ContentView;
+import io.seekflux.core.content.api.CompleteContentProfileCommand;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 class BasicContentProfileWorkerTest {
 
@@ -65,6 +70,31 @@ class BasicContentProfileWorkerTest {
 
         verify(contentUseCase).completeProfile(any());
         verify(contentUseCase, never()).publish(any());
+    }
+
+    @Test
+    void boundsDerivedTagsWhilePreservingSourceTags() throws Exception {
+        ContentUseCase contentUseCase = org.mockito.Mockito.mock(ContentUseCase.class);
+        when(contentUseCase.get(CONTENT_ID)).thenReturn(submitted());
+        var worker = new BasicContentProfileWorker(contentUseCase, new ObjectMapper());
+        String hashtags = IntStream.range(0, 75).mapToObj(i -> "#tag" + i).collect(Collectors.joining(" "));
+        var mapper = new ObjectMapper();
+        var payload = mapper.createObjectNode();
+        payload.put("content_id", CONTENT_ID.toString());
+        payload.put("title", "fixture");
+        payload.put("body", hashtags);
+        payload.putArray("source_tags").add("source");
+        var event = mapper.createObjectNode();
+        event.put("event_type", "content.submitted.v2");
+        event.set("payload", payload);
+
+        worker.handle(mapper.writeValueAsString(event));
+
+        var captured = ArgumentCaptor.forClass(CompleteContentProfileCommand.class);
+        verify(contentUseCase).completeProfile(captured.capture());
+        assertEquals(50, captured.getValue().tags().size());
+        assertEquals("source", captured.getValue().tags().getFirst());
+        verify(contentUseCase).publish(CONTENT_ID);
     }
 
     private static ContentView withdrawn() {

@@ -8,6 +8,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
+import java.util.stream.IntStream;
 import org.junit.jupiter.api.Test;
 
 class ContentTest {
@@ -99,6 +100,21 @@ class ContentTest {
         assertEquals(2, article.assetUris().size());
         assertEquals("第一站从湖滨开始。", article.body());
         assertEquals("note-2", article.source().externalId());
+    }
+
+    @Test
+    void acceptsThirtyAssetsAndRejectsThirtyOne() {
+        List<String> assets = IntStream.range(0, 30)
+                .mapToObj(i -> "https://media.example/" + i + ".webp").toList();
+        Content article = Content.submit(new ContentId(UUID.randomUUID()), "creator",
+                ContentType.ARTICLE, assets.getFirst(), assets, "title", "", "", List.of("tag"),
+                ContentSource.manual(), SUBMITTED_AT);
+        assertEquals(30, article.assetUris().size());
+        List<String> tooMany = IntStream.range(0, 31)
+                .mapToObj(i -> "https://media.example/" + i + ".webp").toList();
+        assertThrows(IllegalArgumentException.class, () -> Content.submit(new ContentId(UUID.randomUUID()),
+                "creator", ContentType.ARTICLE, tooMany.getFirst(), tooMany, "title", "", "",
+                List.of("tag"), ContentSource.manual(), SUBMITTED_AT));
     }
 
     private Content content() {

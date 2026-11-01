@@ -21,10 +21,7 @@ import java.net.http.HttpClient;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Locale;
-import java.util.Set;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.http.client.ClientHttpResponse;
@@ -128,7 +125,7 @@ public final class ElasticsearchSearchAdapter implements SearchIndex, SearchRetr
                 .exchange((httpRequest, result) -> responseBody(result));
         long measuredMillis = (System.nanoTime() - startedAt) / 1_000_000;
         String retrieverVersion = request.source() == SearchRetrievalSource.KEYWORD
-                ? "elasticsearch-bm25-v2"
+                ? "elasticsearch-bm25-v3"
                 : "elasticsearch-knn-" + semanticEncoder.version();
         return mapSearchResults(request.source(), response, measuredMillis, retrieverVersion);
     }
@@ -288,16 +285,27 @@ public final class ElasticsearchSearchAdapter implements SearchIndex, SearchRetr
         ObjectNode multiMatch = should.addObject().putObject("multi_match");
         multiMatch.put("query", request.query());
         multiMatch.put("type", "best_fields");
-        multiMatch.put("fuzziness", "AUTO");
+        // Avoid fuzzy expansion on CJK and long queries, while retaining bounded
+        // typo tolerance for shorter non-CJK queries.
+        if (!containsCjk(request.query()) && request.query().length() <= 32) {
+            multiMatch.put("fuzziness", "AUTO");
+            multiMatch.put("prefix_length", 1);
+            multiMatch.put("max_expansions", 20);
+        }
         ArrayNode fields = multiMatch.putArray("fields");
         List.of("title^5", "tags^4", "summary^3", "description^2", "body^2", "transcript")
                 .forEach(fields::add);
 
-        for (String token : queryTokens(request.query())) {
+        ObjectNode phrase = should.addObject().putObject("match_phrase").putObject("title");
+        phrase.put("query", request.query());
+        phrase.put("boost", 8.0);
+        // Preserve substring lookup for one short Latin identifier without
+        // multiplying expensive wildcard scans across long natural-language queries.
+        if (request.query().matches("[A-Za-z0-9]{3,24}")) {
             ObjectNode wildcard = should.addObject().putObject("wildcard").putObject("searchable.raw");
-            wildcard.put("value", "*" + escapeWildcard(token) + "*");
+            wildcard.put("value", "*" + request.query().toLowerCase(java.util.Locale.ROOT) + "*");
             wildcard.put("case_insensitive", true);
-            wildcard.put("boost", token.length() > 1 ? 2.0 : 0.2);
+            wildcard.put("boost", 2.0);
         }
         bool.put("minimum_should_match", 1);
         appendRequiredTagFilters(bool, request.requiredTags());
@@ -487,29 +495,9 @@ public final class ElasticsearchSearchAdapter implements SearchIndex, SearchRetr
                 hits);
     }
 
-    private static Set<String> queryTokens(String text) {
-        Set<String> tokens = new LinkedHashSet<>();
-        String normalized = text.toLowerCase(Locale.ROOT).trim();
-        for (String token : normalized.split("[^\\p{L}\\p{N}]+")) {
-            if (!token.isBlank()) {
-                tokens.add(token);
-            }
-            if (containsCjk(token) && token.length() > 2) {
-                for (int index = 0; index < token.length() - 1 && tokens.size() < 24; index++) {
-                    tokens.add(token.substring(index, index + 2));
-                }
-            }
-        }
-        return tokens;
-    }
-
     private static boolean containsCjk(String value) {
         return value.codePoints().anyMatch(codePoint ->
                 Character.UnicodeScript.of(codePoint) == Character.UnicodeScript.HAN);
-    }
-
-    private static String escapeWildcard(String value) {
-        return value.replace("\\", "\\\\").replace("*", "\\*").replace("?", "\\?");
     }
 
     private static void keyword(ObjectNode properties, String name) {

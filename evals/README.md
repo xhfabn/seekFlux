@@ -4,6 +4,10 @@
 
 统一观测的新增能力与未执行场景见 [Agent 观测验收清单](agent-observation-acceptance.md)。当前只有生产源码编译证据，不更新现有评测基线。
 
+Qilin 前五个图片包导入后的少量搜索检查及长标题关键词超时现象，见[一次性观察记录](results/qilin-first-five-2026-10-31-observations.md)；该记录不是固定评测或效果基线。
+
+关键词查询调整的少量真实数据前后对照见 [Qilin 关键词查询观察](results/qilin-keyword-query-2026-11-01.md)；覆盖与局限见文内说明，不替代固定评测。
+
 外部项目参考：
 
 - [OpenViking 评测流程讲解](references/openviking-evaluation-analysis.md)：以记忆整理 A/B 和完整记忆问答为主线，解释案例设计、执行、验证与问题定位。

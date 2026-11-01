@@ -118,6 +118,9 @@ python3 tools/verify_media_flow.py <video-content-id> <article-content-id>
 - `tools/verify_media_flow.py` 验证两条 MinIO URL 返回正确的 `video/*` / `image/*`，关键词搜索和 `旅行/咖啡` 用户画像 Feed 均命中两条内容。
 - 同一 Manifest 重放输出 `imported=0 skipped=2 failed=0`。
 - Qilin JSONL 字段映射 Dry Run 输出 `ARTICLE`、正文、`咖啡/旅行` 标签和本地 `file://` 图片源，证明 Adapter 可以在正式数据下载后复用同一导入主链路；这不冒充已经取得完整 Qilin 图片集。
+- 2026-10-31：内容领域、HTTP 输入与内容事件契约的单条媒体资源上限由 20 调整为 30，以覆盖 Qilin 前五个图片包中最多 29 张图片的笔记。`mvn -o -pl core -am '-Dtest=ContentTest' '-Dsurefire.failIfNoSpecifiedTests=false' test` 通过 8 项测试，包含 30 张可接受、31 张拒绝的边界。服务器使用其旧版运行制品的等效兼容补丁，真实 29 图笔记已发布并进入搜索索引。视频笔记图片包只包含封面，不能据此宣称已导入可播放视频。
+- 同轮内容画像处理将来源标签和派生标签按原有顺序去重后限制在 50 个，避免正文带大量 Hashtag 时超过画像契约并阻塞事件消费；正文不受此限制。`mvn -o -pl apps/worker-runner -am '-Dtest=BasicContentProfileWorkerTest' '-Dsurefire.failIfNoSpecifiedTests=false' test` 通过 3 项测试，包括来源标签优先及超限边界；服务器试运行多标签笔记已以 50 个标签发布并进入搜索索引。
+- 服务器 Qilin `part_0`～`part_4` 共 45,342 条笔记已通过内容登记和事件链路发布并进入 ES；214,845 张图片已上传 MinIO 并逐张校验，索引地址与清单逐条一致。旧 Qilin 内容与索引已清理并在服务器保留备份。导入过程中对未进入下游的 232 条提交事件和 671+1 条索引事件备份后重新投递；根因尚未查明，不能据此声称消息链路无丢失。搜索单次检查及长标题超时边界见[评测观察记录](../../evals/results/qilin-first-five-2026-10-31-observations.md)。
 
 ## 本阶段可以学到什么
 
@@ -137,6 +140,6 @@ python3 tools/verify_media_flow.py <video-content-id> <article-content-id>
 - 媒体能下载但浏览器打不开：检查 `MINIO_PUBLIC_BASE` 是否是浏览器可访问的地址，以及 `seekflux-media` 是否只有匿名下载权限。
 - Qilin 图片为空：用户链接仓库没有提交实际图片，必须按数据集说明单独取得资源，并确认原始媒体使用权。
 
-## 下一步
+## 历史说明
 
-当前下一步由[学习路线首页](README.md)定义为 Step 11「模型排序与推荐实验」。正式数据扩量属于本阶段能力的运营使用：先用自己的 Pixabay Key 做 `50 视频 + 100 图文` 小批审核，再逐步导入已合法取得的 Qilin 子集；它不阻塞模型实验代码，但模型实验只能使用许可、标签和行为归因均明确的数据。
+当前进度与下一步以[学习路线首页](README.md)为准。正式数据扩量属于本阶段能力的运营使用；模型实验应使用许可、标签和行为归因均明确的数据。
