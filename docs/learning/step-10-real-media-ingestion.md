@@ -122,7 +122,8 @@ python3 tools/verify_media_flow.py <video-content-id> <article-content-id>
 - 同轮内容画像处理将来源标签和派生标签按原有顺序去重后限制在 50 个，避免正文带大量 Hashtag 时超过画像契约并阻塞事件消费；正文不受此限制。`mvn -o -pl apps/worker-runner -am '-Dtest=BasicContentProfileWorkerTest' '-Dsurefire.failIfNoSpecifiedTests=false' test` 通过 3 项测试，包括来源标签优先及超限边界；服务器试运行多标签笔记已以 50 个标签发布并进入搜索索引。
 - 服务器 Qilin `part_0`～`part_4` 共 45,342 条笔记已通过内容登记和事件链路发布并进入 ES；214,845 张图片已上传 MinIO 并逐张校验，索引地址与清单逐条一致。旧 Qilin 内容与索引已清理并在服务器保留备份。导入过程中对未进入下游的 232 条提交事件和 671+1 条索引事件备份后重新投递；根因尚未查明，不能据此声称消息链路无丢失。搜索单次检查及长标题超时边界见[评测观察记录](../../evals/results/qilin-first-five-2026-10-31-observations.md)。
 - 2026-11-01：内容服务增加 SeekFlux 本站评论，`V17__content_comments.sql` 持久化内容 ID、用户 ID、正文和时间；只允许读取或评论已发布内容。详情页支持加载、发表、游标加载更多和失败重试；同一评论 ID、用户和正文的重放不产生重复，不同内容冲突返回 400。接口定义见 [OpenAPI](../../contracts/openapi/seekflux-v1.yaml)。
-  `mvn -o -pl apps/content-server -am '-Dtest=CommentControllerTest' '-Dsurefire.failIfNoSpecifiedTests=false' package` 与前端 ESLint、渲染检查通过；隔离 PostgreSQL 17 和临时服务执行了 17 个迁移、25 条测试评论、两页读取、重复提交、冲突、无效输入与不存在内容检查；临时资源已清理。浏览器使用模拟接口验证提交失败后复用评论 ID、成功显示与重开加载。正式服务和数据库尚未部署 V17，无法在当前本机连接的旧服务使用评论。Qilin 原始评论正文没有导入；评论用户 ID 为客户端提供的展示身份，尚无身份认证、评论审核、删除或回复功能，不可当作已具备生产社区治理能力。
+  `mvn -o -pl apps/content-server -am '-Dtest=CommentControllerTest' '-Dsurefire.failIfNoSpecifiedTests=false' package` 与前端 ESLint、渲染检查通过；隔离 PostgreSQL 17 和临时服务执行了 17 个迁移、25 条测试评论、两页读取、重复提交、冲突、无效输入与不存在内容检查；临时资源已清理。浏览器使用模拟接口验证提交失败后复用评论 ID、成功显示与重开加载。
+- 同日服务器内容服务已部署提交 `45329d0` 的制品，生产库 V17 迁移成功；旧数据库已备份并检查归档，健康接口、真实已发布笔记的评论读取及 Web Bridge 返回成功。生产未写入测试评论；推荐和 Agent 后端因 Redis 新连接认证仍未更新。服务器 Web 未在本次部署中更新，需运行包含评论界面的新版前端才能操作。Qilin 原始评论正文没有导入；评论用户 ID 为客户端提供的展示身份，尚无身份认证、评论审核、删除或回复功能，不可当作已具备生产社区治理能力。
 
 ## 本阶段可以学到什么
 
