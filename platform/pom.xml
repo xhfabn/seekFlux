@@ -5,5 +5,6 @@
     <artifactId>platform</artifactId><packaging>pom</packaging>
     <modules>
         <module>agent-runtime</module><module>agent-runtime-spring-boot-autoconfigure</module>
+        <module>agent-runtime-eval</module><module>agent-runtime-eval-junit</module>
     </modules>
 </project>

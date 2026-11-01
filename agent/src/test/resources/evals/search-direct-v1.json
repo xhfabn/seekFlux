@@ -1,0 +1,352 @@
+{
+  "id": "seekflux-search-direct-contract",
+  "version": "1.0",
+  "metadata": {
+    "toolSchemaVersion": "search-direct-tool-v2",
+    "fixtureVersion": "search-fixture-v1",
+    "provider": "scripted",
+    "scope": "tool-contract-not-retrieval-quality"
+  },
+  "cases": [
+    {
+      "id": "defaults-and-result",
+      "input": "查找亲子露营内容",
+      "requiredCapabilities": [
+        "basic",
+        "schema"
+      ],
+      "parameters": {
+        "allowedTools": [
+          "search_direct"
+        ],
+        "plan": [
+          {
+            "action": "tool",
+            "tool": "search_direct",
+            "arguments": {
+              "query": "露营"
+            }
+          }
+        ]
+      },
+      "faults": [],
+      "checks": [
+        {
+          "id": "terminal",
+          "path": "/state",
+          "operator": "EQUALS",
+          "expected": "RESULTS_READY"
+        },
+        {
+          "id": "search-calls",
+          "path": "/effects/searchCalls",
+          "operator": "EQUALS",
+          "expected": 1
+        },
+        {
+          "id": "default-page",
+          "path": "/effects/requests/0/page",
+          "operator": "EQUALS",
+          "expected": 0
+        },
+        {
+          "id": "default-size",
+          "path": "/effects/requests/0/size",
+          "operator": "EQUALS",
+          "expected": 12
+        },
+        {
+          "id": "default-tags",
+          "path": "/effects/requests/0/requiredTags",
+          "operator": "EQUALS",
+          "expected": []
+        },
+        {
+          "id": "candidate-id",
+          "path": "/output/searchResult/hits/0/contentId",
+          "operator": "EQUALS",
+          "expected": "camp-001"
+        },
+        {
+          "id": "trace-link",
+          "path": "/messages/1/linkedTraceId",
+          "operator": "EQUALS",
+          "expected": "search-eval-trace-v1"
+        }
+      ],
+      "timeoutMillis": 8000
+    },
+    {
+      "id": "explicit-pagination-and-tags",
+      "input": "查找亲子露营内容",
+      "requiredCapabilities": [
+        "basic",
+        "schema"
+      ],
+      "parameters": {
+        "allowedTools": [
+          "search_direct"
+        ],
+        "plan": [
+          {
+            "action": "tool",
+            "tool": "search_direct",
+            "arguments": {
+              "query": "露营",
+              "page": 1,
+              "size": 5,
+              "required_tags": [
+                "亲子",
+                "周末"
+              ]
+            }
+          }
+        ]
+      },
+      "faults": [],
+      "checks": [
+        {
+          "id": "terminal",
+          "path": "/state",
+          "operator": "EQUALS",
+          "expected": "RESULTS_READY"
+        },
+        {
+          "id": "search-calls",
+          "path": "/effects/searchCalls",
+          "operator": "EQUALS",
+          "expected": 1
+        },
+        {
+          "id": "query",
+          "path": "/effects/requests/0/text",
+          "operator": "EQUALS",
+          "expected": "露营"
+        },
+        {
+          "id": "page",
+          "path": "/effects/requests/0/page",
+          "operator": "EQUALS",
+          "expected": 1
+        },
+        {
+          "id": "size",
+          "path": "/effects/requests/0/size",
+          "operator": "EQUALS",
+          "expected": 5
+        },
+        {
+          "id": "tags",
+          "path": "/effects/requests/0/requiredTags",
+          "operator": "EQUALS",
+          "expected": [
+            "亲子",
+            "周末"
+          ]
+        },
+        {
+          "id": "result-page",
+          "path": "/output/searchResult/page",
+          "operator": "EQUALS",
+          "expected": 1
+        }
+      ],
+      "timeoutMillis": 8000
+    },
+    {
+      "id": "missing-query",
+      "input": "查找亲子露营内容",
+      "requiredCapabilities": [
+        "basic",
+        "schema"
+      ],
+      "parameters": {
+        "allowedTools": [
+          "search_direct"
+        ],
+        "plan": [
+          {
+            "action": "tool",
+            "tool": "search_direct",
+            "arguments": {
+              "size": 5
+            }
+          }
+        ]
+      },
+      "faults": [],
+      "checks": [
+        {
+          "id": "terminal",
+          "path": "/state",
+          "operator": "EQUALS",
+          "expected": "FALLBACK_REQUIRED"
+        },
+        {
+          "id": "reason",
+          "path": "/fallbackReason",
+          "operator": "EQUALS",
+          "expected": "TOOL_ARGUMENT_INVALID"
+        },
+        {
+          "id": "search-calls",
+          "path": "/effects/searchCalls",
+          "operator": "EQUALS",
+          "expected": 0
+        }
+      ],
+      "timeoutMillis": 8000
+    },
+    {
+      "id": "fault-before-tool",
+      "input": "查找亲子露营内容",
+      "requiredCapabilities": [
+        "basic",
+        "tool-faults"
+      ],
+      "parameters": {
+        "allowedTools": [
+          "search_direct"
+        ],
+        "plan": [
+          {
+            "action": "tool",
+            "tool": "search_direct",
+            "arguments": {
+              "query": "露营"
+            }
+          }
+        ]
+      },
+      "faults": [
+        {
+          "id": "injected-tool-failure",
+          "phase": "BEFORE_TOOL",
+          "tool": "search_direct",
+          "occurrence": 1,
+          "action": "THROW",
+          "delayMillis": 0
+        }
+      ],
+      "checks": [
+        {
+          "id": "terminal",
+          "path": "/state",
+          "operator": "EQUALS",
+          "expected": "FALLBACK_REQUIRED"
+        },
+        {
+          "id": "reason",
+          "path": "/fallbackReason",
+          "operator": "EQUALS",
+          "expected": "TOOL_EXECUTION_FAILED"
+        },
+        {
+          "id": "search-calls",
+          "path": "/effects/searchCalls",
+          "operator": "EQUALS",
+          "expected": 0
+        }
+      ],
+      "timeoutMillis": 8000
+    },
+    {
+      "id": "fault-after-tool",
+      "input": "查找亲子露营内容",
+      "requiredCapabilities": [
+        "basic",
+        "tool-faults"
+      ],
+      "parameters": {
+        "allowedTools": [
+          "search_direct"
+        ],
+        "plan": [
+          {
+            "action": "tool",
+            "tool": "search_direct",
+            "arguments": {
+              "query": "露营"
+            }
+          }
+        ]
+      },
+      "faults": [
+        {
+          "id": "injected-tool-failure",
+          "phase": "AFTER_TOOL",
+          "tool": "search_direct",
+          "occurrence": 1,
+          "action": "THROW",
+          "delayMillis": 0
+        }
+      ],
+      "checks": [
+        {
+          "id": "terminal",
+          "path": "/state",
+          "operator": "EQUALS",
+          "expected": "FALLBACK_REQUIRED"
+        },
+        {
+          "id": "reason",
+          "path": "/fallbackReason",
+          "operator": "EQUALS",
+          "expected": "TOOL_EXECUTION_FAILED"
+        },
+        {
+          "id": "search-calls",
+          "path": "/effects/searchCalls",
+          "operator": "EQUALS",
+          "expected": 1
+        }
+      ],
+      "timeoutMillis": 8000
+    },
+    {
+      "id": "search-service-unavailable",
+      "input": "查找亲子露营内容",
+      "requiredCapabilities": [
+        "basic",
+        "schema"
+      ],
+      "parameters": {
+        "allowedTools": [
+          "search_direct"
+        ],
+        "plan": [
+          {
+            "action": "tool",
+            "tool": "search_direct",
+            "arguments": {
+              "query": "露营"
+            }
+          }
+        ],
+        "searchBackend": "unavailable"
+      },
+      "faults": [],
+      "checks": [
+        {
+          "id": "terminal",
+          "path": "/state",
+          "operator": "EQUALS",
+          "expected": "FALLBACK_REQUIRED"
+        },
+        {
+          "id": "reason",
+          "path": "/fallbackReason",
+          "operator": "EQUALS",
+          "expected": "SEARCH_UNAVAILABLE"
+        },
+        {
+          "id": "search-calls",
+          "path": "/effects/searchCalls",
+          "operator": "EQUALS",
+          "expected": 1
+        }
+      ],
+      "timeoutMillis": 8000
+    }
+  ]
+}

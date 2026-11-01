@@ -443,10 +443,11 @@ class AgentRuntimeConfiguration {
             ToolExecutionPolicy toolExecutionPolicy,
             ToolExecutionObserver toolExecutionObserver,
             CapabilityResolver agentCapabilityResolver,
+            io.seekflux.platform.agentruntime.domain.service.observation.AgentObservations observations,
             Clock agentClock) {
         return new AgentRuntime(
                 tools, toolExecutor, executor, recorder, agentClock, agentCallGuard,
-                toolExecutionPolicy, toolExecutionObserver, agentCapabilityResolver);
+                toolExecutionPolicy, toolExecutionObserver, agentCapabilityResolver, observations);
     }
 
     @Bean

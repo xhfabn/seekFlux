@@ -38,6 +38,9 @@ public final class DefaultAgentToolExecutor implements AgentToolExecutor {
         } catch (AgentCancellationException cancelled) {
             throw cancelled;
         } catch (RuntimeException error) {
+            io.seekflux.platform.agentruntime.domain.service.observation.AgentObservations.reportCurrent(
+                    "TOOL_EXCEPTION", java.util.Map.of("errorType", error.getClass().getName(),
+                            "errorMessage", error.getMessage() == null ? "" : error.getMessage()));
             if (tool.effect() == AgentTool.Effect.MUTATING) {
                 throw error;
             }

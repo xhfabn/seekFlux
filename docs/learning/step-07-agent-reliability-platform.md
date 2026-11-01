@@ -334,6 +334,58 @@ git diff --check
   仍需自行覆盖模型语义版本；没有新增工具工厂、注解解析器、Prompt 注入检测器或在线版本仓库。
   当前总路线仍以[学习入口](README.md)为准，不创建新 Step。
 
+## 2026-10-25：通用 Agent 评测 1.0 首版
+
+本轮新增 `platform/agent-runtime-eval` 与 `agent-runtime-eval-junit`，作为 Step 07
+平台化扩展，不新增 Step。统一用例执行、隔离夹具、工具/模型故障注入、可插拔评分、
+完整证据、HTML/JSON/JSONL 报告、基线对比与离线重评分。默认目标驱动生产 Runtime；
+业务工具只需提供合法样例与工厂即可复用四类契约场景。
+
+已完成的验证：Runtime 147 项测试通过；新增模块最终 15 项 SDK 测试和 17 个 JUnit
+场景通过。故障未命中、缺能力/证据、评分异常、超时、工具结果缺失、目标不响应中断
+均有失败证据或反向测试。取消 Future 后必须等待实际线程退出，未退出会停止后续用例。
+命令为 `mvn -B -ntp -pl platform/agent-runtime-eval-junit -am install`，随后新增检查的
+最终回归使用 `mvn -B -ntp -pl platform/agent-runtime-eval,platform/agent-runtime-eval-junit test`。
+
+固定 CLI 演示已完成：默认基线 17/17，故意修改答案的候选 15/17，检出两个回归。
+证据见 [evals](../../evals/README.md)，运行入口与接入说明见[模块说明](../../platform/agent-runtime-eval/README.md)。
+沙箱内一次首次启动出现用例超时；正常本机运行随后通过。按用户最新要求停止追加测试，
+不宣称已做全仓回归、独立外部项目消费或远程 CI 验收；Python 完整构建入口尚未端到端复跑。
+
+真实进程崩溃、持久等待/恢复、分布式 fencing、上下文压缩专用套件与在线模型 Judge
+仍待后续实现；当前目标不声明这些能力。学习主路线不变。长期决定见
+[ADR-020](../adr/ADR-020-generic-agent-evaluation.md)，契约见[评测协议](../../contracts/runtime/agent-evaluation-v1.md)。
+
+## 2026-10-25：SearchDirectTool 业务接入示例
+
+新增 [SearchDirectTool 评测示例](../../evals/search-direct-evaluation-example.md)，在 agent
+测试目录使用真实工具和固定 SearchUseCase，提供六条 JSON 用例：默认参数及返回结果、
+显式分页与标签、必填参数拒绝、调用前/后故障、搜索依赖不可用。效果探针记录实际查询
+参数与调用次数，复用通用 SDK 的故障命中检查、评分、报告和 JUnit 适配。
+
+agent 仅增加 test scope 评测依赖，不修改生产工具或通用模块的业务边界。当前按用户
+要求未编译、未运行测试或评测，尚无本例报告与通过证据，不改变阶段状态或已有基线。
+后续验证命令与预期输出路径见示例说明；当前路线仍以[学习入口](README.md)为准。
+
+## 2026-10-30：统一执行观测与自定义导出
+
+Core 新增标准事件、Observer/Processor/Exporter SPI，Runtime 自动采集运行、规划、工具准备、
+普通/EAGER/RECOVERY 工具调用与对账，默认 Loop 自动观察上下文和模型。流式记录用量与块数，
+Shadow 候选单独标记。旧构造器和持久化/推送接口保留，当前 agent-server 自建 Runtime 已注入观测依赖。
+
+默认关闭上报与正文采集；内存快照经字段脱敏、深度/节点/字符限制后进入有界队列。批量导出有限重试，
+过载与失败计数，关闭限时等待。上报不是恢复事实存储；取消等待不等于底层工作结束，允许晚到事件。
+使用者实现 Exporter 决定格式/目标，可用 Processor 在入队前筛选和脱敏。
+
+关键入口和配置见 [观测指南](../../platform/agent-runtime/OBSERVABILITY.md)，长期取舍见
+[ADR-021](../adr/ADR-021-agent-observation-export.md)，API 语义见
+[Observation v1](../../contracts/runtime/agent-observation-v1.md)。
+
+验证：`mvn -o -pl apps/agent-server -am compile` 生产源码编译通过；文档本地链接、UTF-8 和
+`git diff --check` 纳入交付检查。按用户要求未运行测试或评测，也未启动服务做真实上报验收。
+[剩余验收清单](../../evals/agent-observation-acceptance.md) 尚未执行，不新增通过基线，不改变主路线阶段。
+当前路线以[学习入口](README.md)为准。
+
 ## 本阶段可以学到什么
 
 - 租约解决“谁现在可以执行”，fencing 才解决“旧 owner 还能否晚到提交”；

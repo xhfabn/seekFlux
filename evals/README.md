@@ -2,7 +2,18 @@
 
 `evals/` 保存可版本化、可复现的效果证据，不保存只依赖人工观感的截图。
 
-通用评测模块的评审方案见 [通用 Agent Runtime 评测模块设计](agent-evaluation-plan.md)，包含独立 Java SDK、统一用例与执行协议、默认工具和 Agent 场景、故障注入、可插拔评分及报告。方案要求默认套件在没有业务应用和数据集时也能运行；SeekFlux 搜索与 Qilin 仅作为附录中的接入参考。该方案尚未实施，不改变现有 runner、基线或项目阶段状态。
+统一观测的新增能力与未执行场景见 [Agent 观测验收清单](agent-observation-acceptance.md)。当前只有生产源码编译证据，不更新现有评测基线。
+
+外部项目参考：
+
+- [OpenViking 评测流程讲解](references/openviking-evaluation-analysis.md)：以记忆整理 A/B 和完整记忆问答为主线，解释案例设计、执行、验证与问题定位。
+- [Langfuse 评测流程与问题定位](references/langfuse-evaluation-analysis.md)：串起真实轨迹、规则调度、裁判执行、人工复核、版本化数据集和实验对照，说明与通用 Agent Runtime 的边界。
+
+真实业务工具的接入过程见 [SearchDirectTool 评测示例](search-direct-evaluation-example.md)：使用生产工具、固定搜索依赖和六条显式用例，展示故障配置与实际调用证据。示例当前尚未编译或运行，不作为新的通过基线。
+
+通用评测 1.0 已提供独立 Java SDK、JUnit 适配、17 个默认 Runtime 场景、故障注入、可插拔评分、报告、版本对比和重评分。入口见[模块说明](../platform/agent-runtime-eval/README.md)，长期范围见[设计方案](agent-evaluation-plan.md)。默认套件不依赖业务应用或数据集，SeekFlux 搜索与 Qilin 只作为业务接入参考。
+
+2026-10-25 固定运行：[基线报告](results/runtime-conformance-v1-baseline.json) 为 17/17；故意修改工具答案的[负向对照](results/runtime-conformance-v1-comparison.json) 为 15/17，定位 lookup 与 policy-modify 两个回归。完整 HTML 和负向对照证据位于本机 `.local/evals/agent-v1/`。该结果衡量固定 Runtime 契约，不代表真实模型效果。
 
 Direct Search 基线使用 [`datasets/direct-search-v1.json`](datasets/direct-search-v1.json) 中的固定内容、Query 和分级相关性标注。Runner 会通过真实 Content API 创建临时内容，等待 Worker 发布和索引，再调用真实 Search API 计算 `Precision@K`、`Recall@K`、`MRR@K`、`nDCG@K` 和零结果率；默认在结束时撤回临时内容。
 

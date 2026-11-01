@@ -18,6 +18,9 @@ public class AgentRuntimeProperties {
     private Duration shutdownGracePeriod = Duration.ofSeconds(5);
     private int steerQueueMaxDepth = 32;
     private final Context context = new Context();
+    private final Observation observation = new Observation();
+
+    public Observation getObservation() { return observation; }
 
     public void validate() {
         requirePositive(executionThreads, "execution-threads");
@@ -217,4 +220,38 @@ public class AgentRuntimeProperties {
             this.overflowRetryLimit = overflowRetryLimit;
         }
     }
+    public static class Observation {
+        private boolean enabled;
+        private boolean captureContent;
+        private int queueCapacity = 2048;
+        private int batchSize = 64;
+        private int maxAttempts = 3;
+        private int maxCharacters = 16384;
+        private int maxNodes = 512;
+        private int maxDepth = 12;
+        private Duration shutdownTimeout = Duration.ofSeconds(5);
+        private java.util.Set<String> redactedFields = new java.util.HashSet<>(java.util.Set.of(
+                "authorization", "password", "secret", "apikey", "api_key", "access_token"));
+        public boolean isEnabled() { return enabled; }
+        public void setEnabled(boolean value) { enabled = value; }
+        public boolean isCaptureContent() { return captureContent; }
+        public void setCaptureContent(boolean value) { captureContent = value; }
+        public int getQueueCapacity() { return queueCapacity; }
+        public void setQueueCapacity(int value) { queueCapacity = value; }
+        public int getBatchSize() { return batchSize; }
+        public void setBatchSize(int value) { batchSize = value; }
+        public int getMaxAttempts() { return maxAttempts; }
+        public void setMaxAttempts(int value) { maxAttempts = value; }
+        public int getMaxCharacters() { return maxCharacters; }
+        public void setMaxCharacters(int value) { maxCharacters = value; }
+        public int getMaxNodes() { return maxNodes; }
+        public void setMaxNodes(int value) { maxNodes = value; }
+        public int getMaxDepth() { return maxDepth; }
+        public void setMaxDepth(int value) { maxDepth = value; }
+        public Duration getShutdownTimeout() { return shutdownTimeout; }
+        public void setShutdownTimeout(Duration value) { shutdownTimeout = value; }
+        public java.util.Set<String> getRedactedFields() { return redactedFields; }
+        public void setRedactedFields(java.util.Set<String> value) { redactedFields = value; }
+    }
+
 }
